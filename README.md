@@ -82,68 +82,49 @@ project-intelligence-platform/
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── tailwind.config.js
-├── docs/                          # Comprehensive technical specifications & guides
-│   ├── ARCHITECTURE.md
-│   ├── DATABASE_DESIGN.md
-│   ├── API_DOCUMENTATION.md
-│   ├── QUEUE_ARCHITECTURE.md
-│   ├── DEPLOYMENT.md
-│   ├── ENVIRONMENT_VARIABLES.md
-│   ├── TESTING.md
-│   ├── SECURITY.md
-│   └── DEVELOPMENT_GUIDE.md
-├── ARCHITECTURE_DECISIONS.md      # ADR-001 through ADR-008
-├── DEVELOPMENT_PROGRESS.md        # Full project phase tracking
-├── docker-compose.yml             # Unified local container orchestration
-└── .env.example                   # Environment configuration template
+├── scripts/                           # Single-click deployment and startup scripts
+├── docker-compose.yml                 # Unified local container orchestration
+├── railway.json                       # Zero-config Railway production deployment
+└── .env.example                       # Environment configuration template
 ```
 
 ---
 
-## ⚡ Quickstart
+## ⚡ Quick Start
 
-### 1. Run Automated Tests
+### 1. Run Automated Test Suite
 ```bash
 cd backend
-python -m pytest -v
+pytest tests/test_suite.py -v
 ```
-**30 passed** in under 3 seconds!
+All 30 unit, integration, and scenario tests pass in under 3 seconds.
 
-### 2. Build Frontend
-```bash
-cd frontend
-npm install
-npm run build
+### 2. Run Local Development (No Docker Required)
+The platform is designed to run self-contained on local SQLite with an automatic in-memory fallback cache:
+
+```powershell
+# Start Backend API (FastAPI on http://localhost:8000)
+powershell -ExecutionPolicy Bypass -File .\scripts\start-backend.ps1
+
+# Start Frontend UI (Vite dev server on http://localhost:5173)
+powershell -ExecutionPolicy Bypass -File .\scripts\start-frontend.ps1
 ```
-Produces optimized static bundle in `frontend/dist`.
 
-### 3. Start Local Development Stack
-```bash
-# Terminal 1: Backend API
-cd backend
-uvicorn app.main:app --reload --port 8000
+### 3. Deploy to Cloudflare Edge
+Deploy frontend static assets, API gateway worker, and background queues:
 
-# Terminal 2: Background Consumer
-cd consumer
-python consumer.py
-
-# Terminal 3: Frontend Dashboard
-cd frontend
-npm run dev
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-cloudflare.ps1
 ```
-Open `http://localhost:5173` in your browser.
 
 ---
 
-## 📄 Documentation Sitemap
-- [System Architecture](file:///docs/ARCHITECTURE.md)
-- [Database Relational Design & ERD](file:///docs/DATABASE_DESIGN.md)
-- [API Documentation & Endpoints](file:///docs/API_DOCUMENTATION.md)
-- [Queue Architecture & Idempotency](file:///docs/QUEUE_ARCHITECTURE.md)
-- [Deployment Guide (Cloudflare + Cloud Run)](file:///docs/DEPLOYMENT.md)
-- [Environment Variables Guide](file:///docs/ENVIRONMENT_VARIABLES.md)
-- [Testing & Quality Assurance](file:///docs/TESTING.md)
-- [Security Architecture](file:///docs/SECURITY.md)
-- [Local Development Guide](file:///docs/DEVELOPMENT_GUIDE.md)
-- [Architecture Decision Records](file:///ARCHITECTURE_DECISIONS.md)
-- [Development Progress & Tracking](file:///DEVELOPMENT_PROGRESS.md)
+## 🗄️ Database & Production Deployment (Railway)
+
+- **Local Execution**: Uses `sqlite+aiosqlite:///./project_intelligence.db` automatically with zero external dependencies.
+- **Production (Railway)**: When ready to connect Railway PostgreSQL and Redis, simply provide your connection URLs in `.env`:
+  ```ini
+  DATABASE_URL=postgresql://postgres:password@roundhouse.proxy.rlwy.net:12345/railway
+  REDIS_URL=redis://default:password@roundhouse.proxy.rlwy.net:54321
+  ```
+  Then run `alembic upgrade head` once. The engine automatically enables connection pooling (`pool_size=20`) and distributed Redis caching.
