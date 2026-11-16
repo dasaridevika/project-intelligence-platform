@@ -41,6 +41,39 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         "Infrastructure initial probe",
         extra={"extra_data": {"database_ok": db_ok, "redis_health": redis_health}}
     )
+
+    # Auto-drain any queued search runs from previous sessions (non-testing only)
+    if settings.APP_ENV != "testing":
+        async def drain_pending_runs():
+            try:
+                import asyncio
+                from sqlalchemy import select
+                from app.core.database import AsyncSessionLocal
+                from app.models.search import SearchRun
+                from app.services.search_orchestrator import search_orchestrator
+
+                await asyncio.sleep(2.0)
+                async with AsyncSessionLocal() as session:
+                    queued_stmt = select(SearchRun).where(SearchRun.status == "queued").limit(10)
+                    queued_runs = (await session.execute(queued_stmt)).scalars().all()
+                    if queued_runs:
+                        logger.info(f"Auto-draining {len(queued_runs)} queued search runs on startup")
+                        for qr in queued_runs:
+                            asyncio.create_task(
+                                search_orchestrator.execute_search(
+                                    search_run_id=qr.id,
+                                    query=qr.query,
+                                    parsed_query=qr.parsed_query or {},
+                                    requested_providers=["exa", settings.SECOND_PROVIDER_NAME.lower()],
+                                    trace_id=f"startup-drain-{qr.id}"
+                                )
+                            )
+            except Exception as e:
+                logger.warning(f"Startup queued runs drain notice: {e}")
+
+        import asyncio
+        asyncio.create_task(drain_pending_runs())
+
     yield
     logger.info(f"Shutting down {settings.APP_NAME} cleanly...")
 

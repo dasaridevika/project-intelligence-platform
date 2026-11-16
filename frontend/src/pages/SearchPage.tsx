@@ -419,20 +419,80 @@ export const SearchPage: React.FC = () => {
           </div>
 
           {/* Activity Events Timeline */}
-          <div className="space-y-3 max-h-64 overflow-y-auto pr-2">
-            {timelineEvents.map((ev, i) => (
-              <div key={ev.event_id || i} className="flex items-start gap-3 text-xs">
-                <div className="mt-0.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <div className="space-y-2.5 max-h-96 overflow-y-auto pr-2">
+            {timelineEvents.map((ev, i) => {
+              const isAccepted = ev.event_type === 'candidate_accepted';
+              const isRejected = ev.event_type === 'candidate_rejected';
+              const isFetched = ev.event_type === 'url_fetched';
+              const isRanked = ev.event_type === 'ranking_evaluated';
+
+              return (
+                <div
+                  key={ev.event_id || i}
+                  className={`flex items-start gap-3 p-2.5 rounded-lg border text-xs transition-colors ${
+                    isAccepted
+                      ? 'bg-emerald-950/20 border-emerald-500/30'
+                      : isRejected
+                      ? 'bg-amber-950/20 border-amber-500/30'
+                      : isFetched
+                      ? 'bg-sky-950/20 border-sky-500/20'
+                      : isRanked
+                      ? 'bg-purple-950/20 border-purple-500/20'
+                      : 'bg-slate-950/40 border-slate-800/60'
+                  }`}
+                >
+                  <div className="mt-0.5 shrink-0">
+                    {isAccepted ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    ) : isRejected ? (
+                      <AlertTriangle className="w-4 h-4 text-amber-400" />
+                    ) : isFetched ? (
+                      <Globe className="w-4 h-4 text-sky-400" />
+                    ) : isRanked ? (
+                      <Sparkles className="w-4 h-4 text-purple-400" />
+                    ) : (
+                      <Activity className="w-4 h-4 text-sky-400" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border ${
+                          isAccepted
+                            ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30'
+                            : isRejected
+                            ? 'text-amber-300 bg-amber-500/10 border-amber-500/30'
+                            : isFetched
+                            ? 'text-sky-300 bg-sky-500/10 border-sky-500/30'
+                            : isRanked
+                            ? 'text-purple-300 bg-purple-500/10 border-purple-500/30'
+                            : 'text-slate-400 bg-slate-800 border-slate-700'
+                        }`}
+                      >
+                        {ev.event_type}
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        {new Date(ev.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <p
+                      className={`break-words ${
+                        isAccepted
+                          ? 'text-emerald-200 font-medium'
+                          : isRejected
+                          ? 'text-amber-200/90'
+                          : 'text-slate-200'
+                      }`}
+                    >
+                      {ev.message}
+                    </p>
+                    <p className="text-[10px] text-slate-400 font-mono">
+                      Component: {ev.component}
+                    </p>
+                  </div>
                 </div>
-                <div className="flex-1">
-                  <p className="font-medium text-slate-200">{ev.message}</p>
-                  <p className="text-[11px] text-slate-300 font-mono">
-                    [{ev.component}] {new Date(ev.timestamp).toLocaleTimeString()}
-                  </p>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {searchCompleted && (

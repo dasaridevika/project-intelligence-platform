@@ -150,7 +150,19 @@ export const SystemMonitoringPage: React.FC = () => {
                   className="rounded-lg bg-slate-950/60 border border-slate-800/80 p-3 space-y-1 text-xs"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-sky-400 uppercase tracking-wider text-[10px] bg-sky-500/10 px-1.5 py-0.5 rounded border border-sky-500/20">
+                    <span className={`font-semibold uppercase tracking-wider text-[10px] px-1.5 py-0.5 rounded border ${
+                      ev.event_type === 'candidate_accepted'
+                        ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                        : ev.event_type === 'candidate_rejected'
+                        ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+                        : ev.event_type === 'url_fetched'
+                        ? 'text-sky-400 bg-sky-500/10 border-sky-500/20'
+                        : ev.event_type === 'ranking_evaluated'
+                        ? 'text-purple-400 bg-purple-500/10 border-purple-500/20'
+                        : ev.event_type === 'search_completed'
+                        ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                        : 'text-sky-400 bg-sky-500/10 border-sky-500/20'
+                    }`}>
                       {ev.event_type}
                     </span>
                     <span className="text-[11px] text-slate-500 font-mono">

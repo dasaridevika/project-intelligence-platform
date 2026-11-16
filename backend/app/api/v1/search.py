@@ -2,12 +2,13 @@ import asyncio
 import json
 import uuid
 from typing import AsyncGenerator, List, Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from app.core.database import get_db
+from app.core.config import settings
+from app.core.database import AsyncSessionLocal, get_db
 from app.core.logging import logger
 from app.core.redis import redis_service
 from app.models.analytics import ActivityEvent
@@ -24,6 +25,7 @@ from app.schemas.search import (
 )
 from app.services.auth_service import get_current_user_optional
 from app.services.query_processor import query_processor
+from app.services.search_orchestrator import search_orchestrator
 
 router = APIRouter(prefix="/search", tags=["Search"])
 
@@ -32,6 +34,7 @@ router = APIRouter(prefix="/search", tags=["Search"])
 async def create_search_run(
     req: SearchCreateRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
@@ -108,6 +111,29 @@ async def create_search_run(
             f"Created search_run {search_run_id} with outbox_event {outbox_event_id}",
             extra={"extra_data": {"trace_id": trace_id, "search_run_id": str(search_run_id)}}
         )
+
+        # Dispatch background orchestrator task to execute search immediately
+        background_tasks.add_task(
+            search_orchestrator.execute_search,
+            search_run_id=search_run_id,
+            query=req.query,
+            parsed_query=parsed_query,
+            requested_providers=req.providers or ["exa", settings.SECOND_PROVIDER_NAME.lower()],
+            trace_id=trace_id
+        )
+
+        # Auto-drain any queued runs if present from prior sessions
+        queued_stmt = select(SearchRun).where(SearchRun.status == "queued", SearchRun.id != search_run_id).limit(5)
+        queued_runs = (await db.execute(queued_stmt)).scalars().all()
+        for qr in queued_runs:
+            background_tasks.add_task(
+                search_orchestrator.execute_search,
+                search_run_id=qr.id,
+                query=qr.query,
+                parsed_query=qr.parsed_query or {},
+                requested_providers=["exa", settings.SECOND_PROVIDER_NAME.lower()],
+                trace_id=f"drain-{qr.id}"
+            )
 
         return SearchCreateResponse(
             search_run_id=search_run.id,

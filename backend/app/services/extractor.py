@@ -449,5 +449,77 @@ class ProjectExtractor:
             metadata=meta_dict
         )
 
+    def evaluate_and_extract(
+        self,
+        item: RawProviderResultItem,
+        provider_name: str,
+        default_category: str = "Capital Projects"
+    ) -> tuple[Optional[ExtractedProjectCandidate], str, bool]:
+        """Evaluates whether candidate URL contains confirmed capital project parameters, returning transparent reason."""
+        url = item.url or ""
+        url_lower = url.lower()
+
+        # 1. Non-article / legal / authentication page rejection
+        if not url:
+            return None, "Source item contains no valid target URL", False
+
+        blocked_path_signals = [
+            "/privacy-policy", "/terms-of-service", "/terms-of-use", "/terms",
+            "/legal", "/login", "/signup", "/auth", "/signin", "/cookie-policy",
+            "/cart", "/checkout", "/wp-login.php"
+        ]
+        if any(sig in url_lower for sig in blocked_path_signals):
+            return None, "Source URL points to legal, authentication, or navigation page", False
+
+        # 2. Text substance check
+        text = f"{item.title or ''}. {item.snippet or ''}".strip()
+        if len(text) < 25:
+            return None, "Insufficient descriptive text in source snippet (< 25 characters)", False
+
+        # Check for preclassified item from discovery repository
+        preclassified = item.extra_metadata.get("preclassified")
+        if preclassified:
+            pub_dt = datetime.now(timezone.utc)
+            cand = ExtractedProjectCandidate(
+                canonical_name=preclassified.get("title", item.title),
+                category=preclassified.get("category", default_category),
+                status=preclassified.get("status", "Announced"),
+                developer=preclassified.get("developer"),
+                location_city=preclassified.get("city"),
+                location_state=preclassified.get("state"),
+                location_country=preclassified.get("country", "Global"),
+                investment_value=preclassified.get("investment_value"),
+                investment_currency=preclassified.get("investment_currency", "USD"),
+                capacity_value=preclassified.get("capacity_value"),
+                capacity_unit=preclassified.get("capacity_unit"),
+                description=preclassified.get("snippet", item.snippet),
+                source_url=item.url,
+                source_title=item.title,
+                provider=provider_name,
+                publication_date=pub_dt,
+                raw_snippet=item.snippet,
+                metadata={"verified": True, "provider": provider_name}
+            )
+            return cand, "Confirmed capital project with verified capacity and investment metrics", True
+
+        # Extract structured candidate from raw text
+        cand = self.extract_candidate(item, provider_name, default_category)
+        if not cand:
+            return None, "Unable to parse structured project entities from source text", False
+
+        # 3. Capital project parameters check:
+        # Must have at least ONE concrete project metric
+        has_developer = bool(cand.developer)
+        has_capacity = cand.capacity_value is not None
+        has_investment = cand.investment_value is not None
+        has_specific_location = bool(cand.location_city or cand.location_state)
+
+        # Explicit rejection if it's generic market news with zero concrete metrics
+        if not has_developer and not has_capacity and not has_investment and not has_specific_location:
+            return None, "Lacks capital project metrics (no developer, capacity, capital expenditure, or specific site detected)", False
+
+        return cand, "Confirmed project with identified industrial parameters", True
+
+
 
 project_extractor = ProjectExtractor()

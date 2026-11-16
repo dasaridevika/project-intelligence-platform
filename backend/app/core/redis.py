@@ -68,6 +68,7 @@ class RedisService:
 
         if self._redis_client is None:
             try:
+                import asyncio
                 self._redis_client = aioredis.from_url(
                     settings.REDIS_URL,
                     encoding="utf-8",
@@ -76,14 +77,15 @@ class RedisService:
                     socket_connect_timeout=0.5,
                     socket_timeout=0.5,
                 )
-                # Test connectivity
-                await self._redis_client.ping()
+                # Test connectivity with strict 0.5s timeout so local/Render environments never block
+                await asyncio.wait_for(self._redis_client.ping(), timeout=0.5)
             except Exception as exc:
                 logger.warning(
                     f"Unable to connect to live Redis at {settings.REDIS_URL} ({exc}). "
                     "Engaging resilient in-memory cache fallback for local/test execution."
                 )
                 self._use_fallback = True
+                self._redis_client = None
                 return self._fallback
 
         return self._redis_client
