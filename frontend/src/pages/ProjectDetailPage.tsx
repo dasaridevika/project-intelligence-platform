@@ -13,8 +13,10 @@ import {
   ExternalLink,
   Globe,
   Layers,
+  Loader2,
   MapPin,
   ShieldCheck,
+  Sparkles,
   Zap
 } from 'lucide-react';
 import { api } from '../services/api';
@@ -29,6 +31,27 @@ export const ProjectDetailPage: React.FC = () => {
   const [project, setProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Cloudflare Workers AI edge URL inspection state
+  const [aiExtractingUrl, setAiExtractingUrl] = useState<string | null>(null);
+  const [aiResults, setAiResults] = useState<Record<string, any>>({});
+  const [aiError, setAiError] = useState<Record<string, string>>({});
+
+  const handleAiExtract = async (url: string) => {
+    try {
+      setAiExtractingUrl(url);
+      setAiError((prev) => ({ ...prev, [url]: '' }));
+      const res = await api.aiExtractUrl(url, project?.category);
+      setAiResults((prev) => ({ ...prev, [url]: res }));
+    } catch (err: any) {
+      setAiError((prev) => ({
+        ...prev,
+        [url]: err?.response?.data?.details || err?.message || 'Failed to fetch or extract from URL.',
+      }));
+    } finally {
+      setAiExtractingUrl(null);
+    }
+  };
 
   useEffect(() => {
     async function loadProject() {
@@ -213,6 +236,88 @@ export const ProjectDetailPage: React.FC = () => {
                   <p className="text-slate-400 text-xs italic bg-slate-900/40 p-2.5 rounded border border-slate-800/40">
                     "{src.raw_snippet}"
                   </p>
+                )}
+
+                {/* AI Worker Webpage Extraction */}
+                <div className="flex items-center justify-between pt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleAiExtract(src.source_url)}
+                    disabled={aiExtractingUrl === src.source_url}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/30 text-sky-300 text-xs font-medium transition-colors"
+                  >
+                    {aiExtractingUrl === src.source_url ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-400" />
+                        <span>Fetching Live Webpage & Running Workers AI...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+                        <span>AI Deep Inspect (Fetch URL & Extract)</span>
+                      </>
+                    )}
+                  </button>
+
+                  {aiResults[src.source_url] && (
+                    <span className="text-[10px] text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" />
+                      Extracted via {aiResults[src.source_url].engine}
+                    </span>
+                  )}
+                </div>
+
+                {aiError[src.source_url] && (
+                  <p className="text-rose-400 text-xs bg-rose-500/10 p-2 rounded border border-rose-500/20">
+                    {aiError[src.source_url]}
+                  </p>
+                )}
+
+                {aiResults[src.source_url] && (
+                  <div className="mt-3 p-3.5 rounded-xl bg-sky-950/40 border border-sky-500/30 space-y-2.5 text-xs animate-in fade-in">
+                    <div className="flex items-center justify-between border-b border-sky-500/20 pb-2">
+                      <span className="font-semibold text-sky-300 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-sky-400" />
+                        Workers AI Output ({aiResults[src.source_url].engine})
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        Page Content: {aiResults[src.source_url].content_length} chars
+                      </span>
+                    </div>
+
+                    {aiResults[src.source_url].project?.summary && (
+                      <p className="text-slate-200 text-xs leading-relaxed italic bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+                        "{aiResults[src.source_url].project.summary}"
+                      </p>
+                    )}
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px] pt-1">
+                      <div className="bg-slate-900/40 p-2 rounded border border-slate-800/60">
+                        <span className="text-slate-400 block mb-0.5">Project Name</span>
+                        <span className="text-slate-100 font-semibold">{aiResults[src.source_url].project?.canonical_name || '—'}</span>
+                      </div>
+                      <div className="bg-slate-900/40 p-2 rounded border border-slate-800/60">
+                        <span className="text-slate-400 block mb-0.5">Developer</span>
+                        <span className="text-slate-100 font-semibold">{aiResults[src.source_url].project?.developer || '—'}</span>
+                      </div>
+                      <div className="bg-slate-900/40 p-2 rounded border border-slate-800/60">
+                        <span className="text-slate-400 block mb-0.5">Investment</span>
+                        <span className="text-slate-100 font-semibold">
+                          {aiResults[src.source_url].project?.investment_value
+                            ? `${aiResults[src.source_url].project?.investment_currency || '$'}${Number(aiResults[src.source_url].project.investment_value).toLocaleString()}`
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/40 p-2 rounded border border-slate-800/60">
+                        <span className="text-slate-400 block mb-0.5">Capacity</span>
+                        <span className="text-slate-100 font-semibold">
+                          {aiResults[src.source_url].project?.capacity_value
+                            ? `${aiResults[src.source_url].project.capacity_value} ${aiResults[src.source_url].project?.capacity_unit || ''}`
+                            : '—'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
             ))

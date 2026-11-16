@@ -12,5 +12,8 @@
   "vars": {
     "BACKEND_API_URL": "https://project-intelligence-platform.onrender.com/",
     "RATE_LIMIT_MAX_REQUESTS": "120"
+  },
+  "ai": {
+    "binding": "AI"
   }
 }

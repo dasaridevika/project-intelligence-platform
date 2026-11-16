@@ -159,6 +159,22 @@ export const api = {
     return res.data;
   },
 
+  // Edge AI Worker (Cloudflare Workers AI - Llama 3.1 8B Web Fetcher & Extractor)
+  aiExtractUrl: async (url: string, category?: string): Promise<any> => {
+    const res = await apiClient.post('/ai/extract', { url, category });
+    return res.data;
+  },
+
+  aiBatchExtract: async (urls: string[], category?: string): Promise<any> => {
+    const res = await apiClient.post('/ai/batch-extract', { urls, category });
+    return res.data;
+  },
+
+  getAiWorkerHealth: async (): Promise<any> => {
+    const res = await apiClient.get('/ai/health');
+    return res.data;
+  },
+
   getSectorDetail: async (id: string): Promise<PrimarySector> => {
     const res = await apiClient.get(`/sectors/${id}`);
     return res.data;
