@@ -63,6 +63,10 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("GOOGLE_CSE_ID", "GOOGLE_CX", "GOOGLE_SEARCH_CX")
     )
 
+    @property
+    def GOOGLE_SEARCH_API_KEY(self) -> Optional[str]:
+        return self.SECOND_PROVIDER_API_KEY
+
     # Cloudflare Queue Settings
     CLOUDFLARE_ACCOUNT_ID: Optional[str] = None
     CLOUDFLARE_API_TOKEN: Optional[str] = None
