@@ -17,15 +17,18 @@ export const HistoryPage: React.FC = () => {
   const navigate = useNavigate();
   const [searches, setSearches] = useState<SearchRun[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
 
   const loadHistory = async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await api.listSearches(statusFilter || undefined, 50);
       setSearches(data);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load search history:', err);
+      setError('Unable to retrieve search history. The service may be warming up.');
     } finally {
       setLoading(false);
     }
@@ -80,6 +83,17 @@ export const HistoryPage: React.FC = () => {
           <div className="py-20 text-center text-slate-400 space-y-2">
             <div className="w-8 h-8 rounded-full border-2 border-sky-500 border-t-transparent animate-spin mx-auto" />
             <p className="text-sm">Loading search history...</p>
+          </div>
+        ) : error ? (
+          <div className="py-16 text-center text-slate-400 space-y-3">
+            <p className="text-sm text-rose-400 font-medium">{error}</p>
+            <button
+              onClick={loadHistory}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition-colors"
+            >
+              <RotateCw className="w-3.5 h-3.5" />
+              <span>Retry</span>
+            </button>
           </div>
         ) : searches.length === 0 ? (
           <div className="py-20 text-center text-slate-400 space-y-2">

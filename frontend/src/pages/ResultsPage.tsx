@@ -35,19 +35,20 @@ export const ResultsPage: React.FC = () => {
 
   useEffect(() => {
     async function loadResults() {
-      if (!searchId) {
-        // Load latest search
-        const searches = await api.listSearches(undefined, 1);
-        if (searches.length > 0) {
-          navigate(`/results?search_id=${searches[0].id}`, { replace: true });
-        } else {
-          setLoading(false);
-        }
-        return;
-      }
-
       setLoading(true);
       try {
+        if (!searchId) {
+          // Load latest search
+          const searches = await api.listSearches(undefined, 1);
+          if (searches.length > 0) {
+            navigate(`/results?search_id=${searches[0].id}`, { replace: true });
+            return;
+          } else {
+            setLoading(false);
+            return;
+          }
+        }
+
         const [run, resultsData] = await Promise.all([
           api.getSearchRun(searchId),
           api.getSearchResults(searchId),

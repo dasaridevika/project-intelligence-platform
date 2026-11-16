@@ -84,7 +84,7 @@ export const SystemMonitoringPage: React.FC = () => {
               }`}
             />
             <span className="text-lg font-bold text-white capitalize">
-              {health?.database || 'Connected'}
+              {health?.database || (loading ? 'Checking...' : 'Offline')}
             </span>
           </div>
           <p className="text-[11px] text-slate-500">Source of truth for all projects</p>
@@ -96,9 +96,13 @@ export const SystemMonitoringPage: React.FC = () => {
             <Server className="w-4 h-4 text-indigo-400" />
           </div>
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+            <span
+              className={`w-2.5 h-2.5 rounded-full ${
+                health?.redis?.status === 'ok' ? 'bg-emerald-500' : health ? 'bg-amber-500' : 'bg-rose-500'
+              }`}
+            />
             <span className="text-lg font-bold text-white capitalize">
-              {health?.redis?.status === 'ok' ? 'Operational' : 'Active'}
+              {health ? (health.redis?.status === 'ok' ? 'Operational' : 'In-Memory Fallback') : (loading ? 'Checking...' : 'Offline')}
             </span>
           </div>
           <p className="text-[11px] text-slate-500">Provider: {health?.redis?.provider || 'Redis / Fallback'}</p>

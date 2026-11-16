@@ -151,10 +151,24 @@ export const DashboardPage: React.FC = () => {
             <Activity className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="flex items-center gap-2 mt-1">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
-            <span className="text-xl font-bold text-white capitalize">{health?.status || 'Healthy'}</span>
+            <span
+              className={`w-2.5 h-2.5 rounded-full inline-block ${
+                health?.status === 'healthy'
+                  ? 'bg-emerald-500'
+                  : health
+                  ? 'bg-amber-500'
+                  : loading
+                  ? 'bg-sky-500 animate-pulse'
+                  : 'bg-rose-500'
+              }`}
+            />
+            <span className="text-xl font-bold text-white capitalize">
+              {health?.status || (loading ? 'Checking...' : 'Offline')}
+            </span>
           </div>
-          <p className="text-xs text-slate-300 mt-2">DB & Redis Connected</p>
+          <p className="text-xs text-slate-300 mt-2">
+            {health?.database === 'connected' ? 'DB & Redis Connected' : loading ? 'Checking connectivity...' : 'Service Waking / Offline'}
+          </p>
         </div>
       </div>
 
