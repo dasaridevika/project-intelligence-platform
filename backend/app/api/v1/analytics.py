@@ -50,6 +50,31 @@ async def get_api_usage_analytics(db: AsyncSession = Depends(get_db)):
         failed = row.failed_requests or 0
         rate = round((success / total) * 100.0, 2) if total > 0 else 0.0
 
+        # Check latest call for quota status
+        latest_usage = (
+            await db.execute(
+                select(APIUsage)
+                .where(APIUsage.provider == row.provider)
+                .order_by(desc(APIUsage.created_at))
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+        quota_exhausted = False
+        quota_status = "active"
+        last_error = None
+
+        if latest_usage:
+            meta = latest_usage.response_meta or {}
+            if latest_usage.http_status in (402, 429) or meta.get("quota_exhausted"):
+                quota_exhausted = True
+                quota_status = "quota_exhausted" if latest_usage.http_status == 402 else "rate_limited"
+                last_error = meta.get("error") or (
+                    "Free credits exhausted (HTTP 402)" if latest_usage.http_status == 402 else "Rate limit / quota exceeded (HTTP 429)"
+                )
+            elif latest_usage.http_status >= 400:
+                last_error = meta.get("error") or f"HTTP {latest_usage.http_status} error"
+
         provider_stats.append(
             ProviderUsageStat(
                 provider=row.provider,
@@ -61,9 +86,34 @@ async def get_api_usage_analytics(db: AsyncSession = Depends(get_db)):
                 min_latency_ms=round(float(row.min_latency or 0.0), 2),
                 max_latency_ms=round(float(row.max_latency or 0.0), 2),
                 total_units_consumed=row.units_consumed or 0,
-                total_estimated_cost=float(row.estimated_cost) if row.estimated_cost is not None else None
+                total_estimated_cost=float(row.estimated_cost) if row.estimated_cost is not None else None,
+                quota_exhausted=quota_exhausted,
+                quota_status=quota_status,
+                last_error_message=last_error
             )
         )
+
+    # Ensure all configured providers appear even with 0 requests sent
+    configured_names = ["exa", settings.SECOND_PROVIDER_NAME.lower()]
+    existing_names = {p.provider.lower() for p in provider_stats}
+    for c_name in configured_names:
+        if c_name not in existing_names:
+            provider_stats.append(
+                ProviderUsageStat(
+                    provider=c_name,
+                    total_requests=0,
+                    successful_requests=0,
+                    failed_requests=0,
+                    success_rate=100.0,
+                    avg_latency_ms=0.0,
+                    min_latency_ms=0.0,
+                    max_latency_ms=0.0,
+                    total_units_consumed=0,
+                    quota_exhausted=False,
+                    quota_status="active",
+                    last_error_message=None
+                )
+            )
 
     # General totals
     total_searches = (await db.execute(select(func.count(SearchRun.id)))).scalar() or 0

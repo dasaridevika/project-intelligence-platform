@@ -14,6 +14,9 @@ class ProviderUsageStat(BaseModel):
     max_latency_ms: float
     total_units_consumed: int
     total_estimated_cost: Optional[float] = None
+    quota_exhausted: bool = False
+    quota_status: str = "active"
+    last_error_message: Optional[str] = None
 
 
 class UsageAnalyticsResponse(BaseModel):

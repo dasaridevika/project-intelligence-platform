@@ -109,7 +109,45 @@ class ExaProvider(BaseSearchProvider):
                             http_status=200
                         )
 
-                    elif response.status_code == 429 or response.status_code >= 500:
+                    elif response.status_code == 402 or "credit" in response.text.lower() or "insufficient" in response.text.lower():
+                        latency_ms = (time.perf_counter() - start_time) * 1000.0
+                        quota_msg = f"Exa API free credits exhausted (HTTP {response.status_code}): {response.text[:200]}"
+                        logger.error(quota_msg)
+                        return ProviderSearchResult(
+                            provider=self.name,
+                            success=False,
+                            error_message=quota_msg,
+                            http_status=response.status_code,
+                            usage=ProviderUsage(
+                                provider=self.name,
+                                endpoint=endpoint,
+                                http_status=response.status_code,
+                                latency_ms=round(latency_ms, 2),
+                                units_consumed=0,
+                                retry_count=attempt,
+                                response_meta={"quota_exhausted": True, "error": quota_msg}
+                            )
+                        )
+                    elif response.status_code == 429:
+                        latency_ms = (time.perf_counter() - start_time) * 1000.0
+                        quota_msg = f"Exa API rate limit or quota exceeded (HTTP 429): {response.text[:200]}"
+                        logger.warning(quota_msg)
+                        return ProviderSearchResult(
+                            provider=self.name,
+                            success=False,
+                            error_message=quota_msg,
+                            http_status=429,
+                            usage=ProviderUsage(
+                                provider=self.name,
+                                endpoint=endpoint,
+                                http_status=429,
+                                latency_ms=round(latency_ms, 2),
+                                units_consumed=0,
+                                retry_count=attempt,
+                                response_meta={"quota_exhausted": True, "error": quota_msg}
+                            )
+                        )
+                    elif response.status_code >= 500:
                         last_error = f"HTTP {response.status_code}: {response.text}"
                         if attempt < retries:
                             await asyncio.sleep(0.5 * (2 ** attempt))

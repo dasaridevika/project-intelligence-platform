@@ -150,29 +150,39 @@ export const AnalyticsPage: React.FC = () => {
             <thead className="bg-slate-950/60 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-800">
               <tr>
                 <th className="py-3 px-4">Provider</th>
-                <th className="py-3 px-4">Total Requests</th>
+                <th className="py-3 px-4">Requests Sent</th>
+                <th className="py-3 px-4">Credit / Quota Status</th>
                 <th className="py-3 px-4">Success</th>
                 <th className="py-3 px-4">Failed</th>
                 <th className="py-3 px-4">Success Rate</th>
                 <th className="py-3 px-4">Avg Latency</th>
-                <th className="py-3 px-4">Min Latency</th>
-                <th className="py-3 px-4">Max Latency</th>
-                <th className="py-3 px-4">Units</th>
+                <th className="py-3 px-4">Units Consumed</th>
+                <th className="py-3 px-4">Last Status Note</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/80">
               {analytics?.providers && analytics.providers.length > 0 ? (
                 analytics.providers.map((p) => (
                   <tr key={p.provider} className="hover:bg-slate-800/40">
-                    <td className="py-3 px-4 font-semibold text-white uppercase tracking-wider">{p.provider}</td>
-                    <td className="py-3 px-4 font-mono text-slate-200">{p.total_requests}</td>
+                    <td className="py-3 px-4 font-semibold text-white uppercase tracking-wider">{p.provider === 'google' ? 'Google Search' : p.provider.toUpperCase()}</td>
+                    <td className="py-3 px-4 font-mono font-bold text-sky-300">{p.total_requests}</td>
+                    <td className="py-3 px-4">
+                      {p.quota_exhausted ? (
+                        <span className="px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-bold uppercase tracking-wider">
+                          ⚠️ Free Credits Depleted
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-medium uppercase tracking-wider">
+                          Active & Available
+                        </span>
+                      )}
+                    </td>
                     <td className="py-3 px-4 font-mono text-emerald-400">{p.successful_requests}</td>
                     <td className="py-3 px-4 font-mono text-rose-400">{p.failed_requests}</td>
                     <td className="py-3 px-4 font-mono font-semibold text-sky-400">{p.success_rate}%</td>
                     <td className="py-3 px-4 font-mono text-slate-300">{p.avg_latency_ms} ms</td>
-                    <td className="py-3 px-4 font-mono text-slate-400">{p.min_latency_ms} ms</td>
-                    <td className="py-3 px-4 font-mono text-slate-400">{p.max_latency_ms} ms</td>
                     <td className="py-3 px-4 font-mono text-slate-300">{p.total_units_consumed}</td>
+                    <td className="py-3 px-4 text-slate-400 max-w-xs truncate">{p.last_error_message || 'Normal Operation'}</td>
                   </tr>
                 ))
               ) : (

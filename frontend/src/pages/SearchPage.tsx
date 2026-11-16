@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Activity,
+  AlertTriangle,
   ArrowRight,
   CheckCircle2,
   Clock,
@@ -17,7 +18,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { subscribeToSearchEvents, SSEMessage } from '../services/sse';
-import { ActivityEvent, SearchResultItem } from '../types';
+import { ActivityEvent, ProviderUsageStat, SearchResultItem } from '../types';
 
 const CATEGORIES = [
   'All Categories',
@@ -62,10 +63,24 @@ export const SearchPage: React.FC = () => {
   const [query, setQuery] = useState(searchParams.get('q') || '');
   const [selectedCategory, setSelectedCategory] = useState('All Categories');
   const [selectedLocation, setSelectedLocation] = useState('Worldwide (Global)');
-  const [providers, setProviders] = useState<{ exa: boolean; brave: boolean }>({
+  const [providers, setProviders] = useState<{ exa: boolean; google: boolean }>({
     exa: true,
-    brave: true,
+    google: true,
   });
+  const [usageStats, setUsageStats] = useState<ProviderUsageStat[]>([]);
+
+  const fetchUsageStats = async () => {
+    try {
+      const data = await api.getUsageAnalytics();
+      setUsageStats(data.providers || []);
+    } catch (err) {
+      console.warn('Unable to load provider usage analytics:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchUsageStats();
+  }, []);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeSearchId, setActiveSearchId] = useState<string | null>(null);
@@ -98,7 +113,7 @@ export const SearchPage: React.FC = () => {
 
     const activeProviders = [];
     if (providers.exa) activeProviders.push('exa');
-    if (providers.brave) activeProviders.push('brave');
+    if (providers.google) activeProviders.push('google');
 
     try {
       // POST 202 Accepted
@@ -121,6 +136,7 @@ export const SearchPage: React.FC = () => {
             setSearchProgress(100);
             setSearchCompleted(true);
             unsubscribe();
+            fetchUsageStats();
             // Fetch completed results
             try {
               const resData = await api.getSearchResults(searchId);
@@ -205,6 +221,53 @@ export const SearchPage: React.FC = () => {
 
       {/* Main Search Form Card */}
       <div className="rounded-xl bg-slate-900 border border-slate-800 p-6 shadow-xl">
+        {/* Quota Exhaustion Alert Banner */}
+        {usageStats.some((p) => p.quota_exhausted) && (
+          <div className="mb-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex items-start gap-3 shadow-lg">
+            <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="font-semibold text-rose-200">API Free Credits / Quota Depleted</p>
+              {usageStats
+                .filter((p) => p.quota_exhausted)
+                .map((p) => (
+                  <p key={p.provider} className="text-xs text-rose-300/90">
+                    <span className="font-semibold uppercase tracking-wider">{p.provider === 'google' ? 'Google Search' : p.provider.toUpperCase()}:</span>{' '}
+                    {p.last_error_message || 'Free credits finished or quota limit reached (HTTP 402/429). Please top up your API balance.'}
+                  </p>
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* Live Requests Sent Counter Bar */}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+          <div className="flex items-center gap-2 text-slate-300 font-medium">
+            <Zap className="w-4 h-4 text-sky-400" />
+            <span>API Requests Sent Till Now:</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-5">
+            {usageStats.map((p) => (
+              <div key={p.provider} className="flex items-center gap-2">
+                <span className="font-bold text-slate-300 uppercase tracking-wider">
+                  {p.provider === 'google' ? 'Google Search' : p.provider.toUpperCase()}:
+                </span>
+                <span className="px-2.5 py-0.5 rounded-md bg-slate-800 text-white font-mono font-semibold">
+                  {p.total_requests} requests
+                </span>
+                {p.quota_exhausted ? (
+                  <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-bold uppercase tracking-wider">
+                    ⚠️ Credits Finished
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-medium uppercase tracking-wider">
+                    Active
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
         <form onSubmit={handleSearchSubmit} className="space-y-6">
           {/* Query Bar */}
           <div>
@@ -276,11 +339,11 @@ export const SearchPage: React.FC = () => {
                 <label className="flex items-center gap-2 text-xs font-medium text-slate-300 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={providers.brave}
-                    onChange={(e) => setProviders({ ...providers, brave: e.target.checked })}
+                    checked={providers.google}
+                    onChange={(e) => setProviders({ ...providers, google: e.target.checked })}
                     className="rounded bg-slate-800 border-slate-600 text-sky-500 focus:ring-0"
                   />
-                  <span>Brave Web</span>
+                  <span>Google Search</span>
                 </label>
               </div>
             </div>

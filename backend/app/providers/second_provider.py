@@ -180,7 +180,25 @@ class ConfigurableSearchProvider(BaseSearchProvider):
                             http_status=200
                         )
 
-                    elif response.status_code in (429, 500, 502, 503, 504):
+                    elif response.status_code in (402, 429) or "quota" in response.text.lower() or "resource_exhausted" in response.text.lower():
+                        quota_msg = f"{self.name} API quota or rate limit exceeded (HTTP {response.status_code}): {response.text[:200]}"
+                        logger.error(quota_msg)
+                        return ProviderSearchResult(
+                            provider=self.name,
+                            success=False,
+                            error_message=quota_msg,
+                            http_status=response.status_code,
+                            usage=ProviderUsage(
+                                provider=self.name,
+                                endpoint=endpoint,
+                                http_status=response.status_code,
+                                latency_ms=round(latency_ms, 2),
+                                units_consumed=0,
+                                retry_count=attempt,
+                                response_meta={"quota_exhausted": True, "error": quota_msg}
+                            )
+                        )
+                    elif response.status_code in (500, 502, 503, 504):
                         last_error = f"HTTP {response.status_code}: {response.text[:200]}"
                         if attempt < retries:
                             await asyncio.sleep(0.5 * (2 ** attempt))

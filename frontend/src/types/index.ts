@@ -96,6 +96,9 @@ export interface ProviderUsageStat {
   max_latency_ms: number;
   total_units_consumed: number;
   total_estimated_cost?: number;
+  quota_exhausted?: boolean;
+  quota_status?: string;
+  last_error_message?: string;
 }
 
 export interface UsageAnalytics {
