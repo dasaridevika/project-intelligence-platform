@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 from typing import Any, Dict, List, Optional
 import httpx
@@ -27,7 +28,13 @@ class ConfigurableSearchProvider(BaseSearchProvider):
             name=provider_name,
             timeout_seconds=timeout_seconds or settings.SECOND_PROVIDER_TIMEOUT_SECONDS
         )
-        self.api_key = api_key or settings.SECOND_PROVIDER_API_KEY
+        self.api_key = (
+            api_key
+            or settings.SECOND_PROVIDER_API_KEY
+            or os.environ.get("GOOGLE_SEARCH_API_KEY")
+            or os.environ.get("SECOND_PROVIDER_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY")
+        )
         self.base_url = (base_url or settings.SECOND_PROVIDER_BASE_URL).rstrip("/")
 
     async def search(self, query: str, max_results: int = 20, **kwargs) -> ProviderSearchResult:

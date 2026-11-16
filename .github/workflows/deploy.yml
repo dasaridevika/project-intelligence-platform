@@ -1,0 +1,70 @@
+name: Deploy & Test with GitHub Secrets
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  test-and-verify:
+    name: Run Test Suite with Secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Backend Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run Pytest Suite
+        env:
+          APP_ENV: testing
+          DATABASE_URL: sqlite+aiosqlite:///:memory:
+          EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+          GOOGLE_SEARCH_API_KEY: ${{ secrets.GOOGLE_SEARCH_API_KEY }}
+          SECOND_PROVIDER_API_KEY: ${{ secrets.GOOGLE_SEARCH_API_KEY }}
+        run: |
+          cd backend
+          pytest tests/test_suite.py -v --tb=short
+
+  deploy-cloudflare:
+    name: Build Frontend & Deploy to Cloudflare
+    needs: test-and-verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build Frontend Production Bundle
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Deploy API Gateway & Static Assets to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiAuthentication: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: cloudflare/gateway
+          command: deploy
+
+      - name: Deploy Scheduled Worker to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiAuthentication: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          workingDirectory: cloudflare/scheduler
+          command: deploy

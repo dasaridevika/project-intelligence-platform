@@ -1,6 +1,7 @@
 import json
+import os
 from typing import List, Optional, Union
-from pydantic import AnyHttpUrl, field_validator
+from pydantic import AliasChoices, AnyHttpUrl, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,19 +40,28 @@ class Settings(BaseSettings):
     REDIS_CACHE_TTL_SECONDS: int = 3600
     REDIS_MAX_CONNECTIONS: int = 50
 
-    # Search Provider: Exa
-    EXA_API_KEY: Optional[str] = None
+    # Search Provider: Exa (Reads EXA_API_KEY from GitHub Secrets / Env)
+    EXA_API_KEY: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("EXA_API_KEY", "EXA_KEY")
+    )
     EXA_BASE_URL: str = "https://api.exa.ai"
     EXA_TIMEOUT_SECONDS: float = 15.0
     EXA_MAX_RESULTS: int = 20
 
-    # Search Provider: Second Configurable Provider (e.g. Google Search / Serper / Brave)
+    # Search Provider: Google Search (Reads GOOGLE_SEARCH_API_KEY or SECOND_PROVIDER_API_KEY from GitHub Secrets / Env)
     SECOND_PROVIDER_NAME: str = "google"
-    SECOND_PROVIDER_API_KEY: Optional[str] = None
+    SECOND_PROVIDER_API_KEY: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("GOOGLE_SEARCH_API_KEY", "SECOND_PROVIDER_API_KEY", "GOOGLE_API_KEY")
+    )
     SECOND_PROVIDER_BASE_URL: str = "https://www.googleapis.com/customsearch/v1"
     SECOND_PROVIDER_TIMEOUT_SECONDS: float = 15.0
     SECOND_PROVIDER_MAX_RESULTS: int = 20
-    GOOGLE_CSE_ID: Optional[str] = None
+    GOOGLE_CSE_ID: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("GOOGLE_CSE_ID", "GOOGLE_CX", "GOOGLE_SEARCH_CX")
+    )
 
     # Cloudflare Queue Settings
     CLOUDFLARE_ACCOUNT_ID: Optional[str] = None

@@ -131,9 +131,19 @@ async def get_api_usage_analytics(db: AsyncSession = Depends(get_db)):
 @router.get("/providers")
 async def list_configured_providers():
     """Lists configured external search providers and their connection statuses."""
-    exa_configured = bool(settings.EXA_API_KEY and settings.EXA_API_KEY != "your_exa_api_key_here")
+    import os
+    exa_configured = bool(
+        (settings.EXA_API_KEY or os.environ.get("EXA_API_KEY") or os.environ.get("EXA_KEY"))
+        and (settings.EXA_API_KEY or os.environ.get("EXA_API_KEY") or os.environ.get("EXA_KEY")) not in ("your_exa_api_key_here", "")
+    )
+    second_key = (
+        settings.SECOND_PROVIDER_API_KEY
+        or os.environ.get("GOOGLE_SEARCH_API_KEY")
+        or os.environ.get("SECOND_PROVIDER_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+    )
     second_configured = bool(
-        settings.SECOND_PROVIDER_API_KEY and settings.SECOND_PROVIDER_API_KEY != "your_secondary_search_api_key_here"
+        second_key and second_key not in ("your_secondary_search_api_key_here", "your_google_search_api_key_here", "")
     )
 
     return {

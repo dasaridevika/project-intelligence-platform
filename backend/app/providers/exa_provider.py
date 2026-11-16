@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 from typing import Any, Dict, List, Optional
 import httpx
@@ -25,7 +26,12 @@ class ExaProvider(BaseSearchProvider):
             name="exa",
             timeout_seconds=timeout_seconds or settings.EXA_TIMEOUT_SECONDS
         )
-        self.api_key = api_key or settings.EXA_API_KEY
+        self.api_key = (
+            api_key
+            or settings.EXA_API_KEY
+            or os.environ.get("EXA_API_KEY")
+            or os.environ.get("EXA_KEY")
+        )
         self.base_url = (base_url or settings.EXA_BASE_URL).rstrip("/")
 
     async def search(self, query: str, max_results: int = 20, **kwargs) -> ProviderSearchResult:
