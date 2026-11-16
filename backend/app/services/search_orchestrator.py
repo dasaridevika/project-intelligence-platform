@@ -4,7 +4,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import AsyncSessionLocal
 from app.core.logging import logger
@@ -17,7 +17,7 @@ from app.models.system import SystemError
 from app.providers.base import ProviderSearchResult, RawProviderResultItem
 from app.providers.registry import provider_registry
 from app.services.deduplicator import project_deduplicator
-from app.services.extractor import project_extractor
+from app.services.extractor import ExtractedProjectCandidate, project_extractor
 from app.services.normalizer import project_normalizer
 from app.services.ranker import project_ranker
 
@@ -95,6 +95,89 @@ class SearchOrchestrator:
                 search_run.status = "processing"
                 search_run.started_at = datetime.now(timezone.utc)
                 await session.commit()
+
+                # Phase 0: Database Cache & Duplicate Query Check
+                normalized_q = query.strip().lower()
+                prior_completed_stmt = (
+                    select(SearchRun)
+                    .where(
+                        func.lower(SearchRun.query) == normalized_q,
+                        SearchRun.status == "completed",
+                        SearchRun.results_count > 0,
+                        SearchRun.id != search_run_id
+                    )
+                    .order_by(SearchRun.completed_at.desc())
+                    .limit(1)
+                )
+                prior_run = (await session.execute(prior_completed_stmt)).scalar_one_or_none()
+
+                if prior_run:
+                    # Query existing SearchResults for this prior run
+                    prior_results_stmt = (
+                        select(SearchResult)
+                        .where(SearchResult.search_run_id == prior_run.id)
+                    )
+                    prior_sr_list = (await session.execute(prior_results_stmt)).scalars().all()
+
+                    if prior_sr_list:
+                        await self._emit_activity(
+                            session, search_run_id, "query_cache_hit", "database",
+                            f"Verified discovery cache hit: Query '{query}' already exists in database with {len(prior_sr_list)} verified projects. Reusing existing data without calling external APIs or LLM.",
+                            metadata={"prior_search_run_id": str(prior_run.id), "projects_count": len(prior_sr_list)},
+                            progress_pct=50
+                        )
+
+                        # Safely link existing projects as SearchResults for the current run
+                        linked_count = 0
+                        for psr in prior_sr_list:
+                            existing_link = (
+                                await session.execute(
+                                    select(SearchResult).where(
+                                        SearchResult.search_run_id == search_run_id,
+                                        SearchResult.project_id == psr.project_id
+                                    )
+                                )
+                            ).scalar_one_or_none()
+
+                            if not existing_link:
+                                new_sr = SearchResult(
+                                    id=uuid.uuid4(),
+                                    search_run_id=search_run_id,
+                                    project_id=psr.project_id,
+                                    relevance_score=psr.relevance_score,
+                                    ranking_factors=psr.ranking_factors
+                                )
+                                session.add(new_sr)
+                                linked_count += 1
+
+                        await self._emit_activity(
+                            session, search_run_id, "search_completed", "orchestrator",
+                            f"Discovery complete via database cache: {linked_count} projects linked. Total execution time: {(time.perf_counter() - start_time):.2f}s",
+                            metadata={"results_count": linked_count, "source": "database_cache"},
+                            progress_pct=100
+                        )
+
+                        # Complete search run
+                        search_run.status = "completed"
+                        search_run.results_count = linked_count
+                        search_run.completed_at = datetime.now(timezone.utc)
+                        search_run.duration_ms = (time.perf_counter() - start_time) * 1000.0
+
+                        # Mark outbox event processed
+                        outbox_stmt = select(OutboxEvent).where(OutboxEvent.search_run_id == search_run_id)
+                        outbox_events = (await session.execute(outbox_stmt)).scalars().all()
+                        for ev in outbox_events:
+                            ev.status = "processed"
+                            ev.processed_at = datetime.now(timezone.utc)
+
+                        await session.commit()
+
+                        return {
+                            "status": "completed",
+                            "results_count": linked_count,
+                            "source": "database_cache",
+                            "duration_ms": search_run.duration_ms
+                        }
 
                 # Phase 1: Query NLP Analysis
                 kw_preview = ", ".join(parsed_query.get("keywords", [])[:5])
@@ -202,18 +285,68 @@ class SearchOrchestrator:
                 seen_urls = set()
 
                 for idx, item in enumerate(all_raw_items, 1):
-                    url = item.url or ""
-                    # 1. URL Deduplication Check
-                    if url in seen_urls:
+                    raw_url = item.url or ""
+
+                    # 1. URL Validation Check (Protocol, Host, Domain Reputation, File Types)
+                    is_valid, clean_url, val_reason = project_normalizer.validate_and_normalize_url(raw_url)
+                    if not is_valid or not clean_url:
                         await self._emit_activity(
                             session, search_run_id, "candidate_rejected", "extractor",
-                            f"REJECTED URL: {url} -> Reason: Duplicate source URL already evaluated in this search run",
-                            metadata={"url": url, "reason": "duplicate_url"}
+                            f"REJECTED URL: {raw_url} -> Reason: {val_reason}",
+                            metadata={"url": raw_url, "reason": val_reason, "decision": "rejected"}
                         )
                         continue
-                    seen_urls.add(url)
 
-                    # 2. Evaluate candidate validity & extract structured parameters
+                    # 2. In-Memory URL Deduplication Check
+                    if clean_url in seen_urls:
+                        await self._emit_activity(
+                            session, search_run_id, "candidate_rejected", "extractor",
+                            f"REJECTED URL: {clean_url} -> Reason: Duplicate source URL already evaluated in this search run",
+                            metadata={"url": clean_url, "reason": "duplicate_url", "decision": "rejected"}
+                        )
+                        continue
+                    seen_urls.add(clean_url)
+
+                    # 3. Database Source Existence Check: Has this URL already been extracted?
+                    existing_src_stmt = select(ProjectSource).where(ProjectSource.source_url == clean_url)
+                    existing_src = (await session.execute(existing_src_stmt)).scalar_one_or_none()
+
+                    if existing_src:
+                        # Found existing ProjectSource in database! Fetch associated Project directly
+                        existing_proj_stmt = select(Project).where(Project.id == existing_src.project_id)
+                        existing_proj = (await session.execute(existing_proj_stmt)).scalar_one_or_none()
+
+                        if existing_proj:
+                            cached_cand = ExtractedProjectCandidate(
+                                canonical_name=existing_proj.canonical_name,
+                                category=existing_proj.category,
+                                status=existing_proj.status,
+                                developer=existing_proj.developer,
+                                location_city=existing_proj.location_city,
+                                location_state=existing_proj.location_state,
+                                location_country=existing_proj.location_country or "Global",
+                                investment_value=float(existing_proj.investment_value) if existing_proj.investment_value else None,
+                                investment_currency=existing_proj.investment_currency or "USD",
+                                capacity_value=float(existing_proj.capacity_value) if existing_proj.capacity_value else None,
+                                capacity_unit=existing_proj.capacity_unit,
+                                description=existing_proj.description or item.snippet,
+                                source_url=clean_url,
+                                source_title=existing_src.source_title or item.title,
+                                provider=existing_src.provider,
+                                publication_date=existing_src.publication_date,
+                                raw_snippet=existing_src.raw_snippet or item.snippet,
+                                metadata={"database_cached": True, "project_id": str(existing_proj.id)}
+                            )
+                            extracted_candidates.append(cached_cand)
+                            await self._emit_activity(
+                                session, search_run_id, "candidate_accepted", "database",
+                                f"ACCEPTED FROM DATABASE: '{existing_proj.canonical_name}' [{existing_proj.category}] (Source: {clean_url}) - Verified project record already in database",
+                                metadata={"url": clean_url, "project_name": existing_proj.canonical_name, "decision": "accepted", "source": "database_cache"}
+                            )
+                            continue
+
+                    # 4. Brand new, unextracted valid URL -> Evaluate candidate validity & extract structured parameters
+                    item.url = clean_url
                     cand, decision_reason, is_accepted = project_extractor.evaluate_and_extract(
                         item=item,
                         provider_name=item.extra_metadata.get("provider", "web"),
@@ -229,9 +362,9 @@ class SearchOrchestrator:
 
                         await self._emit_activity(
                             session, search_run_id, "candidate_accepted", "extractor",
-                            f"ACCEPTED: '{cand.canonical_name}' [{cand.category}]{dev_str}{loc_str}{cap_str}{inv_str} (Source: {url})",
+                            f"ACCEPTED: '{cand.canonical_name}' [{cand.category}]{dev_str}{loc_str}{cap_str}{inv_str} (Source: {clean_url})",
                             metadata={
-                                "url": url,
+                                "url": clean_url,
                                 "project_name": cand.canonical_name,
                                 "category": cand.category,
                                 "developer": cand.developer,
@@ -242,8 +375,8 @@ class SearchOrchestrator:
                     else:
                         await self._emit_activity(
                             session, search_run_id, "candidate_rejected", "extractor",
-                            f"REJECTED URL: {url} -> Reason: {decision_reason}",
-                            metadata={"url": url, "reason": decision_reason, "decision": "rejected"}
+                            f"REJECTED URL: {clean_url} -> Reason: {decision_reason}",
+                            metadata={"url": clean_url, "reason": decision_reason, "decision": "rejected"}
                         )
 
                 await self._emit_activity(

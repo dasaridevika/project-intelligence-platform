@@ -66,6 +66,70 @@ function cleanHtml(rawHtml: string): { title: string; metaDesc: string; text: st
   };
 }
 
+const INVALID_FILE_EXTS = [
+  ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp",
+  ".mp4", ".mp3", ".avi", ".mov", ".zip", ".tar", ".gz", ".exe",
+  ".csv", ".xlsx", ".docx", ".xml", ".rss", ".json"
+];
+
+const BLOCKED_DOMAINS = [
+  "wikipedia.org", "wiktionary.org", "dictionary.cambridge.org", "merriam-webster.com",
+  "dictionary.com", "investopedia.com", "britannica.com", "techtarget.com",
+  "statista.com", "coursera.org", "youtube.com", "youtu.be", "facebook.com",
+  "twitter.com", "x.com", "instagram.com", "tiktok.com", "pinterest.com",
+  "reddit.com", "quora.com", "linkedin.com", "accounts.google.com"
+];
+
+/**
+ * Validates candidate URL and blocks junk, social, non-HTML file types, and private IPs.
+ */
+function validateUrlAtEdge(targetUrl: string): { valid: boolean; cleanUrl?: string; reason?: string } {
+  try {
+    const parsed = new URL(targetUrl.trim());
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return { valid: false, reason: "Only HTTP and HTTPS protocols are permitted." };
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    if (!host || !host.includes(".")) {
+      return { valid: false, reason: "Invalid domain host." };
+    }
+
+    // SSRF prevention: disallow local and private network addresses
+    if (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host.startsWith("10.") ||
+      host.startsWith("192.168.") ||
+      host.startsWith("172.")
+    ) {
+      return { valid: false, reason: "Access to private or localhost addresses is blocked." };
+    }
+
+    // Domain reputation blacklist check
+    if (BLOCKED_DOMAINS.some((b) => host === b || host.endsWith("." + b))) {
+      return { valid: false, reason: `Domain '${host}' is on blocked non-project or reference list.` };
+    }
+
+    // File extension check: only HTML web pages permitted
+    const path = parsed.pathname.toLowerCase();
+    if (INVALID_FILE_EXTS.some((ext) => path.endsWith(ext))) {
+      return { valid: false, reason: "URL references a non-HTML file type." };
+    }
+
+    // Strip tracking parameters
+    const searchParams = new URLSearchParams(parsed.search);
+    const trackingKeys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "fbclid", "ref"];
+    trackingKeys.forEach((k) => searchParams.delete(k));
+    parsed.search = searchParams.toString();
+    parsed.hash = "";
+
+    return { valid: true, cleanUrl: parsed.toString() };
+  } catch (err: any) {
+    return { valid: false, reason: `Malformed URL: ${err?.message || err}` };
+  }
+}
+
 /**
  * Edge URL fetcher with standard browser headers and timeout guard.
  */
@@ -246,12 +310,25 @@ export default {
             return jsonResponse({ error: "Missing or invalid 'url' in request body" }, 400);
           }
 
-          const fetchResult = await fetchUrlContent(targetUrl);
-          if (!fetchResult.ok) {
+          // Pre-fetch URL & site reputation validation
+          const validation = validateUrlAtEdge(targetUrl);
+          if (!validation.valid || !validation.cleanUrl) {
             return jsonResponse(
               {
                 success: false,
                 url: targetUrl,
+                error: `Invalid or disallowed URL: ${validation.reason}`,
+              },
+              400
+            );
+          }
+
+          const fetchResult = await fetchUrlContent(validation.cleanUrl);
+          if (!fetchResult.ok) {
+            return jsonResponse(
+              {
+                success: false,
+                url: validation.cleanUrl,
                 error: fetchResult.error || "Failed to fetch target URL",
                 status: fetchResult.status,
               },
@@ -262,13 +339,13 @@ export default {
           const projectData = await extractProjectWithWorkersAI(
             env.AI,
             fetchResult.text,
-            targetUrl,
+            validation.cleanUrl,
             body?.category
           );
 
           return jsonResponse({
             success: true,
-            url: targetUrl,
+            url: validation.cleanUrl,
             source_title: fetchResult.title,
             meta_description: fetchResult.metaDesc,
             content_length: fetchResult.text.length,
@@ -283,13 +360,28 @@ export default {
       if (url.pathname === "/api/ai/batch-extract" && request.method === "POST") {
         try {
           const body: any = await request.json();
-          const urls: string[] = Array.isArray(body?.urls) ? body.urls.slice(0, 5) : [];
-          if (urls.length === 0) {
+          const rawUrls: string[] = Array.isArray(body?.urls) ? body.urls.slice(0, 5) : [];
+          if (rawUrls.length === 0) {
             return jsonResponse({ error: "Empty or invalid 'urls' array in request body" }, 400);
           }
 
+          // Deduplicate and validate all URLs
+          const validUrls: string[] = [];
+          const seen = new Set<string>();
+          for (const u of rawUrls) {
+            const v = validateUrlAtEdge(u);
+            if (v.valid && v.cleanUrl && !seen.has(v.cleanUrl)) {
+              seen.add(v.cleanUrl);
+              validUrls.push(v.cleanUrl);
+            }
+          }
+
+          if (validUrls.length === 0) {
+            return jsonResponse({ error: "None of the provided URLs are valid public web addresses" }, 400);
+          }
+
           const results = await Promise.allSettled(
-            urls.map(async (u) => {
+            validUrls.map(async (u) => {
               const f = await fetchUrlContent(u);
               if (!f.ok) return { url: u, success: false, error: f.error };
               const p = await extractProjectWithWorkersAI(env.AI, f.text, u, body?.category);
@@ -298,7 +390,7 @@ export default {
           );
 
           const items = results.map((r, i) =>
-            r.status === "fulfilled" ? r.value : { url: urls[i], success: false, error: "Task rejected" }
+            r.status === "fulfilled" ? r.value : { url: validUrls[i], success: false, error: "Task rejected" }
           );
 
           return jsonResponse({
