@@ -143,9 +143,6 @@ export const SearchPage: React.FC = () => {
       setActiveSearchId(searchId);
       setIsSubmitting(false);
 
-      // Trigger execution safeguard
-      api.executeSearchNow(searchId).catch((err) => console.warn('Dispatch trigger notice:', err));
-
       // Polling fallback in case SSE stream is buffered by proxy
       const pollTimer = setInterval(async () => {
         try {

@@ -88,6 +88,11 @@ class SearchOrchestrator:
                 if not search_run:
                     raise ValueError(f"SearchRun {search_run_id} not found in database")
 
+                # Idempotency check: prevent duplicate concurrent runs from conflicting
+                if search_run.status in ("completed", "processing"):
+                    logger.info(f"SearchRun {search_run_id} is already in '{search_run.status}' state. Skipping duplicate execution.")
+                    return {"status": search_run.status, "results_count": search_run.results_count}
+
                 search_run.status = "processing"
                 search_run.started_at = datetime.now(timezone.utc)
                 await session.commit()
@@ -264,6 +269,7 @@ class SearchOrchestrator:
                     )
 
                 # Phase 7: Persistence
+                seen_project_ids = set()
                 for rp in ranked_projects:
                     proj = rp.project
 
@@ -298,6 +304,11 @@ class SearchOrchestrator:
                         session.add(target_project)
                         await session.flush()
 
+                    # Prevent duplicate SearchResult entries for the same project in this search run
+                    if target_project.id in seen_project_ids:
+                        continue
+                    seen_project_ids.add(target_project.id)
+
                     # Save sources with deduplicated URL check
                     for src in proj.sources:
                         existing_src = (
@@ -323,15 +334,25 @@ class SearchOrchestrator:
                             )
                             session.add(new_source)
 
-                    # Create SearchResult junction
-                    search_result = SearchResult(
-                        id=uuid.uuid4(),
-                        search_run_id=search_run_id,
-                        project_id=target_project.id,
-                        relevance_score=rp.relevance_score,
-                        ranking_factors=rp.ranking_factors
-                    )
-                    session.add(search_result)
+                    # Create SearchResult junction safely
+                    existing_sr = (
+                        await session.execute(
+                            select(SearchResult).where(
+                                SearchResult.search_run_id == search_run_id,
+                                SearchResult.project_id == target_project.id
+                            )
+                        )
+                    ).scalar_one_or_none()
+
+                    if not existing_sr:
+                        search_result = SearchResult(
+                            id=uuid.uuid4(),
+                            search_run_id=search_run_id,
+                            project_id=target_project.id,
+                            relevance_score=rp.relevance_score,
+                            ranking_factors=rp.ranking_factors
+                        )
+                        session.add(search_result)
 
                 # Mark Outbox Event as processed
                 outbox_records = (

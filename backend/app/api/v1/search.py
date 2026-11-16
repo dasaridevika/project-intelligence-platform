@@ -122,14 +122,6 @@ async def create_search_run(
                 trace_id=trace_id
             )
         )
-        background_tasks.add_task(
-            search_orchestrator.execute_search,
-            search_run_id=search_run_id,
-            query=req.query,
-            parsed_query=parsed_query,
-            requested_providers=req.providers or ["exa", settings.SECOND_PROVIDER_NAME.lower()],
-            trace_id=trace_id
-        )
 
         # Auto-drain any queued runs if present from prior sessions
         queued_stmt = select(SearchRun).where(SearchRun.status == "queued", SearchRun.id != search_run_id).limit(5)
