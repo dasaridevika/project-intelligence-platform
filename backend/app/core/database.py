@@ -19,6 +19,12 @@ class Base(DeclarativeBase):
 def get_engine() -> AsyncEngine:
     """Creates and returns the async database engine based on configuration."""
     db_url = settings.DATABASE_URL
+    # Ensure async driver for PostgreSQL (e.g. from Railway/Supabase postgresql:// URLs)
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+    elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+"):
+        db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
     is_sqlite = db_url.startswith("sqlite")
 
     engine_kwargs = {
