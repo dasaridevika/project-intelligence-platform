@@ -1,6 +1,7 @@
 import axios from 'axios';
 import {
   ActivityEvent,
+  PrimarySector,
   Project,
   SearchResultItem,
   SearchRun,
@@ -115,6 +116,22 @@ export const api = {
 
   getMonitoringErrors: async (limit = 50): Promise<any[]> => {
     const res = await apiClient.get('/monitoring/errors', { params: { limit } });
+    return res.data;
+  },
+
+  // Primary Sectors Taxonomy (462 Sectors & Definitions)
+  listSectors: async (params?: { q?: string; group?: string; limit?: number }): Promise<{ total: number; groups: string[]; sectors: PrimarySector[] }> => {
+    const res = await apiClient.get('/sectors', { params });
+    return res.data;
+  },
+
+  getSectorGroups: async (): Promise<{ group: string; count: number }[]> => {
+    const res = await apiClient.get('/sectors/groups');
+    return res.data;
+  },
+
+  getSectorDetail: async (id: string): Promise<PrimarySector> => {
+    const res = await apiClient.get(`/sectors/${id}`);
     return res.data;
   },
 };

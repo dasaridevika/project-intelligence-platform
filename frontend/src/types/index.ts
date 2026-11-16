@@ -1,3 +1,11 @@
+export interface PrimarySector {
+  id: string;
+  sector: string;
+  group: string;
+  definition: string;
+  keywords?: string[];
+}
+
 export interface User {
   id: string;
   email: string;
@@ -51,6 +59,7 @@ export interface Project {
   announced_date?: string;
   estimated_completion_date?: string;
   description?: string;
+  metadata?: Record<string, any>;
   sources_count?: number;
   sources?: ProjectSource[];
   created_at: string;

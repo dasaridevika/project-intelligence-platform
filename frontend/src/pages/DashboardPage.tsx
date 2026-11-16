@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { SearchRun, UsageAnalytics, SystemHealth } from '../types';
+import { SectorBadge } from '../components/SectorBadge';
 
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
@@ -202,9 +203,7 @@ export const DashboardPage: React.FC = () => {
                         <span>• {run.total_duration_seconds}s</span>
                       )}
                       {run.parsed_query?.category && (
-                        <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-medium">
-                          {run.parsed_query.category}
-                        </span>
+                        <SectorBadge sectorName={run.parsed_query.category} />
                       )}
                       {run.parsed_query?.location && (
                         <span className="px-1.5 py-0.5 rounded bg-slate-800 text-sky-400">

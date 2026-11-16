@@ -20,6 +20,7 @@ Live search execution is streamed directly to browser clients using **Server-Sen
 - **Edge & Gateway Layer**: Cloudflare Workers API Gateway provides low-latency edge routing, rate limiting, CORS configuration, and serves React Static Assets.
 - **Transactional Outbox Delivery**: When a user submits a search, FastAPI atomically records `search_runs` and `outbox_events` in the same PostgreSQL ACID transaction and returns `HTTP 202 Accepted` immediately.
 - **Background Queue Processing**: A Scheduled Cloudflare Worker claims outbox events and dispatches them to **Cloudflare Queues**. A separately deployable **Python Pull Consumer** pulls batches, enforces idempotency via `processed_messages`, executes the search pipeline, and only acknowledges messages post-commit.
+- **462 Primary Sector Taxonomy & Definitions**: Complete integration of 462 canonical capital project sectors with official definitions, searchable taxonomy APIs (`/api/v1/sectors`), NLP query expansion, and interactive frontend definition cards.
 - **Global Multi-Currency Extraction**: Automatic extraction and normalization of projects in USD, EUR, GBP, JPY, AUD, CAD, SGD, AED, SAR, and INR.
 - **Real-Time Observability**: Fine-grained `activity_events`, provider latency metrics, error tracking, and system health monitoring.
 
@@ -62,7 +63,7 @@ project-intelligence-platform/
 │   │   ├── services/              # QueryProcessor, Extractor, Normalizer, Deduplicator, Ranker, Orchestrator
 │   │   └── main.py                # FastAPI ASGI application & middleware
 │   ├── alembic/                   # Alembic database migrations (001_initial_schema.py)
-│   ├── tests/                     # 30 passing automated tests
+│   ├── tests/                     # 33 passing automated tests
 │   ├── requirements.txt           # Python dependencies
 │   └── Dockerfile                 # Production ASGI container image
 ├── consumer/

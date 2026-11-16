@@ -44,6 +44,7 @@ from app.services.normalizer import project_normalizer
 from app.services.query_processor import query_processor
 from app.services.ranker import project_ranker
 from app.services.search_orchestrator import search_orchestrator
+from app.services.sector_service import sector_service
 
 # Consumer imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "consumer")))
@@ -610,6 +611,51 @@ def test_query_processor_solar_power():
     assert res["category"] == "Solar Power"
     assert res["location"] == "Telangana"
     assert res["status"] == "Upcoming"
+
+
+def test_sector_service_taxonomy_loaded():
+    sectors = sector_service.get_all()
+    assert len(sectors) == 462
+    groups = sector_service.get_groups()
+    assert "Batteries & Energy Storage" in groups
+    assert "Chemicals & Petrochemicals" in groups
+    assert "Power & Renewable Energy" in groups
+
+    cathode = sector_service.get_by_name("Battery Cathode Material Production Plant")
+    assert cathode is not None
+    assert "cathode active materials" in cathode["definition"].lower()
+    assert cathode["group"] == "Batteries & Energy Storage"
+
+    urea = sector_service.get_by_name("Urea Plant")
+    assert urea is not None
+    assert "nitrogen fertilizer" in urea["definition"].lower()
+
+
+def test_query_processor_with_primary_sectors():
+    res1 = query_processor.process("Tesla battery cathode gigafactory in Nevada")
+    assert res1["primary_sector"] == "Battery Cathode Material Production Plant"
+    assert res1["primary_sector_group"] == "Batteries & Energy Storage"
+    assert "cathode" in res1["primary_sector_definition"].lower()
+
+    res2 = query_processor.process("New Urea plant expansion in Gujarat")
+    assert res2["primary_sector"] == "Urea Plant"
+    assert res2["primary_sector_group"] == "Chemicals & Petrochemicals"
+    assert res2["location"] == "Gujarat"
+
+
+def test_extractor_primary_sector_metadata():
+    raw_item = RawProviderResultItem(
+        title="Redwood Materials commences construction on massive Battery Cathode plant in Nevada",
+        url="https://example.com/redwood-cathode-nevada",
+        snippet="Redwood Materials announced the expansion of its battery cathode active material production plant with $3.5B investment.",
+        published_date="2026-06-15T08:00:00Z"
+    )
+    candidate = project_extractor.extract_candidate(raw_item, provider_name="exa")
+    assert candidate is not None
+    assert candidate.category == "Battery Cathode Material Production Plant"
+    assert candidate.metadata["primary_sector"] == "Battery Cathode Material Production Plant"
+    assert "cathode" in candidate.metadata["primary_sector_definition"].lower()
+    assert candidate.metadata["primary_sector_group"] == "Batteries & Energy Storage"
 
 
 @pytest.mark.asyncio

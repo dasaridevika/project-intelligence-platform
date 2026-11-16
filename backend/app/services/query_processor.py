@@ -1,10 +1,15 @@
 import re
 from typing import Any, Dict, List, Optional
+from app.services.sector_service import sector_service
 
 
 class QueryProcessor:
-    """Parses and structures natural-language discovery queries for global capital projects."""
+    """Parses and structures natural-language discovery queries for global capital projects,
 
+    supporting the comprehensive 462 Primary Sector taxonomy and definitions.
+    """
+
+    # Legacy broad categories for high-level matching
     CATEGORY_PATTERNS = {
         "Data Center": [
             r"\bdata\s*centers?\b", r"\bhyperscale\b", r"\bserver\s*farm\b",
@@ -85,15 +90,7 @@ class QueryProcessor:
         "Rajasthan": [r"\brajasthan\b"],
         "Andhra Pradesh": [r"\bandhra\s*pradesh\b", r"\bandhra\b", r"\bap\b"],
 
-        # Countries (matched after specific hubs/cities)
-        "United States": [r"\bunited\s*states\b", r"\busa\b", r"\bu\.s\.\b", r"\bu\.s\b", r"\bamerica\b"],
-        "United Kingdom": [r"\bunited\s*kingdom\b", r"\buk\b", r"\bbritain\b", r"\bengland\b", r"\bscotland\b"],
-        "Germany": [r"\bgermany\b", r"\bdeutschland\b"],
-        "France": [r"\bfrance\b"],
-        "Netherlands": [r"\bnetherlands\b", r"\bholland\b"],
-        "Ireland": [r"\bireland\b"],
-        "Spain": [r"\bspain\b", r"\bespaña\b"],
-        "Italy": [r"\bitaly\b", r"\bitalia\b"],
+        # Countries
         "Japan": [r"\bjapan\b"],
         "South Korea": [r"\bsouth\s*korea\b", r"\bkorea\b"],
         "Taiwan": [r"\btaiwan\b"],
@@ -101,27 +98,12 @@ class QueryProcessor:
         "Indonesia": [r"\bindonesia\b"],
         "Australia": [r"\baustralia\b"],
         "India": [r"\bindia\b"],
-        "Saudi Arabia": [r"\bsaudi\s*arabia\b", r"\bsaudi\b", r"\bksa\b"],
-        "United Arab Emirates": [r"\buae\b", r"\bunited\s*arab\s*emirates\b"],
-        "Canada": [r"\bcanada\b"],
-        "Mexico": [r"\bmexico\b"],
-        "Brazil": [r"\bbrazil\b", r"\bbrasil\b"],
-        "Chile": [r"\bchile\b"],
-        "South Africa": [r"\bsouth\s*africa\b"],
-        "Egypt": [r"\begypt\b"],
-        "Kenya": [r"\bkenya\b"],
-
-        # Middle East
         "United Arab Emirates": [r"\buae\b", r"\bunited\s*arab\s*emirates\b", r"\bdubai\b", r"\babu\s*dhabi\b"],
         "Saudi Arabia": [r"\bsaudi\s*arabia\b", r"\bsaudi\b", r"\bksa\b", r"\briyadh\b", r"\bneom\b", r"\bdammam\b", r"\bjeddah\b"],
         "Qatar": [r"\bqatar\b", r"\bdoha\b"],
         "Oman": [r"\boman\b", r"\bmuscat\b"],
-
-        # Latin America
         "Brazil": [r"\bbrazil\b", r"\bbrasil\b", r"\bs[aã]o\s*paulo\b", r"\brio\b"],
         "Chile": [r"\bchile\b", r"\bsantiago\b"],
-
-        # Africa
         "South Africa": [r"\bsouth\s*africa\b", r"\bjohannesburg\b", r"\bcape\s*town\b"],
         "Egypt": [r"\begypt\b", r"\bcairo\b", r"\bsuez\b"],
         "Kenya": [r"\bkenya\b", r"\bnairobi\b"],
@@ -134,11 +116,30 @@ class QueryProcessor:
         "Operational": [r"\boperational\b", r"\bcommissioned\b", r"\bcompleted\b", r"\bactive\b", r"\bonline\b"]
     }
 
-    def process(self, query: str, explicit_categories: Optional[List[str]] = None, explicit_location: Optional[str] = None) -> Dict[str, Any]:
+    def process(
+        self,
+        query: str,
+        explicit_categories: Optional[List[str]] = None,
+        explicit_location: Optional[str] = None,
+        explicit_sector: Optional[str] = None
+    ) -> Dict[str, Any]:
         normalized_q = query.strip()
         lower_q = normalized_q.lower()
 
-        # Category extraction
+        # 1. Primary Sector Matching (462-sector taxonomy)
+        matched_sector_obj: Optional[Dict[str, Any]] = None
+
+        if explicit_sector:
+            matched_sector_obj = sector_service.get_by_name(explicit_sector) or sector_service.get_by_id(explicit_sector)
+
+        if not matched_sector_obj and explicit_categories and len(explicit_categories) > 0:
+            first_cat = explicit_categories[0]
+            matched_sector_obj = sector_service.get_by_name(first_cat) or sector_service.get_by_id(first_cat)
+
+        if not matched_sector_obj:
+            matched_sector_obj = sector_service.match_sector(normalized_q)
+
+        # 2. Legacy / Broad Category detection
         detected_category = explicit_categories[0] if (explicit_categories and len(explicit_categories) > 0) else None
         if not detected_category:
             for cat, patterns in self.CATEGORY_PATTERNS.items():
@@ -146,7 +147,10 @@ class QueryProcessor:
                     detected_category = cat
                     break
 
-        # Location extraction (worldwide)
+        if not detected_category and matched_sector_obj:
+            detected_category = matched_sector_obj.get("sector")
+
+        # 3. Location extraction (worldwide)
         detected_location = explicit_location
         if not detected_location:
             for loc, patterns in self.LOCATION_PATTERNS.items():
@@ -154,17 +158,20 @@ class QueryProcessor:
                     detected_location = loc
                     break
 
-        # Status extraction
+        # 4. Status extraction
         detected_status = None
         for stat, patterns in self.STATUS_PATTERNS.items():
             if any(re.search(pat, lower_q) for pat in patterns):
                 detected_status = stat
                 break
 
-        # Keywords generation
+        # 5. Salient Keywords & Synonyms Generation
         keywords = set()
         words = re.findall(r"\b[A-Za-z0-9_-]{3,}\b", lower_q)
-        stop_words = {"the", "and", "for", "with", "all", "find", "show", "search", "list", "projects", "project", "near", "global", "international"}
+        stop_words = {
+            "the", "and", "for", "with", "all", "find", "show", "search", "list",
+            "projects", "project", "near", "global", "international"
+        }
         for w in words:
             if w not in stop_words:
                 keywords.add(w)
@@ -176,9 +183,24 @@ class QueryProcessor:
         if detected_status:
             keywords.add(detected_status.lower())
 
+        primary_sector_name = None
+        primary_sector_def = None
+        primary_sector_group = None
+
+        if matched_sector_obj:
+            primary_sector_name = matched_sector_obj["sector"]
+            primary_sector_def = matched_sector_obj["definition"]
+            primary_sector_group = matched_sector_obj.get("group")
+            # Inject high-signal sector keywords
+            for kw in matched_sector_obj.get("keywords", [])[:6]:
+                keywords.add(kw.lower())
+
         return {
             "original_query": normalized_q,
-            "category": detected_category or "Capital Projects",
+            "category": detected_category or primary_sector_name or "Capital Projects",
+            "primary_sector": primary_sector_name or detected_category or "Capital Projects",
+            "primary_sector_definition": primary_sector_def,
+            "primary_sector_group": primary_sector_group,
             "location": detected_location or "Global",
             "status": detected_status or "Upcoming",
             "keywords": sorted(list(keywords)),

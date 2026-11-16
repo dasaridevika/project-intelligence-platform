@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { SearchResultItem, SearchRun } from '../types';
+import { SectorBadge } from '../components/SectorBadge';
 
 export const ResultsPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -173,9 +174,7 @@ export const ResultsPage: React.FC = () => {
               <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2 mb-1.5">
-                    <span className="px-2.5 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wider bg-sky-500/10 text-sky-400 border border-sky-500/20">
-                      {item.category}
-                    </span>
+                    <SectorBadge sectorName={item.category} />
                     <span className="px-2.5 py-0.5 rounded-md text-[11px] font-semibold uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
                       {item.status}
                     </span>

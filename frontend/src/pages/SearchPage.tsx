@@ -18,7 +18,9 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { subscribeToSearchEvents, SSEMessage } from '../services/sse';
-import { ActivityEvent, ProviderUsageStat, SearchResultItem } from '../types';
+import { ActivityEvent, PrimarySector, ProviderUsageStat, SearchResultItem } from '../types';
+import { SectorBadge } from '../components/SectorBadge';
+import { SectorSelector } from '../components/SectorSelector';
 
 const CATEGORIES = [
   'All Categories',
@@ -68,6 +70,19 @@ export const SearchPage: React.FC = () => {
     google: true,
   });
   const [usageStats, setUsageStats] = useState<ProviderUsageStat[]>([]);
+
+  const handleSelectSector = (sector: PrimarySector | null) => {
+    if (sector) {
+      setSelectedCategory(sector.sector);
+    } else {
+      setSelectedCategory('All Categories');
+    }
+  };
+
+  const handleApplySectorToQuery = (sectorName: string) => {
+    const loc = selectedLocation !== 'Worldwide (Global)' ? selectedLocation : 'worldwide';
+    setQuery(`Upcoming ${sectorName} projects in ${loc}`);
+  };
 
   const fetchUsageStats = async () => {
     try {
@@ -286,28 +301,18 @@ export const SearchPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Filters Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Target Category
-              </label>
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-slate-200 text-sm focus:outline-none focus:ring-1 focus:ring-sky-500"
-              >
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
+          {/* Primary Sector Taxonomy Selector (462 Sectors & Definitions) */}
+          <SectorSelector
+            selectedSector={selectedCategory}
+            onSelectSector={handleSelectSector}
+            onApplyToQuery={handleApplySectorToQuery}
+          />
 
+          {/* Filters Row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Target Region / Hub
+                Target Region / Geography
               </label>
               <select
                 value={selectedLocation}
@@ -480,7 +485,9 @@ export const SearchPage: React.FC = () => {
                     <td className="py-3 px-4 font-medium text-slate-200 max-w-xs truncate">
                       {item.canonical_name}
                     </td>
-                    <td className="py-3 px-4 text-slate-300">{item.category}</td>
+                    <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
+                      <SectorBadge sectorName={item.category} />
+                    </td>
                     <td className="py-3 px-4 text-slate-300">{item.developer || '—'}</td>
                     <td className="py-3 px-4 text-slate-300">
                       {[item.location_city, item.location_state, item.location_country].filter(Boolean).join(', ') || 'Global'}

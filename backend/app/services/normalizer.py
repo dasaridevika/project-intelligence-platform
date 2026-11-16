@@ -114,5 +114,14 @@ class ProjectNormalizer:
         norm = status.lower().strip()
         return self.STATUS_ALIASES.get(norm, status.strip().title())
 
+    def normalize_sector(self, sector: Optional[str]) -> Optional[str]:
+        if not sector:
+            return None
+        from app.services.sector_service import sector_service
+        match = sector_service.get_by_name(sector) or sector_service.match_sector(sector)
+        if match:
+            return match["sector"]
+        return sector.strip()
+
 
 project_normalizer = ProjectNormalizer()

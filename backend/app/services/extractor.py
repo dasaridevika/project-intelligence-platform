@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from app.core.logging import logger
 from app.providers.base import RawProviderResultItem
+from app.services.sector_service import sector_service
 
 
 @dataclass
@@ -391,14 +392,32 @@ class ProjectExtractor:
                 except ValueError:
                     pass
 
-        # 6. Canonical Project Name Formulation
+        # 6. Primary Sector Classification & Metadata Enrichment
+        matched_sector = sector_service.match_sector(text)
+        detected_category = default_category
+        meta_dict: Dict[str, Any] = {"extracted_at": datetime.now(timezone.utc).isoformat()}
+
+        if matched_sector:
+            detected_category = matched_sector["sector"]
+            meta_dict["primary_sector"] = matched_sector["sector"]
+            meta_dict["primary_sector_definition"] = matched_sector["definition"]
+            meta_dict["primary_sector_group"] = matched_sector.get("group")
+        elif default_category and default_category != "Capital Projects":
+            fallback_match = sector_service.get_by_name(default_category)
+            if fallback_match:
+                detected_category = fallback_match["sector"]
+                meta_dict["primary_sector"] = fallback_match["sector"]
+                meta_dict["primary_sector_definition"] = fallback_match["definition"]
+                meta_dict["primary_sector_group"] = fallback_match.get("group")
+
+        # 7. Canonical Project Name Formulation
         clean_title = re.sub(r"\s*-\s*[^-]+$", "", item.title)  # Remove news publisher suffix e.g. " - Reuters"
         clean_title = re.sub(r"^(?:Exclusive|Breaking|Update|Report|Special):\s*", "", clean_title, flags=re.IGNORECASE)
 
         canonical_name = clean_title.strip()
         if len(canonical_name) < 10 and detected_developer:
             loc_label = detected_city or detected_state or detected_country or "Global"
-            canonical_name = f"{detected_developer} {default_category} Project {loc_label}".strip()
+            canonical_name = f"{detected_developer} {detected_category} Project {loc_label}".strip()
 
         # Parse publication date if valid
         pub_dt = None
@@ -411,7 +430,7 @@ class ProjectExtractor:
 
         return ExtractedProjectCandidate(
             canonical_name=canonical_name,
-            category=default_category,
+            category=detected_category,
             status=detected_status,
             developer=detected_developer,
             location_city=detected_city,
@@ -427,7 +446,7 @@ class ProjectExtractor:
             provider=provider_name,
             publication_date=pub_dt,
             raw_snippet=item.snippet,
-            metadata={"extracted_at": datetime.now(timezone.utc).isoformat()}
+            metadata=meta_dict
         )
 
 

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
+  BookOpen,
   Building2,
   Calendar,
   CheckCircle2,
@@ -17,7 +18,9 @@ import {
   Zap
 } from 'lucide-react';
 import { api } from '../services/api';
-import { Project } from '../types';
+import { Project, PrimarySector } from '../types';
+import { SectorBadge } from '../components/SectorBadge';
+import primarySectorsData from '../data/primary_sectors.json';
 
 export const ProjectDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -66,6 +69,11 @@ export const ProjectDetailPage: React.FC = () => {
     );
   }
 
+  const matchedSector = (primarySectorsData as PrimarySector[]).find(
+    (s) => s.sector.toLowerCase() === project.category.toLowerCase() || s.id === project.category.toLowerCase()
+  );
+  const sectorDefinition = project.metadata?.primary_sector_definition || matchedSector?.definition;
+
   return (
     <div className="max-w-6xl mx-auto space-y-8">
       {/* Back button */}
@@ -84,9 +92,7 @@ export const ProjectDetailPage: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
           <div className="space-y-2 max-w-3xl">
             <div className="flex items-center gap-2">
-              <span className="px-2.5 py-0.5 rounded-md text-xs font-semibold uppercase tracking-wider bg-sky-500/10 text-sky-400 border border-sky-500/20">
-                {project.category}
-              </span>
+              <SectorBadge sectorName={project.category} />
               <span className="px-2.5 py-0.5 rounded-md text-xs font-semibold uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
                 {project.status}
               </span>
@@ -140,6 +146,19 @@ export const ProjectDetailPage: React.FC = () => {
             </span>
           </div>
         </div>
+
+        {/* Official Sector Definition Card */}
+        {sectorDefinition && (
+          <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 text-xs space-y-1.5">
+            <div className="flex items-center gap-2 text-sky-400 font-semibold text-xs">
+              <BookOpen className="w-4 h-4" />
+              <span>Official Primary Sector Definition: {matchedSector?.sector || project.category}</span>
+            </div>
+            <p className="text-slate-300 leading-relaxed italic">
+              "{sectorDefinition}"
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Description & Overview */}
