@@ -73,7 +73,7 @@ async def create_search_run(
                 "trace_id": trace_id,
                 "query": req.query,
                 "parsed_query": parsed_query,
-                "providers": req.providers or ["exa", "brave"]
+                "providers": req.providers or ["exa", settings.SECOND_PROVIDER_NAME.lower()]
             },
             status="pending"
         )

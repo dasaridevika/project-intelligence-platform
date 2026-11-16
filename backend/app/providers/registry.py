@@ -17,9 +17,12 @@ class ProviderRegistry:
         # Exa Provider
         self._providers["exa"] = ExaProvider()
 
-        # Secondary Configurable Provider (e.g. Brave)
+        # Secondary Configurable Provider (Google Search API / Brave / Serper)
         second_name = settings.SECOND_PROVIDER_NAME.lower()
-        self._providers[second_name] = ConfigurableSearchProvider(name=second_name)
+        second_provider = ConfigurableSearchProvider(name=second_name)
+        self._providers[second_name] = second_provider
+        self._providers["google"] = second_provider
+        self._providers["brave"] = second_provider
 
     def register(self, provider: BaseSearchProvider):
         self._providers[provider.name.lower()] = provider

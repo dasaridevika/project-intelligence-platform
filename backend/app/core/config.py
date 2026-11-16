@@ -45,12 +45,13 @@ class Settings(BaseSettings):
     EXA_TIMEOUT_SECONDS: float = 15.0
     EXA_MAX_RESULTS: int = 20
 
-    # Search Provider: Second Configurable Provider (e.g. Brave, Tavily)
-    SECOND_PROVIDER_NAME: str = "brave"
+    # Search Provider: Second Configurable Provider (e.g. Google Search / Serper / Brave)
+    SECOND_PROVIDER_NAME: str = "google"
     SECOND_PROVIDER_API_KEY: Optional[str] = None
-    SECOND_PROVIDER_BASE_URL: str = "https://api.search.brave.com/res/v1/web/search"
+    SECOND_PROVIDER_BASE_URL: str = "https://www.googleapis.com/customsearch/v1"
     SECOND_PROVIDER_TIMEOUT_SECONDS: float = 15.0
     SECOND_PROVIDER_MAX_RESULTS: int = 20
+    GOOGLE_CSE_ID: Optional[str] = None
 
     # Cloudflare Queue Settings
     CLOUDFLARE_ACCOUNT_ID: Optional[str] = None
