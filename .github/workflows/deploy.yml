@@ -1,4 +1,4 @@
-name: Deploy & Test with GitHub Secrets
+name: Test & Build with GitHub Secrets
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   test-and-verify:
-    name: Run Test Suite with Secrets
+    name: Run Test Suite with Search API Secrets
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,8 +35,8 @@ jobs:
           cd backend
           pytest tests/test_suite.py -v --tb=short
 
-  deploy-cloudflare:
-    name: Build Frontend & Deploy to Cloudflare
+  build-frontend:
+    name: Build Frontend Bundle
     needs: test-and-verify
     runs-on: ubuntu-latest
     steps:
@@ -54,17 +54,3 @@ jobs:
           cd frontend
           npm ci
           npm run build
-
-      - name: Deploy API Gateway & Static Assets to Cloudflare
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiAuthentication: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          workingDirectory: cloudflare/gateway
-          command: deploy
-
-      - name: Deploy Scheduled Worker to Cloudflare
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiAuthentication: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          workingDirectory: cloudflare/scheduler
-          command: deploy
