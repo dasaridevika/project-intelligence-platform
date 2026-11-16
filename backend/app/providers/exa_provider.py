@@ -26,12 +26,13 @@ class ExaProvider(BaseSearchProvider):
             name="exa",
             timeout_seconds=timeout_seconds or settings.EXA_TIMEOUT_SECONDS
         )
-        self.api_key = (
+        raw_key = (
             api_key
             or settings.EXA_API_KEY
             or os.environ.get("EXA_API_KEY")
             or os.environ.get("EXA_KEY")
         )
+        self.api_key = raw_key.strip().strip('"').strip("'") if raw_key else None
         self.base_url = (base_url or settings.EXA_BASE_URL).rstrip("/")
 
     async def search(self, query: str, max_results: int = 20, **kwargs) -> ProviderSearchResult:
@@ -158,12 +159,32 @@ class ExaProvider(BaseSearchProvider):
                         if attempt < retries:
                             await asyncio.sleep(0.5 * (2 ** attempt))
                             continue
-                    else:
+                    elif response.status_code == 401:
                         latency_ms = (time.perf_counter() - start_time) * 1000.0
+                        auth_msg = f"Exa API key unauthorized or invalid (HTTP 401): {response.text[:200]}"
+                        logger.error(auth_msg)
                         return ProviderSearchResult(
                             provider=self.name,
                             success=False,
-                            error_message=f"Exa API error: HTTP {response.status_code} - {response.text[:200]}",
+                            error_message=auth_msg,
+                            http_status=401,
+                            usage=ProviderUsage(
+                                provider=self.name,
+                                endpoint=endpoint,
+                                http_status=401,
+                                latency_ms=round(latency_ms, 2),
+                                units_consumed=0,
+                                retry_count=attempt,
+                                response_meta={"error": "Invalid or unauthorized API key (HTTP 401)"}
+                            )
+                        )
+                    else:
+                        latency_ms = (time.perf_counter() - start_time) * 1000.0
+                        err_text = f"Exa API error: HTTP {response.status_code} - {response.text[:200]}"
+                        return ProviderSearchResult(
+                            provider=self.name,
+                            success=False,
+                            error_message=err_text,
                             http_status=response.status_code,
                             usage=ProviderUsage(
                                 provider=self.name,
@@ -171,7 +192,8 @@ class ExaProvider(BaseSearchProvider):
                                 http_status=response.status_code,
                                 latency_ms=round(latency_ms, 2),
                                 units_consumed=0,
-                                retry_count=attempt
+                                retry_count=attempt,
+                                response_meta={"error": f"HTTP {response.status_code} error"}
                             )
                         )
 

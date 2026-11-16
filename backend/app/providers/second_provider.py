@@ -28,13 +28,14 @@ class ConfigurableSearchProvider(BaseSearchProvider):
             name=provider_name,
             timeout_seconds=timeout_seconds or settings.SECOND_PROVIDER_TIMEOUT_SECONDS
         )
-        self.api_key = (
+        raw_key = (
             api_key
             or settings.SECOND_PROVIDER_API_KEY
             or os.environ.get("GOOGLE_SEARCH_API_KEY")
             or os.environ.get("SECOND_PROVIDER_API_KEY")
             or os.environ.get("GOOGLE_API_KEY")
         )
+        self.api_key = raw_key.strip().strip('"').strip("'") if raw_key else None
         self.base_url = (base_url or settings.SECOND_PROVIDER_BASE_URL).rstrip("/")
 
     async def search(self, query: str, max_results: int = 20, **kwargs) -> ProviderSearchResult:
@@ -81,14 +82,36 @@ class ConfigurableSearchProvider(BaseSearchProvider):
                         }
                         response = await client.post(endpoint, headers=headers, json=payload)
                     elif is_google_custom_search:
-                        # Official Google Custom Search JSON API
+                        # Official Google Custom Search JSON API requires both key and cx (Search Engine ID)
+                        cse_id = (
+                            settings.GOOGLE_CSE_ID
+                            or os.environ.get("GOOGLE_CSE_ID")
+                            or os.environ.get("GOOGLE_CX")
+                            or os.environ.get("GOOGLE_SEARCH_CX")
+                        )
+                        if not cse_id:
+                            msg = "Google Custom Search requires GOOGLE_CSE_ID (Search Engine ID). Please configure GOOGLE_CSE_ID in environment."
+                            logger.warning(msg)
+                            return ProviderSearchResult(
+                                provider=self.name,
+                                success=False,
+                                error_message=msg,
+                                http_status=400,
+                                usage=ProviderUsage(
+                                    provider=self.name,
+                                    endpoint=endpoint,
+                                    http_status=400,
+                                    latency_ms=0.0,
+                                    units_consumed=0,
+                                    response_meta={"error": "Missing GOOGLE_CSE_ID (Search Engine ID)"}
+                                )
+                            )
                         params = {
                             "key": self.api_key,
                             "q": query,
-                            "num": min(max_results, 10)
+                            "num": min(max_results, 10),
+                            "cx": cse_id.strip().strip('"').strip("'")
                         }
-                        if settings.GOOGLE_CSE_ID:
-                            params["cx"] = settings.GOOGLE_CSE_ID
                         response = await client.get(endpoint, params=params)
                     elif is_serpapi:
                         # SerpApi Google Search
@@ -212,10 +235,16 @@ class ConfigurableSearchProvider(BaseSearchProvider):
                             continue
                     else:
                         latency_ms = (time.perf_counter() - start_time) * 1000.0
+                        err_snippet = response.text[:200]
+                        err_label = f"HTTP {response.status_code} error"
+                        if response.status_code == 400 and is_google_custom_search:
+                            err_label = "Google CSE ID missing or invalid (HTTP 400)"
+                        elif response.status_code == 401:
+                            err_label = "Invalid API key (HTTP 401)"
                         return ProviderSearchResult(
                             provider=self.name,
                             success=False,
-                            error_message=f"{self.name} API error: HTTP {response.status_code}",
+                            error_message=f"{self.name} API error: HTTP {response.status_code} - {err_snippet}",
                             http_status=response.status_code,
                             usage=ProviderUsage(
                                 provider=self.name,
@@ -223,7 +252,8 @@ class ConfigurableSearchProvider(BaseSearchProvider):
                                 http_status=response.status_code,
                                 latency_ms=round(latency_ms, 2),
                                 units_consumed=0,
-                                retry_count=attempt
+                                retry_count=attempt,
+                                response_meta={"error": err_label}
                             )
                         )
 
