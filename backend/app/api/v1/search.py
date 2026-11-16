@@ -113,6 +113,15 @@ async def create_search_run(
         )
 
         # Dispatch background orchestrator task to execute search immediately
+        asyncio.create_task(
+            search_orchestrator.execute_search(
+                search_run_id=search_run_id,
+                query=req.query,
+                parsed_query=parsed_query,
+                requested_providers=req.providers or ["exa", settings.SECOND_PROVIDER_NAME.lower()],
+                trace_id=trace_id
+            )
+        )
         background_tasks.add_task(
             search_orchestrator.execute_search,
             search_run_id=search_run_id,
@@ -126,13 +135,14 @@ async def create_search_run(
         queued_stmt = select(SearchRun).where(SearchRun.status == "queued", SearchRun.id != search_run_id).limit(5)
         queued_runs = (await db.execute(queued_stmt)).scalars().all()
         for qr in queued_runs:
-            background_tasks.add_task(
-                search_orchestrator.execute_search,
-                search_run_id=qr.id,
-                query=qr.query,
-                parsed_query=qr.parsed_query or {},
-                requested_providers=["exa", settings.SECOND_PROVIDER_NAME.lower()],
-                trace_id=f"drain-{qr.id}"
+            asyncio.create_task(
+                search_orchestrator.execute_search(
+                    search_run_id=qr.id,
+                    query=qr.query,
+                    parsed_query=qr.parsed_query or {},
+                    requested_providers=["exa", settings.SECOND_PROVIDER_NAME.lower()],
+                    trace_id=f"drain-{qr.id}"
+                )
             )
 
         return SearchCreateResponse(
@@ -179,6 +189,29 @@ async def get_search_run(search_id: uuid.UUID, db: AsyncSession = Depends(get_db
     if not search_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search run not found")
     return search_run
+
+
+@router.post("/{search_id}/execute")
+async def execute_search_now(
+    search_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Explicitly triggers execution for a queued or stalled search run."""
+    stmt = select(SearchRun).where(SearchRun.id == search_id)
+    search_run = (await db.execute(stmt)).scalar_one_or_none()
+    if not search_run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search run not found")
+
+    asyncio.create_task(
+        search_orchestrator.execute_search(
+            search_run_id=search_run.id,
+            query=search_run.query,
+            parsed_query=search_run.parsed_query or {},
+            requested_providers=["exa", settings.SECOND_PROVIDER_NAME.lower()],
+            trace_id=f"manual-exec-{search_run.id}"
+        )
+    )
+    return {"message": "Search execution triggered", "search_run_id": str(search_id), "status": "processing"}
 
 
 @router.get("/{search_id}/events")

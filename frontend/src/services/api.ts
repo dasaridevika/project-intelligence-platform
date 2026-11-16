@@ -52,6 +52,11 @@ export const api = {
     return res.data;
   },
 
+  executeSearchNow: async (id: string): Promise<any> => {
+    const res = await apiClient.post(`/search/${id}/execute`);
+    return res.data;
+  },
+
   getSearchResults: async (
     id: string
   ): Promise<{ search_run_id: string; query: string; status: string; total_results: number; results: SearchResultItem[] }> => {

@@ -143,11 +143,42 @@ export const SearchPage: React.FC = () => {
       setActiveSearchId(searchId);
       setIsSubmitting(false);
 
+      // Trigger execution safeguard
+      api.executeSearchNow(searchId).catch((err) => console.warn('Dispatch trigger notice:', err));
+
+      // Polling fallback in case SSE stream is buffered by proxy
+      const pollTimer = setInterval(async () => {
+        try {
+          const run = await api.getSearchRun(searchId);
+          if (run.status === 'completed' || run.status === 'partially_completed') {
+            clearInterval(pollTimer);
+            setSearchProgress(100);
+            setSearchCompleted(true);
+            setSearchStage('Search Complete');
+            const resData = await api.getSearchResults(searchId);
+            setDiscoveredResults(resData.results);
+            fetchUsageStats();
+          } else if (run.status === 'failed') {
+            clearInterval(pollTimer);
+            setSearchProgress(100);
+            setSearchCompleted(true);
+            setSearchStage('Execution Failed');
+            setErrorMsg('Search execution failed on providers.');
+          } else if (run.status === 'processing') {
+            setSearchStage('Extracting & Analyzing Projects...');
+            setSearchProgress((p) => Math.max(p, 50));
+          }
+        } catch (e) {
+          // ignore transient poll errors
+        }
+      }, 2000);
+
       // Connect to SSE Stream
       const unsubscribe = subscribeToSearchEvents(
         searchId,
         async (msg: SSEMessage) => {
           if (msg.event === 'done') {
+            clearInterval(pollTimer);
             setSearchProgress(100);
             setSearchCompleted(true);
             unsubscribe();

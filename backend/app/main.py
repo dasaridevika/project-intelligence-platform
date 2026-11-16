@@ -152,7 +152,8 @@ app.include_router(internal_outbox_router)
 async def root():
     return {
         "name": settings.APP_NAME,
-        "version": "1.0.0",
+        "version": "1.1.0",
+        "commit": "pipeline-live-v1.1",
         "status": "online",
         "environment": settings.APP_ENV,
         "docs": "/docs"
