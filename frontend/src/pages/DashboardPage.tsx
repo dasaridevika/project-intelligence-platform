@@ -49,13 +49,6 @@ export const DashboardPage: React.FC = () => {
     loadData();
   }, []);
 
-  const GLOBAL_QUERY_SUGGESTIONS = [
-    { title: 'Hyperscale Data Centers in Northern Virginia', category: 'Data Center', location: 'Northern Virginia' },
-    { title: 'TSMC & Intel Semiconductor Fabs in Europe and USA', category: 'Semiconductor', location: 'United States' },
-    { title: 'Solar Power Mega Projects in Saudi Arabia and India', category: 'Solar Power', location: 'Saudi Arabia' },
-    { title: 'Offshore Wind Farm Projects in UK & North Sea', category: 'Renewable Energy', location: 'United Kingdom' },
-  ];
-
   return (
     <div className="max-w-7xl mx-auto space-y-8">
       {/* Hero Banner */}
@@ -87,25 +80,6 @@ export const DashboardPage: React.FC = () => {
               <Database className="w-4 h-4" />
               <span>Browse Repository</span>
             </button>
-          </div>
-        </div>
-
-        {/* Global Suggestions Pills */}
-        <div className="mt-8 pt-6 border-t border-slate-800/80">
-          <p className="text-xs font-semibold uppercase tracking-wider text-slate-300 mb-3">
-            Popular Global Discovery Queries
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {GLOBAL_QUERY_SUGGESTIONS.map((s, idx) => (
-              <button
-                key={idx}
-                onClick={() => navigate(`/search?q=${encodeURIComponent(s.title)}`)}
-                className="text-xs px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 text-slate-300 flex items-center gap-1.5 transition-colors"
-              >
-                <span>{s.title}</span>
-                <ArrowRight className="w-3 h-3 text-sky-400" />
-              </button>
-            ))}
           </div>
         </div>
       </div>
