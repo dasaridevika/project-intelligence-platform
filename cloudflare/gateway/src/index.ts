@@ -79,12 +79,38 @@ export default {
           body = await request.clone().arrayBuffer();
         }
 
-        const backendResponse = await fetch(backendUrl.toString(), {
-          method: request.method,
-          headers: forwardedHeaders,
-          body,
-          redirect: "follow",
-        });
+        const maxRetries = 2;
+        let backendResponse: Response | null = null;
+        let lastError: any = null;
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            backendResponse = await fetch(backendUrl.toString(), {
+              method: request.method,
+              headers: forwardedHeaders,
+              body: body ? body.slice(0) : undefined,
+              redirect: "follow",
+            });
+
+            // If backend returned 502/503 (e.g. Render spinning up), retry if attempts remain
+            if ([502, 503, 504].includes(backendResponse.status) && attempt < maxRetries) {
+              await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+              continue;
+            }
+
+            break;
+          } catch (fetchErr: any) {
+            lastError = fetchErr;
+            if (attempt < maxRetries) {
+              await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+              continue;
+            }
+          }
+        }
+
+        if (!backendResponse) {
+          throw lastError || new Error("Backend connection timed out or unreachable.");
+        }
 
         // Copy backend response headers and apply CORS
         const responseHeaders = new Headers(backendResponse.headers);

@@ -388,8 +388,22 @@ export const SearchPage: React.FC = () => {
           </div>
 
           {errorMsg && (
-            <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
-              {errorMsg}
+            <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{errorMsg}</span>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  setErrorMsg(null);
+                  handleSearchSubmit(e as any);
+                }}
+                disabled={isSubmitting || !query.trim()}
+                className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 font-medium text-xs shrink-0 transition-colors self-end sm:self-auto"
+              >
+                Retry Search
+              </button>
             </div>
           )}
 

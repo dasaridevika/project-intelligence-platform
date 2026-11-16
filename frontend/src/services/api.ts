@@ -28,6 +28,30 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+// Auto-retry cold start errors (502, 503, 504) with exponential backoff
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error.config as any;
+    const status = error.response?.status;
+    const isColdStart = !error.response || (status && [502, 503, 504].includes(status));
+
+    if (config && isColdStart && (config.__retryCount || 0) < 3) {
+      config.__retryCount = (config.__retryCount || 0) + 1;
+      const delayMs = config.__retryCount * 2500;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return apiClient(config);
+    }
+
+    if (error.response && [502, 503, 504].includes(error.response.status)) {
+      error.message =
+        'Backend service is waking up from idle state (Render Free Tier cold start takes ~45s). Please wait a few seconds and try again.';
+    }
+
+    return Promise.reject(error);
+  }
+);
+
 export const api = {
   // Search
   createSearch: async (data: {
