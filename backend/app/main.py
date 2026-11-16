@@ -20,6 +20,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         f"Starting {settings.APP_NAME} in '{settings.APP_ENV}' mode",
         extra={"extra_data": {"version": "1.0.0", "env": settings.APP_ENV}}
     )
+    # Auto-initialize tables when running with SQLite
+    if settings.DATABASE_URL.startswith("sqlite"):
+        from app.core.database import engine
+        from app.models.base import Base
+        import app.models.user  # noqa: F401
+        import app.models.search  # noqa: F401
+        import app.models.project  # noqa: F401
+        import app.models.analytics  # noqa: F401
+        import app.models.outbox  # noqa: F401
+        import app.models.system  # noqa: F401
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Local SQLite database initialized with all 10 schema tables.")
+
     # Eager check of Redis & Database
     db_ok = await check_database_health()
     redis_health = await redis_service.health_check()
