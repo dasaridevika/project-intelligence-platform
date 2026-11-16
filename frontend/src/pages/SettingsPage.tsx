@@ -98,23 +98,23 @@ export const SettingsPage: React.FC = () => {
 
       {/* Deployment & Architecture Specs */}
       <div className="rounded-xl bg-slate-900 border border-slate-800 p-6 space-y-4">
-        <h2 className="text-base font-semibold text-white">Architecture & Security Policies</h2>
+        <h2 className="text-base font-semibold text-white">Architecture & Edge Specifications</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-slate-400">
           <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800">
-            <span className="text-slate-200 font-semibold block mb-1">Queue & At-Least-Once Delivery</span>
-            <p>Cloudflare Queues + Python Pull Consumer with deduplication via processed_messages.</p>
+            <span className="text-slate-200 font-semibold block mb-1">Cloudflare Workers AI</span>
+            <p>Meta Llama 3.1 8B Instruct (@cf/meta/llama-3.1-8b-instruct) executing directly at Cloudflare edge nodes.</p>
           </div>
           <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800">
-            <span className="text-slate-200 font-semibold block mb-1">Transactional Outbox</span>
-            <p>Search run creation and outbox publishing are committed atomically in PostgreSQL.</p>
+            <span className="text-slate-200 font-semibold block mb-1">Pre-LLM Deduplication & Cache</span>
+            <p>Zero duplicate URLs and duplicate query caching prevent redundant LLM inferences and external calls.</p>
           </div>
           <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800">
             <span className="text-slate-200 font-semibold block mb-1">Live Telemetry & SSE</span>
-            <p>Server-Sent Events with last-event-id replay and keepalive streams.</p>
+            <p>Real-time edge Server-Sent Events stream step-by-step pipeline discovery to the client.</p>
           </div>
           <div className="p-3 rounded-lg bg-slate-950/60 border border-slate-800">
-            <span className="text-slate-200 font-semibold block mb-1">Global Scope</span>
-            <p>International capital projects across North America, Europe, Asia-Pacific & Middle East.</p>
+            <span className="text-slate-200 font-semibold block mb-1">Edge Taxonomy Matching</span>
+            <p>462 primary industrial sectors indexed directly at the edge with synonym & category normalization.</p>
           </div>
         </div>
       </div>

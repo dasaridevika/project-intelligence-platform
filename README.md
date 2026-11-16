@@ -1,44 +1,54 @@
 # Project Intelligence Platform
 
-> **Enterprise AI-Powered Global Project Discovery & Intelligence Application**
-> Built with **React 18 + TypeScript + Cloudflare Workers + FastAPI + Cloudflare Queues + SQLite / PostgreSQL + Redis Cache + Exa AI + Google Search Providers**
+> **100% Serverless Edge AI-Powered Global Capital Project Intelligence Platform**
+> Built with **React 18 + TypeScript + Cloudflare Workers AI (Meta Llama 3.1 8B Instruct) + Edge Web Fetcher + 462 Primary Sector Taxonomy**
 
 ---
 
-## 🌟 Executive Overview
+## 🌟 Overview
 
-The **Project Intelligence Platform** is a production-grade capital projects discovery engine. It accepts natural-language discovery queries for capital projects worldwide—including **hyperscale data centers, semiconductor fabs, solar mega-parks, offshore wind developments, battery gigafactories, and major infrastructure corridors** across **North America, Europe, Asia-Pacific, the Middle East, Latin America, and Africa**.
+The **Project Intelligence Platform** is a serverless, edge-native discovery engine for global capital projects. The entire application runs at Cloudflare's global edge without legacy containers, slow cold starts, or 502 errors.
 
-The platform orchestrates parallel search queries across **Exa AI Neural Search** and **Google Search API**, parses source content without hallucinating missing data, normalizes multi-currency financial valuations and capacities, deduplicates records into canonical projects with complete evidentiary provenance, ranks results with transparent scoring, and persists high-fidelity records.
+### Core Capabilities
 
-Live search execution, including URL fetching logs and transparent candidate acceptance/rejection decisions, is streamed directly to browser clients using **Server-Sent Events (SSE)** and monitored via the **Live System Activity Feed**.
+1. **Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct`)**:
+   - Executes structured entity extraction directly on Cloudflare edge GPUs.
+   - Extracts canonical project name, developer, sector, investment valuation, capacity, location, status, and evidentiary quote from raw webpage HTML.
+
+2. **Pre-LLM Deduplication & Cache Guardrails**:
+   - **Zero Duplicate Queries**: Checks edge memory store before initiating external calls or LLM queries.
+   - **Zero Duplicate URLs**: Normalizes URLs (stripping UTM tracking parameters, session fragments, trailing slashes) and deduplicates across past and active discovery runs.
+   - **Strict Domain Reputation Filter**: Automatically rejects encyclopedias, dictionaries, social media, auth portals, and non-HTML assets (PDFs, media files).
+
+3. **Edge Web Fetcher**:
+   - Fetches live web pages with timeout guards and User-Agent headers.
+   - Strips scripts, styles, navigation bars, footers, and HTML noise, passing high-density prose to the LLM.
+
+4. **462 Primary Industrial Sectors Taxonomy**:
+   - Indexes all 462 official capital project sectors with definitions, synonyms, and subcategories directly at the edge (`primary_sectors.json`).
+   - Normalizes queries and extracts taxonomy tags automatically.
+
+5. **Unified Edge Architecture**:
+   - Handled completely by `cloudflare/gateway/index.js` (no Python containers, no Render spin-downs).
+   - Serves the production React 18 SPA statically via Cloudflare Workers Assets.
+   - Exposes REST endpoints (`/api/v1/search`, `/api/v1/projects`, `/api/v1/sectors`, `/api/v1/analytics`, `/api/v1/monitoring`) and real-time SSE telemetry (`/api/v1/search/:id/events`).
 
 ---
 
 ## 🏗️ Architecture
 
-- **Edge & Gateway Layer**: Cloudflare Workers API Gateway provides low-latency edge routing, rate limiting, CORS configuration, and serves React Static Assets.
-- **In-Process & Queue Orchestrator**: FastAPI executes the search discovery pipeline asynchronously with immediate background task dispatch, URL extraction, candidate metric auditing, entity resolution, and explainable scoring.
-- **462 Primary Sector Taxonomy & Definitions**: Complete integration of 462 canonical capital project sectors with official definitions, searchable taxonomy APIs (`/api/v1/sectors`), NLP query expansion, and interactive frontend definition cards.
-- **Global Multi-Currency Extraction**: Automatic extraction and normalization of projects in USD, EUR, GBP, JPY, AUD, CAD, SGD, AED, SAR, and INR.
-- **Transparent Logging**: Real-time audit logs of which URLs are fetched, whether each candidate was accepted or rejected with explicit reasons, and relevance score breakdowns.
-
 ```mermaid
 flowchart TD
-    User["Client Browser (React 18 + Vite + Tailwind)"] -->|"HTTPS Requests"| Gateway["Cloudflare Worker API Gateway"]
-    Gateway -->|"Serve Static Assets"| CDN["Cloudflare Edge CDN"]
-    Gateway -->|"Forward API Requests"| API["FastAPI Application (Render Web Service)"]
-
-    API -->|"Atomic Outbox Write"| DB[("Database (PostgreSQL / SQLite)")]
-    API -->|"Execute Discovery Pipeline"| Orchestrator["Search Orchestrator Engine"]
-
-    Orchestrator -->|"Parallel Semantic Search"| Exa["Exa Neural Search API"]
-    Orchestrator -->|"Parallel Web Search"| Google["Google Search Provider"]
-    Orchestrator -->|"Verified Project Index"| Fallback["Capital Project Discovery Repository"]
-    Orchestrator -->|"Entity Resolution & Deduplication"| DB
-    Orchestrator -->|"Update Progress State"| Cache[("Cache (Redis / In-Memory)")]
-
-    User -->|"Live SSE Stream / Monitoring"| API
+    User["Client Browser (React 18 + Vite + Tailwind)"] -->|"HTTPS / REST / SSE"| Worker["Cloudflare Edge AI Worker (index.js)"]
+    
+    subgraph Cloudflare Global Edge
+        Worker -->|"Serve React SPA"| Assets["Static Assets Binding (env.ASSETS)"]
+        Worker -->|"Pre-LLM Cache & Dedup"| Cache[("Edge Memory & Query Cache")]
+        Worker -->|"Fetch Live Content"| WebFetcher["Edge Web Fetcher (fetch)"]
+        Worker -->|"Structured Extraction"| WorkersAI["Cloudflare Workers AI (@cf/meta/llama-3.1-8b-instruct)"]
+        Worker -->|"Taxonomy Matching"| Taxonomy["462 Primary Sectors Index"]
+        Worker -->|"Real-Time Events"| SSE["Server-Sent Events Stream"]
+    end
 ```
 
 ---
@@ -47,86 +57,51 @@ flowchart TD
 
 ```
 project-intelligence-platform/
-├── backend/
-│   ├── app/
-│   │   ├── api/
-│   │   │   ├── v1/                # Auth, Search, Projects, Analytics, Monitoring, Sectors
-│   │   │   └── internal/          # Outbox claiming & publication confirmation
-│   │   ├── core/                  # Config, Database engine, Redis service, Security, Logging
-│   │   ├── data/                  # 462 Primary sectors taxonomy (CSV & JSON)
-│   │   ├── models/                # 10 SQLAlchemy 2.x relational models
-│   │   ├── providers/             # ExaProvider, ConfigurableSearchProvider, ProviderRegistry
-│   │   ├── schemas/               # Strict Pydantic v2 schemas
-│   │   ├── services/              # QueryProcessor, Extractor, Normalizer, Deduplicator, Ranker, Orchestrator, DiscoveryRepository
-│   │   └── main.py                # FastAPI ASGI application & middleware
-│   ├── alembic/                   # Alembic database migrations
-│   ├── tests/                     # Automated test suite
-│   ├── requirements.txt           # Python dependencies
-│   └── Dockerfile                 # Production ASGI container image
 ├── cloudflare/
-│   ├── gateway/                   # Cloudflare Worker API Gateway + Static Assets
-│   └── scheduler/                 # Cloudflare Scheduled Worker Outbox Publisher
-├── consumer/
-│   ├── consumer.py                # Python Pull Consumer for Cloudflare Queues
-│   ├── queue_client.py            # Cloudflare Queues Pull client
-│   └── Dockerfile                 # Container image for worker pool
+│   └── gateway/
+│       ├── index.js               # Unified Edge AI Worker & API (all endpoints, LLM extraction, fetcher)
+│       ├── package.json           # Cloudflare Worker scripts (dev, deploy)
+│       ├── primary_sectors.json   # 462 canonical industrial sectors and definitions
+│       └── wrangler.jsonc         # Wrangler config with Workers AI and static assets binding
 ├── frontend/
+│   ├── dist/                      # Production build assets served by the Worker
 │   ├── src/
-│   │   ├── components/            # Layout, Sidebar, Header, SectorSelector, SectorBadge
-│   │   ├── data/                  # 462 Primary sectors taxonomy JSON
-│   │   ├── pages/                 # 8 Full Enterprise Pages
-│   │   ├── services/              # API Client (Axios), SSE Stream Subscriber
-│   │   ├── types/                 # Comprehensive TypeScript definitions
-│   │   └── App.tsx                # React Router routing
-│   ├── package.json
-│   ├── vite.config.ts
-│   └── tailwind.config.js
-├── scripts/                       # Deployment and local startup scripts
-├── docker-compose.yml             # Unified local container orchestration
-├── render.yaml                    # Render Web Service blueprint
-└── requirements.txt               # Root Python dependencies for Render
+│   │   ├── components/            # SectorBadge, SectorSelector, layout components
+│   │   ├── data/                  # primary_sectors.json taxonomy
+│   │   ├── pages/                 # Search, Results, Projects, Detail, Analytics, Monitoring, Settings
+│   │   ├── services/              # API client & SSE streaming service
+│   │   └── types/                 # TypeScript interfaces
+│   ├── package.json               # Frontend dependencies & scripts
+│   └── vite.config.ts             # Vite bundler configuration
+├── .gitignore                     # Git ignore rules
+└── README.md                      # Platform documentation
 ```
 
 ---
 
-## ⚡ Quick Start
+## 🚀 Development & Deployment
 
-### 1. Run Automated Tests
+### 1. Frontend Development
+
 ```bash
-cd backend
-pytest tests/test_suite.py -v
-```
-
-### 2. Local Development (No External Services Required)
-The platform runs self-contained on local SQLite with an automatic in-memory fallback cache:
-
-```powershell
-# Start Backend API (FastAPI on http://localhost:8000)
-powershell -ExecutionPolicy Bypass -File .\scripts\start-backend.ps1
-
-# Start Frontend UI (Vite dev server on http://localhost:5173)
-powershell -ExecutionPolicy Bypass -File .\scripts\start-frontend.ps1
-```
-
-### 3. Deploy to Cloudflare Edge
-Deploy frontend static assets and the API gateway worker:
-
-```powershell
 cd frontend
+npm install
 npm run build
+```
 
-cd ../cloudflare/gateway
+### 2. Cloudflare Edge Worker Deployment
+
+```bash
+cd cloudflare/gateway
 npx wrangler deploy
 ```
 
+The unified worker will automatically bundle the React SPA from `frontend/dist` and deploy the edge application to your Cloudflare domain.
+
 ---
 
-## 🗄️ Production Deployment (Render + Cloudflare Gateway)
+## 🛡️ Security & Privacy Guardrails
 
-- **Database**: Zero-config SQLite (`sqlite+aiosqlite:///./project_intelligence.db`) is supported natively without external database credentials. If connecting external PostgreSQL, set `DATABASE_URL=postgresql+asyncpg://...` in environment variables.
-- **Search Providers**:
-  Configure provider keys in the Render Web Service Environment dashboard:
-  - `EXA_API_KEY`: Exa Neural Search API key
-  - `GOOGLE_SEARCH_API_KEY`: Google Custom Search API key *(optional)*
-  - `GOOGLE_CSE_ID`: Google Custom Search Engine ID *(optional)*
-- **Resilient Fallback**: If external provider credentials are unconfigured or rate-limited, the platform automatically draws from its verified capital project intelligence repository so discovery runs always succeed.
+- **Zero Client-Side Secrets**: All API requests and Workers AI calls execute server-side in the Worker.
+- **Strict URL Sanitation**: Blocks private IP addresses, localhost, RFC 1918 ranges, and malformed URLs.
+- **No Hallucination Mandate**: The LLM extraction prompt strictly instructs Llama 3.1 to only extract explicitly stated metrics and leave unconfirmed values null.
