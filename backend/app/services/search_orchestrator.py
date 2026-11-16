@@ -17,7 +17,6 @@ from app.models.system import SystemError
 from app.providers.base import ProviderSearchResult, RawProviderResultItem
 from app.providers.registry import provider_registry
 from app.services.deduplicator import project_deduplicator
-from app.services.discovery_repository import discovery_repository
 from app.services.extractor import project_extractor
 from app.services.normalizer import project_normalizer
 from app.services.ranker import project_ranker
@@ -177,15 +176,12 @@ class SearchOrchestrator:
                                 metadata={"error": err_desc, "http_status": res.http_status}
                             )
 
-                # Fallback to verified global capital project discovery repository if external providers returned 0 items
                 if len(all_raw_items) == 0:
                     await self._emit_activity(
-                        session, search_run_id, "provider_fallback", "orchestrator",
-                        f"External providers returned 0 items or unconfigured. Engaging verified global capital project intelligence repository for '{query}'",
+                        session, search_run_id, "provider_notice", "orchestrator",
+                        f"External search providers returned 0 candidates for query: '{query}'",
                         progress_pct=35
                     )
-                    repo_items = discovery_repository.search_candidates(query, parsed_query)
-                    all_raw_items.extend(repo_items)
 
                 # Log each individual candidate URL being fetched into the pipeline
                 for idx, r_item in enumerate(all_raw_items, 1):
@@ -249,41 +245,6 @@ class SearchOrchestrator:
                             f"REJECTED URL: {url} -> Reason: {decision_reason}",
                             metadata={"url": url, "reason": decision_reason, "decision": "rejected"}
                         )
-
-                # Quality safeguard: if external providers yielded fewer than 3 valid project candidates,
-                # supplement with verified global capital projects matching the query taxonomy
-                if len(extracted_candidates) < 3:
-                    await self._emit_activity(
-                        session, search_run_id, "provider_supplement", "orchestrator",
-                        f"External results yielded {len(extracted_candidates)} valid projects. Supplementing with verified global capital project repository for '{query}'",
-                        progress_pct=60
-                    )
-                    repo_items = discovery_repository.search_candidates(query, parsed_query)
-                    for r_item in repo_items:
-                        if r_item.url in seen_urls:
-                            continue
-                        seen_urls.add(r_item.url)
-                        c, r_reason, is_ok = project_extractor.evaluate_and_extract(
-                            item=r_item,
-                            provider_name=r_item.extra_metadata.get("provider", "verified_capital_index"),
-                            default_category=parsed_query.get("category", "Capital Projects")
-                        )
-                        if is_ok and c:
-                            extracted_candidates.append(c)
-                            cap_str = f" | Capacity: {c.capacity_value} {c.capacity_unit}" if c.capacity_value else ""
-                            inv_str = f" | Investment: {c.investment_currency or '$'} {c.investment_value:,.0f}" if c.investment_value else ""
-                            loc_str = f" | Location: {c.location_city or c.location_state or c.location_country or 'Global'}"
-                            await self._emit_activity(
-                                session, search_run_id, "candidate_accepted", "extractor",
-                                f"ACCEPTED VERIFIED: '{c.canonical_name}' [{c.category}] | Developer: {c.developer or 'Verified'}{loc_str}{cap_str}{inv_str} (Source: {r_item.url})",
-                                metadata={"url": r_item.url, "project_name": c.canonical_name, "category": c.category, "decision": "accepted"}
-                            )
-                        else:
-                            await self._emit_activity(
-                                session, search_run_id, "candidate_rejected", "extractor",
-                                f"REJECTED: {r_item.url} -> Reason: {r_reason}",
-                                metadata={"url": r_item.url, "reason": r_reason, "decision": "rejected"}
-                            )
 
                 await self._emit_activity(
                     session, search_run_id, "extraction_completed", "extractor",

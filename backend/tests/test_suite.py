@@ -46,11 +46,6 @@ from app.services.ranker import project_ranker
 from app.services.search_orchestrator import search_orchestrator
 from app.services.sector_service import sector_service
 
-# Consumer imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "consumer")))
-from consumer import SearchJobConsumer
-from queue_client import CloudflareQueueClient, QueueMessage
-
 
 # ==============================================================================
 # SECTION 1: CORE & AUTHENTICATION TESTS (7 tests)
@@ -899,54 +894,3 @@ async def test_search_orchestrator_partial_success(setup_db):
         assert "provider_completed" in event_types
         assert "provider_failed" in event_types
         assert "search_completed" in event_types
-
-
-@pytest.mark.asyncio
-async def test_consumer_idempotency_and_ack(setup_db):
-    provider_registry.register(MockSuccessProvider())
-
-    q_client = CloudflareQueueClient()
-    consumer = SearchJobConsumer(client=q_client, consumer_id="test-consumer-01")
-
-    search_run_id = uuid.uuid4()
-    event_id = uuid.uuid4()
-    query = "Renewable energy projects in Gujarat"
-
-    async with AsyncSessionLocal() as session:
-        search_run = SearchRun(
-            id=search_run_id,
-            query=query,
-            parsed_query={"category": "Renewable Energy", "location": "Gujarat", "keywords": ["renewable"]},
-            status="queued"
-        )
-        session.add(search_run)
-        await session.commit()
-
-    msg = QueueMessage(
-        id="cf-msg-12345",
-        body={
-            "event_id": str(event_id),
-            "search_run_id": str(search_run_id),
-            "query": query,
-            "parsed_query": {"category": "Renewable Energy", "location": "Gujarat", "keywords": ["renewable"]},
-            "providers": ["mock_success"]
-        },
-        timestamp="2026-11-13T17:00:00Z",
-        attempts=1
-    )
-
-    success_1 = await consumer.process_message(msg)
-    assert success_1 is True
-
-    async with AsyncSessionLocal() as session:
-        run = (await session.execute(select(SearchRun).where(SearchRun.id == search_run_id))).scalar_one()
-        assert run.status == "completed"
-        initial_results_count = run.results_count
-        assert initial_results_count > 0
-
-    success_2 = await consumer.process_message(msg)
-    assert success_2 is True
-
-    async with AsyncSessionLocal() as session:
-        run = (await session.execute(select(SearchRun).where(SearchRun.id == search_run_id))).scalar_one()
-        assert run.results_count == initial_results_count

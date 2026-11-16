@@ -131,7 +131,7 @@ export const SectorSelector: React.FC<SectorSelectorProps> = ({
                   type="text"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Filter 462 sectors by name, keyword, or definition..."
+                  placeholder="Search sectors..."
                   className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
                   autoFocus
                 />

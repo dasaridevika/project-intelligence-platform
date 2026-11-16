@@ -115,7 +115,7 @@ export const ResultsPage: React.FC = () => {
 
         <input
           type="text"
-          placeholder="Filter by category..."
+          placeholder="Category..."
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}
           className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-500"
@@ -123,7 +123,7 @@ export const ResultsPage: React.FC = () => {
 
         <input
           type="text"
-          placeholder="Filter by status..."
+          placeholder="Status..."
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
           className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-500"

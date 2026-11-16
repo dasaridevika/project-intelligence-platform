@@ -71,8 +71,8 @@ export const Sidebar: React.FC = () => {
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500/60 animate-ping absolute inset-0" />
           </div>
           <div className="text-xs">
-            <p className="font-medium text-slate-200">Global Cluster Online</p>
-            <p className="text-[11px] text-slate-300">Workers + Cloud Run</p>
+            <p className="font-medium text-slate-200">Gateway Active</p>
+            <p className="text-[11px] text-slate-400">Edge Proxy</p>
           </div>
         </div>
       </div>

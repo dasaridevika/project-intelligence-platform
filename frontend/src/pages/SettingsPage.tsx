@@ -8,8 +8,6 @@ import {
   Lock,
   Server,
   Settings,
-  ShieldCheck,
-  User,
   XCircle
 } from 'lucide-react';
 import { api } from '../services/api';
@@ -38,41 +36,14 @@ export const SettingsPage: React.FC = () => {
       <div className="border-b border-slate-800 pb-6">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-sky-400 mb-1">
           <Settings className="w-4 h-4" />
-          <span>System & Account Configuration</span>
+          <span>System & Provider Configuration</span>
         </div>
         <h1 className="text-2xl font-bold text-white tracking-tight sm:text-3xl">
           Platform Settings
         </h1>
         <p className="text-sm text-slate-400 mt-1">
-          Review user credentials, external provider configuration statuses, and security boundaries.
+          Review external provider configuration statuses and security boundaries.
         </p>
-      </div>
-
-      {/* User Profile Card */}
-      <div className="rounded-xl bg-slate-900 border border-slate-800 p-6 space-y-6">
-        <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
-          <div className="w-10 h-10 rounded-full bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
-            <User className="w-5 h-5" />
-          </div>
-          <div>
-            <h2 className="text-base font-semibold text-white">Current Profile</h2>
-            <p className="text-xs text-slate-400">Session role and identity</p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-          <div>
-            <span className="text-slate-400 block mb-1">Authenticated Identity</span>
-            <span className="text-sm font-semibold text-slate-200">Principal Architect (System Admin)</span>
-          </div>
-          <div>
-            <span className="text-slate-400 block mb-1">Role & Permissions</span>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-sky-500/10 text-sky-400 border border-sky-500/20">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              Administrator
-            </span>
-          </div>
-        </div>
       </div>
 
       {/* Provider Status Card */}
