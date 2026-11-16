@@ -393,11 +393,15 @@ class ProjectExtractor:
                     pass
 
         # 6. Primary Sector Classification & Metadata Enrichment
-        matched_sector = sector_service.match_sector(text)
         detected_category = default_category
         meta_dict: Dict[str, Any] = {"extracted_at": datetime.now(timezone.utc).isoformat()}
 
-        if matched_sector:
+        # Match on title first (highest precision); only search full text if default_category is generic
+        matched_sector = sector_service.match_sector(item.title)
+        if not matched_sector and default_category in (None, "", "Capital Projects"):
+            matched_sector = sector_service.match_sector(text)
+
+        if matched_sector and (default_category in (None, "", "Capital Projects") or matched_sector["sector"].lower() in item.title.lower()):
             detected_category = matched_sector["sector"]
             meta_dict["primary_sector"] = matched_sector["sector"]
             meta_dict["primary_sector_definition"] = matched_sector["definition"]
@@ -459,17 +463,37 @@ class ProjectExtractor:
         url = item.url or ""
         url_lower = url.lower()
 
-        # 1. Non-article / legal / authentication page rejection
+        # 1. Non-article / legal / authentication / dictionary page rejection
         if not url:
             return None, "Source item contains no valid target URL", False
+
+        blocked_domains = [
+            "dictionary.cambridge.org", "merriam-webster.com", "wikipedia.org",
+            "wiktionary.org", "investopedia.com", "statista.com", "dictionary.com",
+            "britannica.com", "computerhope.com", "techtarget.com", "coursera.org",
+            "quora.com", "reddit.com"
+        ]
+        if any(d in url_lower for d in blocked_domains):
+            return None, "Source URL belongs to educational, dictionary, or glossary domain", False
 
         blocked_path_signals = [
             "/privacy-policy", "/terms-of-service", "/terms-of-use", "/terms",
             "/legal", "/login", "/signup", "/auth", "/signin", "/cookie-policy",
-            "/cart", "/checkout", "/wp-login.php"
+            "/cart", "/checkout", "/wp-login.php", "/dictionary/", "/definition/",
+            "/jargon/", "/glossary/", "/what-is/", "/what-is-a-", "/explainers/"
         ]
         if any(sig in url_lower for sig in blocked_path_signals):
-            return None, "Source URL points to legal, authentication, or navigation page", False
+            return None, "Source URL points to definition, glossary, or non-project page", False
+
+        # Reject non-project title starters (encyclopedia/glossary/explainer articles)
+        title_lower = (item.title or "").lower().strip()
+        non_project_title_starters = (
+            "what is a ", "what is an ", "what is ", "what are ",
+            "meaning of ", "definition of ", "how to ", "why is ",
+            "dictionary", "difference between ", "statistics & facts"
+        )
+        if any(title_lower.startswith(prefix) for prefix in non_project_title_starters):
+            return None, f"Title indicates informational or definition article ('{item.title[:60]}')", False
 
         # 2. Text substance check
         text = f"{item.title or ''}. {item.snippet or ''}".strip()
@@ -508,15 +532,20 @@ class ProjectExtractor:
             return None, "Unable to parse structured project entities from source text", False
 
         # 3. Capital project parameters check:
-        # Must have at least ONE concrete project metric
         has_developer = bool(cand.developer)
         has_capacity = cand.capacity_value is not None
         has_investment = cand.investment_value is not None
         has_specific_location = bool(cand.location_city or cand.location_state)
 
-        # Explicit rejection if it's generic market news with zero concrete metrics
-        if not has_developer and not has_capacity and not has_investment and not has_specific_location:
-            return None, "Lacks capital project metrics (no developer, capacity, capital expenditure, or specific site detected)", False
+        # Require genuine project indicators
+        project_keywords = ("project", "investment", "construct", "facility", "campus", "plant", "expansion", "announced", "develop", "groundbreak", "fab", "foundry")
+        has_project_intent = any(kw in text.lower() for kw in project_keywords)
+
+        if not has_project_intent:
+            return None, "Lacks capital project context (no construction, investment, campus, or facility terms detected)", False
+
+        if not (has_investment or has_capacity or (has_developer and has_specific_location)):
+            return None, "Lacks concrete project parameters (no investment value, capacity, or verified developer + location pair)", False
 
         return cand, "Confirmed project with identified industrial parameters", True
 

@@ -12,11 +12,11 @@ class QueryProcessor:
     # Legacy broad categories for high-level matching
     CATEGORY_PATTERNS = {
         "Data Center": [
-            r"\bdata\s*centers?\b", r"\bhyperscale\b", r"\bserver\s*farm\b",
+            r"\bdata\s*cent\w*\b", r"\bdatacent\w*\b", r"\bhyperscale\b", r"\bserver\s*farm\b",
             r"\bcolocation\b", r"\bcloud\s*infrastructure\b", r"\bai\s*cluster\b"
         ],
         "Solar Power": [
-            r"\bsolar\b", r"\bphotovoltaic\b", r"\bpv\s*plant\b",
+            r"\bsolar\w*\b", r"\bphotovoltaic\b", r"\bpv\s*plant\b",
             r"\bfloating\s*solar\b", r"\bsolar\s*farm\b"
         ],
         "Renewable Energy": [
@@ -25,8 +25,8 @@ class QueryProcessor:
             r"\bonshore\s*wind\b", r"\bgeothermal\b", r"\bhydro(?:electric)?\b"
         ],
         "Semiconductor": [
-            r"\bsemiconductors?\b", r"\bfab(?:rication)?\b", r"\bwafer\b",
-            r"\bchip\s*(?:making|manufacturing|assembly|packaging)?\b",
+            r"\bsemicondu\w*\b", r"\bfab(?:rication)?\b", r"\bwafer\b",
+            r"\bchip\w*\b",
             r"\batmp\b", r"\bosat\b", r"\bmicroelectronics\b"
         ],
         "Infrastructure": [
@@ -35,7 +35,7 @@ class QueryProcessor:
             r"\brail\s*(?:corridor|network)?\b", r"\btunnels?\b", r"\btransmission\s*line\b"
         ],
         "EV & Battery": [
-            r"\belectric\s*vehicles?\b", r"\bev\b", r"\bbattery\s*(?:plant|gigafactory|cell)?\b",
+            r"\belectric\s*vehicles?\b", r"\bev\b", r"\bbatter\w*\b",
             r"\bgigafactory\b", r"\benergy\s*storage\b", r"\bbess\b"
         ],
         "Hydrogen": [

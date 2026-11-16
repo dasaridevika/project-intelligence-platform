@@ -65,6 +65,21 @@ class ExaProvider(BaseSearchProvider):
             "type": "neural",
             "useAutoprompt": True,
             "numResults": min(max_results, settings.EXA_MAX_RESULTS),
+            "excludeDomains": [
+                "dictionary.cambridge.org",
+                "merriam-webster.com",
+                "wikipedia.org",
+                "wiktionary.org",
+                "investopedia.com",
+                "statista.com",
+                "dictionary.com",
+                "britannica.com",
+                "computerhope.com",
+                "techtarget.com",
+                "coursera.org",
+                "quora.com",
+                "reddit.com"
+            ],
             "contents": {
                 "text": {"maxCharacters": 1500}
             }

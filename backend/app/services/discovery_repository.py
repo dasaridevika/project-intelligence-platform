@@ -272,7 +272,7 @@ class DiscoveryRepository:
             if any(term in text for term in q_lower.split() if len(term) > 3):
                 relevance += 2
 
-            if relevance > 0 or not matches:
+            if relevance > 0:
                 matches.append(
                     RawProviderResultItem(
                         title=p["title"],
