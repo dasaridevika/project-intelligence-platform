@@ -214,7 +214,12 @@ export const SearchPage: React.FC = () => {
       );
     } catch (err: any) {
       setIsSubmitting(false);
-      setErrorMsg(err?.response?.data?.detail || 'Failed to submit discovery search.');
+      const errorDetail =
+        err?.response?.data?.detail ||
+        err?.response?.data?.message ||
+        err?.message ||
+        'Failed to connect to backend service.';
+      setErrorMsg(errorDetail);
     }
   };
 
