@@ -60,18 +60,29 @@ export default {
           }
         }
 
-        const backendUrl = new URL(url.pathname + url.search, env.BACKEND_API_URL);
+        const cleanBaseUrl = env.BACKEND_API_URL.endsWith('/') ? env.BACKEND_API_URL : env.BACKEND_API_URL + '/';
+        const cleanPath = url.pathname.replace(/^\//, '');
+        const backendUrl = new URL(cleanPath + url.search, cleanBaseUrl);
 
-        // Clone request headers and add trace headers
+        // Prepare forwarded headers with correct origin Host header
         const forwardedHeaders = new Headers(request.headers);
+        forwardedHeaders.set("Host", backendUrl.host);
+        forwardedHeaders.delete("cf-connecting-ip");
+        forwardedHeaders.delete("cf-ray");
+        forwardedHeaders.delete("cf-visitor");
         forwardedHeaders.set("X-Trace-Id", traceId);
         forwardedHeaders.set("X-Forwarded-Host", url.host);
         forwardedHeaders.set("X-Forwarded-Proto", url.protocol.replace(":", ""));
 
+        let body: BodyInit | null | undefined = undefined;
+        if (!["GET", "HEAD"].includes(request.method)) {
+          body = await request.clone().arrayBuffer();
+        }
+
         const backendResponse = await fetch(backendUrl.toString(), {
           method: request.method,
           headers: forwardedHeaders,
-          body: ["GET", "HEAD"].includes(request.method) ? undefined : request.body,
+          body,
           redirect: "follow",
         });
 
