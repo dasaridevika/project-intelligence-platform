@@ -408,6 +408,42 @@ function extractStatusFromText(text) {
   return "Planning";
 }
 
+function extractDateFromTextOrUrl(text, url, publishedDate) {
+  if (publishedDate) {
+    try {
+      const d = new Date(publishedDate);
+      if (!isNaN(d.getTime())) {
+        return d.toISOString().slice(0, 10);
+      }
+    } catch (_) {}
+  }
+
+  // Check URL slug for date pattern: /2026/11/04 or -2026-11-04 or /2026-11
+  if (url) {
+    const fullDate = url.match(/\b(202[56])[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12]\d|3[01])\b/);
+    if (fullDate) return `${fullDate[1]}-${fullDate[2]}-${fullDate[3]}`;
+
+    const monthYear = url.match(/\b(202[56])[-/](0[1-9]|1[0-2])\b/);
+    if (monthYear) return `${monthYear[1]}-${monthYear[2]}`;
+
+    const year = url.match(/\b(202[56])\b/);
+    if (year) return year[1];
+  }
+
+  // Check text snippet for formatted date: e.g. "November 2026", "Nov 15, 2026", "2026"
+  if (text) {
+    const textDate = text.slice(0, 800).match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+202[56]\b/i);
+    if (textDate) return textDate[0];
+
+    const myMatch = text.slice(0, 800).match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+202[56]\b/i);
+    if (myMatch) return myMatch[0];
+
+    if (text.includes("2026")) return "2026";
+  }
+
+  return "Latest 2026";
+}
+
 function parseLlmJson(rawOutput) {
   if (!rawOutput || typeof rawOutput !== "string") return null;
   let clean = rawOutput.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
@@ -480,6 +516,7 @@ function fallbackRegexExtract(text, url, titleHint, hintCategory) {
     project_url: url,
     status: extractStatusFromText(text),
     category: hintCategory || "Capital Projects",
+    date: extractDateFromTextOrUrl(text, url),
     summary: text.slice(0, 180) + "..."
   };
 }
@@ -518,6 +555,7 @@ If VALID PROJECT:
   "location": "City, State/Region, Country",
   "status": "Announced | Planning | Under Construction | Operational",
   "category": "Industrial category (e.g. Hyperscale Data Center, Semiconductor Fab, Battery Gigafactory, Solar Farm)",
+  "date": "Announcement, start, or publication date (e.g. November 2026, 2026-11, or 2026)",
   "summary": "1-2 complete factual sentences describing the project, developer, and its development scope."
 }
 
@@ -571,6 +609,11 @@ Evaluate whether this is a genuine capital project in JSON:`;
         projectName = hintTitle || extractProjectNameFromUrl(targetUrl);
       }
 
+      let projectDate = parsed.date;
+      if (!projectDate || projectDate.length < 4) {
+        projectDate = extractDateFromTextOrUrl(pageText, targetUrl);
+      }
+
       return {
         is_project: true,
         canonical_name: projectName,
@@ -580,6 +623,7 @@ Evaluate whether this is a genuine capital project in JSON:`;
         status: parsed.status || extractStatusFromText(pageText),
         category: parsed.category || hintCategory || "Capital Projects",
         country: parsed.location || parsed.country || null,
+        date: projectDate,
         summary: parsed.summary || (pageText.slice(0, 180) + "...")
       };
     }
@@ -635,7 +679,8 @@ function extractLocation(queryStr) {
 // Resilient public web search fallback (activated if primary API providers return 0 results)
 async function searchWebFallback(query) {
   try {
-    const fallbackUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query + " project facility construction announcement")}`;
+    const qStr = query.includes("2026") ? query : `${query} 2026`;
+    const fallbackUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(qStr + " capital project facility construction announcement")}`;
     const res = await fetch(fallbackUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -665,6 +710,7 @@ async function searchWebFallback(query) {
           url: rawHref,
           title: titles[idx] || "Capital Project Announcement",
           snippet: titles[idx] || "",
+          published_date: extractDateFromTextOrUrl(titles[idx], rawHref),
           provider: "web_fallback"
         });
         idx++;
@@ -761,6 +807,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     providerFetches.push((async () => {
       const t0 = Date.now();
       try {
+        const exaQuery = query.includes("2026") ? query : `${query} 2026 capital project OR facility OR investment OR expansion`;
         const exaRes = await fetch("https://api.exa.ai/search", {
           method: "POST",
           headers: {
@@ -768,9 +815,10 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            query: `${query} capital project OR facility OR investment OR expansion`,
+            query: exaQuery,
             numResults: 15,
             useAutoprompt: true,
+            startPublishedDate: "2025-01-01T00:00:00.000Z",
             contents: {
               text: { maxCharacters: 3000 }
             }
@@ -786,9 +834,10 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
             title: r.title,
             snippet: r.text ? r.text.slice(0, 250) : r.title,
             text: r.text || "",
+            published_date: r.publishedDate || extractDateFromTextOrUrl(r.text, r.url),
             provider: "exa"
           }));
-          addEvent("provider_completed", `Exa AI retrieved ${urls.length} candidate URLs with neural content in ${elapsed}ms.`);
+          addEvent("provider_completed", `Exa AI retrieved ${urls.length} candidate URLs for 2026 projects in ${elapsed}ms.`);
           return urls;
         } else {
           const errText = await exaRes.text();
@@ -807,13 +856,20 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     providerFetches.push((async () => {
       const t0 = Date.now();
       try {
-        const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(query + " projects investments construction")}&num=10`;
+        const gQuery = query.includes("2026") ? query : `${query} 2026 projects investments construction`;
+        const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(gQuery)}&num=10`;
         const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(6000) });
         const elapsed = Date.now() - t0;
         recordApiUsage("Google Custom Search", elapsed, gRes.ok);
         if (gRes.ok) {
           const gData = await gRes.json();
-          const urls = (gData.items || []).map(r => ({ url: r.link, title: r.title, snippet: r.snippet, provider: "google" }));
+          const urls = (gData.items || []).map(r => ({
+            url: r.link,
+            title: r.title,
+            snippet: r.snippet,
+            published_date: extractDateFromTextOrUrl(r.snippet, r.link),
+            provider: "google"
+          }));
           addEvent("provider_completed", `Google Search retrieved ${urls.length} candidate URLs in ${elapsed}ms.`);
           return urls;
         } else {
@@ -920,6 +976,10 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       if (!companyName || isNewsPublisher(companyName)) {
         companyName = extractCompanyDynamically(pageText, item.title, cleanUrl);
       }
+      let projectDate = aiExtracted.date || item.published_date;
+      if (!projectDate || projectDate.length < 4) {
+        projectDate = extractDateFromTextOrUrl(pageText, cleanUrl, item.published_date);
+      }
       const projectRecord = {
         id: projId,
         canonical_name: aiExtracted.canonical_name || item.title || "Capital Project",
@@ -929,6 +989,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         status: aiExtracted.status || "Active",
         category: aiExtracted.category || targetCategory || "Capital Projects",
         country: aiExtracted.country || targetLocation,
+        date: projectDate,
         http_status: pageStatus || 200,
         summary: aiExtracted.summary || item.snippet || "",
         created_at: new Date().toISOString()
@@ -937,7 +998,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       store.projects.set(projId, projectRecord);
       store.urlCache.set(cleanUrl, projectRecord);
 
-      addEvent("candidate_accepted", `VALID PROJECT URL: ${cleanUrl} | Company: [${companyName}] | Status: [${projectRecord.status}] | Name: '${projectRecord.canonical_name}'`, "ai_worker", { project: projectRecord, canonical_name: projectRecord.canonical_name });
+      addEvent("candidate_accepted", `VALID PROJECT URL: ${cleanUrl} | Company: [${companyName}] | Date: [${projectDate}] | Status: [${projectRecord.status}] | Name: '${projectRecord.canonical_name}'`, "ai_worker", { project: projectRecord, canonical_name: projectRecord.canonical_name });
       return projectRecord;
     } else {
       addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> AI Determination: ${aiExtracted?.reason || 'Non-project page filtered'}`);
@@ -948,7 +1009,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   const extractedProjects = (extractionResults || []).filter(Boolean);
 
   // 5. Ranking & Deduplication
-  addEvent("deduplication_completed", `Verified ${extractedProjects.length} valid project URLs with companies & status.`);
+  addEvent("deduplication_completed", `Verified ${extractedProjects.length} valid project URLs with companies, dates & status.`);
 
   const searchResults = extractedProjects.map((p, index) => ({
     id: "sr-" + crypto.randomUUID().slice(0, 8),
@@ -961,6 +1022,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     project_url: p.project_url,
     category: p.category,
     status: p.status,
+    date: p.date || "Latest 2026",
     http_status: p.http_status,
     summary: p.summary,
     relevance_score: Math.max(0.70, 0.98 - index * 0.05)
@@ -1319,15 +1381,16 @@ export default {
     // GET /api/v1/projects/export (CSV Export)
     if (url.pathname === "/api/v1/projects/export") {
       const list = Array.from(store.projects.values());
-      let csv = "ID,Project Name,Company,Valid URL,Category,Status,HTTP Status,Discovery Date\n";
+      let csv = "ID,Project Name,Company,Date,Valid URL,Category,Status,HTTP Status,Discovery Date\n";
       for (const p of list) {
         const name = `"${(p.canonical_name || '').replace(/"/g, '""')}"`;
         const comp = `"${(p.company || p.developer || '').replace(/"/g, '""')}"`;
+        const dt = `"${(p.date || 'Latest 2026').replace(/"/g, '""')}"`;
         const pUrl = `"${(p.project_url || '').replace(/"/g, '""')}"`;
         const cat = `"${p.category || ''}"`;
         const stat = `"${p.status || ''}"`;
         const http = p.http_status || 200;
-        csv += `${p.id},${name},${comp},${pUrl},${cat},${stat},${http},${p.created_at}\n`;
+        csv += `${p.id},${name},${comp},${dt},${pUrl},${cat},${stat},${http},${p.created_at}\n`;
       }
       return new Response(csv, {
         headers: {

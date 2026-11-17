@@ -31,6 +31,7 @@ export interface Project {
   project_url: string;
   status: string;
   category: string;
+  date?: string;
   http_status?: number;
   summary?: string;
   created_at: string;
@@ -44,6 +45,7 @@ export interface SearchResultItem {
   project_url: string;
   category: string;
   status: string;
+  date?: string;
   http_status?: number;
   summary?: string;
   relevance_score?: number;

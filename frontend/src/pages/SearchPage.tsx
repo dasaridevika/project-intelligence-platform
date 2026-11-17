@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Building2,
+  Calendar,
   CheckCircle2,
   Clock,
   Compass,
@@ -180,6 +181,7 @@ export const SearchPage: React.FC = () => {
                     canonical_name: proj.canonical_name || proj.name || proj.title || 'Capital Project',
                     company: proj.company || proj.developer || 'Leading Developer',
                     developer: proj.developer || proj.company || 'Leading Developer',
+                    date: proj.date || 'Latest 2026',
                     project_url: proj.project_url,
                     category: proj.category || 'Capital Projects',
                     status: proj.status || 'Active',
@@ -221,22 +223,23 @@ export const SearchPage: React.FC = () => {
 
   const downloadDiscoveredCsv = () => {
     if (discoveredResults.length === 0) return;
-    let csv = "ID,Project Name,Company,Valid URL,Category,Status,HTTP Status,Summary\n";
+    let csv = "ID,Project Name,Company,Date,Valid URL,Category,Status,HTTP Status,Summary\n";
     for (const p of discoveredResults) {
       const name = `"${(p.canonical_name || '').replace(/"/g, '""')}"`;
       const comp = `"${(p.company || p.developer || '').replace(/"/g, '""')}"`;
+      const dt = `"${(p.date || 'Latest 2026').replace(/"/g, '""')}"`;
       const u = `"${(p.project_url || '').replace(/"/g, '""')}"`;
       const cat = `"${(p.category || '').replace(/"/g, '""')}"`;
       const st = `"${(p.status || '').replace(/"/g, '""')}"`;
       const http = p.http_status || 200;
       const sum = `"${(p.summary || '').replace(/"/g, '""')}"`;
-      csv += `${p.project_id},${name},${comp},${u},${cat},${st},${http},${sum}\n`;
+      csv += `${p.project_id},${name},${comp},${dt},${u},${cat},${st},${http},${sum}\n`;
     }
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `discovered_projects_${Date.now()}.csv`);
+    link.setAttribute('download', `discovered_projects_2026_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -294,14 +297,14 @@ export const SearchPage: React.FC = () => {
 
             {/* Quick Sector Discovery Pills */}
             <div className="flex flex-wrap items-center gap-2 pt-2.5">
-              <span className="text-[11px] text-slate-400 font-medium">Quick Discovery:</span>
+              <span className="text-[11px] text-slate-400 font-medium">Quick Discovery (2026):</span>
               {[
-                { label: 'Hyperscale AI Data Centers', q: 'Hyperscale AI data center facilities under construction' },
-                { label: 'Semiconductor Megafabs', q: 'Semiconductor microchip megafab manufacturing plants' },
-                { label: 'Battery Gigafactories', q: 'Lithium battery energy storage gigafactory projects' },
-                { label: 'Utility-Scale Solar Energy', q: 'Utility-scale solar photovoltaic power projects' },
-                { label: 'Offshore Wind Farms', q: 'Offshore wind farm construction and expansion' },
-                { label: 'Clean Hydrogen Facilities', q: 'Green hydrogen production facility announcements' },
+                { label: 'Hyperscale AI Data Centers (2026)', q: 'Hyperscale AI data center facilities 2026 construction' },
+                { label: 'Semiconductor Megafabs (2026)', q: 'Semiconductor microchip megafab manufacturing plants 2026' },
+                { label: 'Battery Gigafactories (2026)', q: 'Lithium battery energy storage gigafactory projects 2026' },
+                { label: 'Utility-Scale Solar (2026)', q: 'Utility-scale solar photovoltaic power projects 2026' },
+                { label: 'Offshore Wind Farms (2026)', q: 'Offshore wind farm construction 2026' },
+                { label: 'Clean Hydrogen (2026)', q: 'Green hydrogen production facility announcements 2026' },
               ].map((chip) => (
                 <button
                   key={chip.label}
@@ -522,9 +525,15 @@ export const SearchPage: React.FC = () => {
                   <div className="space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <SectorBadge sectorName={p.category} />
-                      <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-sky-500/10 text-sky-300 border border-sky-500/30">
-                        {p.status}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] font-mono text-slate-300 px-2 py-0.5 rounded bg-slate-800 border border-slate-700/80 flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-sky-400" />
+                          <span>{p.date || 'Latest 2026'}</span>
+                        </span>
+                        <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-sky-500/10 text-sky-300 border border-sky-500/30">
+                          {p.status}
+                        </span>
+                      </div>
                     </div>
 
                     <h3 className="text-base font-bold text-white line-clamp-1">

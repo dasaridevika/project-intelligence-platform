@@ -143,6 +143,7 @@ export const api = {
         project_url: r.project_url || r.project?.project_url || (r.sources && r.sources[0]?.source_url) || '',
         category: r.category || 'Capital Projects',
         status: r.status || 'Active',
+        date: r.date || r.project?.date || 'Latest 2026',
         http_status: r.http_status || 200,
         summary: r.summary || '',
         created_at: new Date().toISOString(),
