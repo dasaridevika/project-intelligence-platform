@@ -123,7 +123,7 @@ export const SearchPage: React.FC = () => {
     setTimelineEvents([]);
     setDiscoveredResults([]);
     setSearchProgress(5);
-    setSearchStage('Initiating Outbox Queue...');
+    setSearchStage('Initiating Edge AI Discovery Pipeline...');
     setSearchCompleted(false);
 
     const activeProviders = [];

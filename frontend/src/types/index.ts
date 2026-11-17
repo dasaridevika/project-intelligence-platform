@@ -6,14 +6,6 @@ export interface PrimarySector {
   keywords?: string[];
 }
 
-export interface User {
-  id: string;
-  email: string;
-  full_name: string;
-  role: string;
-  is_active: boolean;
-}
-
 export interface SearchRun {
   id: string;
   user_id?: string;
@@ -119,14 +111,17 @@ export interface UsageAnalytics {
 
 export interface SystemHealth {
   status: 'healthy' | 'degraded';
-  uptime_seconds: number;
-  database: string;
-  redis: {
+  uptime_seconds?: number;
+  database?: string;
+  database_status?: string;
+  edge_worker?: string;
+  workers_ai_model?: string;
+  redis?: {
     status: string;
     provider: string;
     live_connected: boolean;
   };
   active_search_jobs: number;
-  unprocessed_outbox_events: number;
-  recent_errors_count: number;
+  unprocessed_outbox_events?: number;
+  recent_errors_count?: number;
 }

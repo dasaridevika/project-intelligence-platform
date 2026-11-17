@@ -72,7 +72,7 @@ export const Sidebar: React.FC = () => {
           </div>
           <div className="text-xs">
             <p className="font-medium text-slate-200">Gateway Active</p>
-            <p className="text-[11px] text-slate-400">Edge Proxy</p>
+            <p className="text-[11px] text-slate-400">Edge AI Worker</p>
           </div>
         </div>
       </div>

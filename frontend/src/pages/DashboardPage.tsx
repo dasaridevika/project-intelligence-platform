@@ -94,7 +94,7 @@ export const DashboardPage: React.FC = () => {
           <p className="text-3xl font-bold text-white tracking-tight">
             {loading ? '...' : (analytics?.total_projects ?? 0)}
           </p>
-          <p className="text-xs text-slate-300 mt-2">Verified in managed PostgreSQL</p>
+          <p className="text-xs text-slate-300 mt-2">Verified in Edge Memory Store</p>
         </div>
 
         <div className="rounded-xl bg-slate-900 border border-slate-800 p-5">
@@ -105,7 +105,7 @@ export const DashboardPage: React.FC = () => {
           <p className="text-3xl font-bold text-white tracking-tight">
             {loading ? '...' : (analytics?.total_searches ?? 0)}
           </p>
-          <p className="text-xs text-slate-300 mt-2">Executed through Outbox Queue</p>
+          <p className="text-xs text-slate-300 mt-2">Executed via Edge AI Worker</p>
         </div>
 
         <div className="rounded-xl bg-slate-900 border border-slate-800 p-5">
@@ -141,7 +141,7 @@ export const DashboardPage: React.FC = () => {
             </span>
           </div>
           <p className="text-xs text-slate-300 mt-2">
-            {health?.database === 'connected' ? 'DB & Redis Connected' : loading ? 'Checking connectivity...' : 'Service Waking / Offline'}
+            {health?.status === 'healthy' ? 'Edge Worker & AI Active' : loading ? 'Checking connectivity...' : 'Service Waking / Offline'}
           </p>
         </div>
       </div>

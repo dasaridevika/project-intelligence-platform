@@ -10,7 +10,7 @@
  * - Static React SPA Hosting: Serves production frontend assets with single-page routing
  */
 
-import primarySectors from "./primary_sectors.json";
+import primarySectors from "../../frontend/src/data/primary_sectors.json";
 
 // ==============================================================================
 // 1. CONSTANTS, FILTERS & DOMAIN REPUTATION BLACKLIST

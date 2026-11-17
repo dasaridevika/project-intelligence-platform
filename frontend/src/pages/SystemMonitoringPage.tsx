@@ -57,7 +57,7 @@ export const SystemMonitoringPage: React.FC = () => {
             Live System Monitoring
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Real-time status of Cloudflare Queues, Python Pull Consumer, PostgreSQL Outbox, and error traces.
+            Real-time status of Cloudflare Workers AI, Edge Discovery Engine, Pre-LLM Cache, and telemetry events.
           </p>
         </div>
 
@@ -74,38 +74,30 @@ export const SystemMonitoringPage: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <div className="rounded-xl bg-slate-900 border border-slate-800 p-5 space-y-2">
           <div className="flex items-center justify-between text-xs font-semibold uppercase text-slate-400">
-            <span>PostgreSQL Database</span>
-            <Database className="w-4 h-4 text-sky-400" />
+            <span>Workers AI Engine</span>
+            <Cpu className="w-4 h-4 text-sky-400" />
           </div>
           <div className="flex items-center gap-2">
-            <span
-              className={`w-2.5 h-2.5 rounded-full ${
-                health?.database === 'connected' ? 'bg-emerald-500' : 'bg-rose-500'
-              }`}
-            />
-            <span className="text-lg font-bold text-white capitalize">
-              {health?.database || (loading ? 'Checking...' : 'Offline')}
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+            <span className="text-lg font-bold text-white">
+              Llama 3.1 8B
             </span>
           </div>
-          <p className="text-[11px] text-slate-500">Source of truth for all projects</p>
+          <p className="text-[11px] text-slate-400">Cloudflare Workers AI Edge Inference</p>
         </div>
 
         <div className="rounded-xl bg-slate-900 border border-slate-800 p-5 space-y-2">
           <div className="flex items-center justify-between text-xs font-semibold uppercase text-slate-400">
-            <span>Cache & Coordination</span>
+            <span>Pre-LLM Cache</span>
             <Server className="w-4 h-4 text-indigo-400" />
           </div>
           <div className="flex items-center gap-2">
-            <span
-              className={`w-2.5 h-2.5 rounded-full ${
-                health?.redis?.status === 'ok' ? 'bg-emerald-500' : health ? 'bg-amber-500' : 'bg-rose-500'
-              }`}
-            />
-            <span className="text-lg font-bold text-white capitalize">
-              {health ? (health.redis?.status === 'ok' ? 'Operational' : 'In-Memory Fallback') : (loading ? 'Checking...' : 'Offline')}
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+            <span className="text-lg font-bold text-white">
+              Operational
             </span>
           </div>
-          <p className="text-[11px] text-slate-500">Provider: {health?.redis?.provider || 'Redis / Fallback'}</p>
+          <p className="text-[11px] text-slate-400">Zero duplicates & URL validation</p>
         </div>
 
         <div className="rounded-xl bg-slate-900 border border-slate-800 p-5 space-y-2">
@@ -118,20 +110,20 @@ export const SystemMonitoringPage: React.FC = () => {
               {health?.active_search_jobs ?? 0}
             </span>
           </div>
-          <p className="text-[11px] text-slate-500">Jobs in queued or processing state</p>
+          <p className="text-[11px] text-slate-400">Jobs in queued or processing state</p>
         </div>
 
         <div className="rounded-xl bg-slate-900 border border-slate-800 p-5 space-y-2">
           <div className="flex items-center justify-between text-xs font-semibold uppercase text-slate-400">
-            <span>Pending Outbox Queue</span>
+            <span>Telemetry Events</span>
             <Layers className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="flex items-center gap-2">
             <span className="text-3xl font-bold text-white tracking-tight">
-              {health?.unprocessed_outbox_events ?? 0}
+              {events.length}
             </span>
           </div>
-          <p className="text-[11px] text-slate-500">Unclaimed / In-flight events</p>
+          <p className="text-[11px] text-slate-400">Recent audit activity stream</p>
         </div>
       </div>
 

@@ -7,7 +7,6 @@ import {
   SearchRun,
   SystemHealth,
   UsageAnalytics,
-  User,
 } from '../types';
 
 const API_BASE = '/api/v1';
