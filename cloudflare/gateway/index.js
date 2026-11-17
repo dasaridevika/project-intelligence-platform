@@ -4,7 +4,7 @@
  * 100% Serverless, Edge-Native Capital Project Intelligence Platform:
  * - Edge Discovery Engine: Natural language query parsing across 462 primary industrial sectors
  * - Pre-LLM Validation & Deduplication: Zero duplicate queries, zero duplicate URLs, strict domain filter
- * - Edge Web Fetcher: Fetches full live webpage HTML with timeout guards & HTML noise stripping
+ * - High-Efficiency Parallel Fetcher: Concurrent HTML fetching with timeout guards & noise stripping
  * - Cloudflare Workers AI: Powered by Meta Llama 3.1 8B Instruct (@cf/meta/llama-3.1-8b-instruct)
  * - Complete In-Worker REST & SSE API: All search, project, sector, analytics, and monitoring endpoints
  * - Static React SPA Hosting: Serves production frontend assets with single-page routing
@@ -48,7 +48,7 @@ const TRACKING_QUERY_PARAMS = [
 ];
 
 // ==============================================================================
-// 2. EDGE MEMORY STORE & INITIAL SEEDING
+// 2. EDGE MEMORY STORE & DYNAMIC TELEMETRY TRACKER
 // ==============================================================================
 
 const store = {
@@ -63,132 +63,67 @@ const store = {
     {
       provider: "Cloudflare Workers AI",
       endpoint: "@cf/meta/llama-3.1-8b-instruct",
-      requests_sent: 12,
-      success_count: 12,
+      requests_sent: 0,
+      success_count: 0,
       failed_count: 0,
-      avg_latency_ms: 320.5,
-      units_consumed: 12,
-      status_note: "Operational & Available"
+      avg_latency_ms: 0,
+      units_consumed: 0,
+      status_note: "Operational & Active"
     },
     {
       provider: "Exa Neural Search",
       endpoint: "https://api.exa.ai/search",
-      requests_sent: 8,
-      success_count: 8,
+      requests_sent: 0,
+      success_count: 0,
       failed_count: 0,
-      avg_latency_ms: 450.2,
-      units_consumed: 8,
-      status_note: "Operational & Available"
+      avg_latency_ms: 0,
+      units_consumed: 0,
+      status_note: "Ready"
     },
     {
       provider: "Google Custom Search",
       endpoint: "https://www.googleapis.com/customsearch/v1",
-      requests_sent: 6,
-      success_count: 6,
+      requests_sent: 0,
+      success_count: 0,
       failed_count: 0,
-      avg_latency_ms: 280.1,
-      units_consumed: 6,
-      status_note: "Operational & Available"
+      avg_latency_ms: 0,
+      units_consumed: 0,
+      status_note: "Ready"
     }
   ],
 };
 
-// Seed verified reference projects on boot
-function seedInitialData() {
-  if (store.projects.size > 0) return;
-
-  const initialProjects = [
-    {
-      id: "proj-tsmc-fab21",
-      canonical_name: "TSMC Fab 21 Semiconductor Megafab Campus",
-      normalized_name: "tsmc fab 21 semiconductor megafab campus",
-      category: "Semiconductor Plant",
-      status: "Under Construction",
-      developer: "TSMC",
-      location_city: "Phoenix",
-      location_state: "Arizona",
-      location_country: "United States",
-      investment_value: 40000000000,
-      investment_currency: "USD",
-      capacity_value: 20000,
-      capacity_unit: "Wafers/Month",
-      description: "TSMC $40 Billion semiconductor manufacturing megafab campus producing advanced 4nm and 3nm microchips in Phoenix, Arizona.",
-      created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-      sources: [
-        {
-          id: "src-1",
-          provider: "exa",
-          source_url: "https://pr.tsmc.com/english/news/2984",
-          source_title: "TSMC Announces Expansion of Arizona Advanced Semiconductor Fab",
-          discovery_timestamp: new Date(Date.now() - 86400000 * 5).toISOString(),
-          raw_snippet: "TSMC announced its second chip fabrication plant in Phoenix, Arizona, raising total investment to $40 Billion."
-        }
-      ]
-    },
-    {
-      id: "proj-msft-mtpleasant",
-      canonical_name: "Microsoft Mount Pleasant Hyperscale AI Datacenter Campus",
-      normalized_name: "microsoft mount pleasant hyperscale ai datacenter campus",
-      category: "Data Center",
-      status: "Under Construction",
-      developer: "Microsoft",
-      location_city: "Mount Pleasant",
-      location_state: "Wisconsin",
-      location_country: "United States",
-      investment_value: 3300000000,
-      investment_currency: "USD",
-      capacity_value: 350,
-      capacity_unit: "MW",
-      description: "Microsoft $3.3 Billion artificial intelligence datacenter campus to support advanced enterprise cloud workloads.",
-      created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-      sources: [
-        {
-          id: "src-2",
-          provider: "google",
-          source_url: "https://news.microsoft.com/cloud-ai-datacenter-wisconsin",
-          source_title: "Microsoft breaks ground on $3.3B Wisconsin AI Datacenter Campus",
-          discovery_timestamp: new Date(Date.now() - 86400000 * 3).toISOString(),
-          raw_snippet: "Microsoft officially commenced construction on a $3.3 Billion state-of-the-art AI datacenter in Mount Pleasant."
-        }
-      ]
-    },
-    {
-      id: "proj-neom-hydrogen",
-      canonical_name: "NEOM Green Hydrogen Production Plant",
-      normalized_name: "neom green hydrogen production plant",
-      category: "Hydrogen Production Plants",
-      status: "Under Construction",
-      developer: "NEOM Green Hydrogen Company",
-      location_city: "Oxagon",
-      location_state: "Tabuk",
-      location_country: "Saudi Arabia",
-      investment_value: 8400000000,
-      investment_currency: "USD",
-      capacity_value: 4000,
-      capacity_unit: "MW",
-      description: "World's largest utility-scale commercial green hydrogen facility powered by 4GW of solar and wind energy.",
-      created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-      sources: [
-        {
-          id: "src-3",
-          provider: "exa",
-          source_url: "https://www.neom.com/en-us/news/green-hydrogen-plant-financing",
-          source_title: "NEOM Green Hydrogen Company closes $8.4B financial funding",
-          discovery_timestamp: new Date(Date.now() - 86400000 * 2).toISOString(),
-          raw_snippet: "NEOM Green Hydrogen Company reached financial close on the world's largest commercial hydrogen production facility."
-        }
-      ]
-    }
-  ];
-
-  for (const p of initialProjects) {
-    store.projects.set(p.id, p);
+function recordApiUsage(providerName, latencyMs, isSuccess = true) {
+  let stat = store.apiUsage.find(u => u.provider === providerName);
+  if (!stat) {
+    stat = {
+      provider: providerName,
+      endpoint: "",
+      requests_sent: 0,
+      success_count: 0,
+      failed_count: 0,
+      avg_latency_ms: 0,
+      units_consumed: 0,
+      status_note: "Active"
+    };
+    store.apiUsage.push(stat);
+  }
+  stat.requests_sent += 1;
+  stat.units_consumed += 1;
+  if (isSuccess) {
+    stat.success_count += 1;
+  } else {
+    stat.failed_count += 1;
+  }
+  if (latencyMs > 0) {
+    stat.avg_latency_ms = stat.avg_latency_ms === 0
+      ? Math.round(latencyMs)
+      : Math.round(stat.avg_latency_ms * 0.75 + latencyMs * 0.25);
   }
 }
-seedInitialData();
 
 // ==============================================================================
-// 3. PRE-LLM VALIDATION & NORMALIZATION ENGINE
+// 3. PRE-LLM VALIDATION & URL NORMALIZATION
 // ==============================================================================
 
 function validateAndNormalizeUrl(rawUrl) {
@@ -282,11 +217,12 @@ function cleanHtml(rawHtml) {
   return {
     title,
     metaDesc,
-    text: text.slice(0, 6000),
+    text: text.slice(0, 5000),
   };
 }
 
 async function fetchUrlContent(targetUrl) {
+  const t0 = Date.now();
   try {
     const res = await fetch(targetUrl, {
       headers: {
@@ -296,18 +232,19 @@ async function fetchUrlContent(targetUrl) {
         "Accept-Language": "en-US,en;q=0.9",
       },
       redirect: "follow",
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(6000),
     });
 
+    const elapsed = Date.now() - t0;
     if (!res.ok) {
-      return { ok: false, title: "", metaDesc: "", text: "", status: res.status, error: `HTTP ${res.status}` };
+      return { ok: false, title: "", metaDesc: "", text: "", status: res.status, error: `HTTP ${res.status}`, elapsed };
     }
 
     const html = await res.text();
     const cleaned = cleanHtml(html);
-    return { ok: true, ...cleaned, status: res.status };
+    return { ok: true, ...cleaned, status: res.status, elapsed };
   } catch (err) {
-    return { ok: false, title: "", metaDesc: "", text: "", status: 0, error: err?.message || String(err) };
+    return { ok: false, title: "", metaDesc: "", text: "", status: 0, error: err?.message || String(err), elapsed: Date.now() - t0 };
   }
 }
 
@@ -361,23 +298,23 @@ async function extractProjectWithWorkersAI(ai, pageText, targetUrl, hintCategory
     return fallbackRegexExtract(pageText, targetUrl, hintCategory);
   }
 
-  const systemPrompt = `You are an expert capital project intelligence analyst. Extract factual data about the capital project, facility, infrastructure development, or industrial plant announced or described in the text.
-If the text does NOT describe a real capital project, return {"is_project": false, "reason": "No capital project found"}.
+  const systemPrompt = `You are a capital project intelligence analyst. Extract factual data about the capital project, facility, infrastructure development, or industrial plant described in the text.
+If no project is found, return {"is_project": false, "reason": "No capital project found"}.
 If a project is found, return ONLY a valid JSON object matching this schema:
 {
   "is_project": true,
   "canonical_name": "Official project name",
-  "category": "Primary industrial sector (e.g. Data Center, Semiconductor, Solar Power, Battery, Clean Energy)",
-  "developer": "Owner, developer, sponsor, or operator (or null if unstated)",
+  "category": "Primary industrial sector",
+  "developer": "Owner, developer, or operator (or null)",
   "investment_value": 3500000000,
   "investment_currency": "USD",
   "capacity_value": 300,
   "capacity_unit": "MW",
   "location_country": "Country name",
   "location_state": "State or province (or null)",
-  "location_city": "City or county (or null)",
-  "status": "Announced | Planning | Under Construction | Operational | Completed",
-  "summary": "2-3 sentence executive factual summary of the project scope and investment.",
+  "location_city": "City (or null)",
+  "status": "Announced | Under Construction | Operational | Planned",
+  "summary": "2-3 sentence factual summary of the project scope and investment.",
   "confidence_score": 0.95
 }`;
 
@@ -385,11 +322,12 @@ If a project is found, return ONLY a valid JSON object matching this schema:
 ${hintCategory ? `Category Hint: ${hintCategory}` : ""}
 Web Page Text:
 """
-${pageText.slice(0, 5000)}
+${pageText.slice(0, 4000)}
 """
 
 Extract structured capital project details in strict JSON:`;
 
+  const t0 = Date.now();
   try {
     const aiResponse = await ai.run("@cf/meta/llama-3.1-8b-instruct", {
       messages: [
@@ -397,8 +335,11 @@ Extract structured capital project details in strict JSON:`;
         { role: "user", content: userPrompt },
       ],
       temperature: 0.1,
-      max_tokens: 800,
+      max_tokens: 600,
     });
+
+    const elapsed = Date.now() - t0;
+    recordApiUsage("Cloudflare Workers AI", elapsed, true);
 
     const rawOutput = aiResponse?.response || "";
     const jsonMatch = rawOutput.match(/\{[\s\S]*\}/);
@@ -406,6 +347,8 @@ Extract structured capital project details in strict JSON:`;
       return JSON.parse(jsonMatch[0]);
     }
   } catch (err) {
+    const elapsed = Date.now() - t0;
+    recordApiUsage("Cloudflare Workers AI", elapsed, false);
     console.warn("Workers AI execution notice:", err?.message || err);
   }
 
@@ -424,7 +367,7 @@ function classifyQuery(queryStr) {
     }
   }
 
-  // Synonym rules
+  // Common industrial synonyms
   if (/data\s*cent|hyperscale|cloud\s*campus|ai\s*cluster|server\s*farm/i.test(qLower)) {
     return { category: "Data Center", group: "Technology & Data Infrastructure" };
   }
@@ -460,7 +403,7 @@ function extractLocation(queryStr) {
 }
 
 // ==============================================================================
-// 4. UNIFIED DISCOVERY PIPELINE (HANDLED BY AI WORKER)
+// 4. PARALLEL HIGH-EFFICIENCY DISCOVERY PIPELINE
 // ==============================================================================
 
 async function executeDiscoveryPipeline(env, searchRunId, query, requestedCategory, requestedLocation) {
@@ -496,7 +439,7 @@ async function executeDiscoveryPipeline(env, searchRunId, query, requestedCatego
     const priorRunId = store.queryCache.get(normalizedQuery);
     const cachedResults = store.searchResults.get(priorRunId) || [];
     if (cachedResults.length > 0) {
-      addEvent("query_cache_hit", `Verified Discovery Cache Hit: Query '${query}' already exists in database with ${cachedResults.length} verified projects. Zero external API calls or LLM requests needed.`);
+      addEvent("query_cache_hit", `Cache Hit: Query '${query}' already executed with ${cachedResults.length} verified projects. Zero external calls or LLM inferences needed.`);
       store.searchResults.set(searchRunId, cachedResults);
       const run = store.searches.get(searchRunId);
       if (run) {
@@ -504,112 +447,107 @@ async function executeDiscoveryPipeline(env, searchRunId, query, requestedCatego
         run.results_count = cachedResults.length;
         run.duration_ms = Date.now() - startTime;
       }
-      addEvent("search_completed", `Discovery complete via database cache: ${cachedResults.length} canonical projects linked in ${Date.now() - startTime}ms.`);
+      addEvent("search_completed", `Discovery complete via memory cache: ${cachedResults.length} projects linked in ${Date.now() - startTime}ms.`);
       return cachedResults;
     }
   }
 
-  // 3. Provider Search Dispatch
-  addEvent("provider_started", `Executing external search discovery for query: '${query}'`);
+  // 3. Provider Search Dispatch (Parallel Provider Queries)
+  addEvent("provider_started", `Executing web discovery for query: '${query}'`);
 
-  let candidateUrls = [];
+  const providerFetches = [];
 
   // Exa AI Search if configured
   if (env.EXA_API_KEY && env.EXA_API_KEY.length > 10) {
-    try {
-      const exaRes = await fetch("https://api.exa.ai/search", {
-        method: "POST",
-        headers: {
-          "x-api-key": env.EXA_API_KEY,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          query: `${query} capital project facility investment announcement`,
-          numResults: 5,
-          useAutoprompt: true
-        })
-      });
-      if (exaRes.ok) {
-        const exaData = await exaRes.json();
-        const urls = (exaData.results || []).map(r => ({ url: r.url, title: r.title, snippet: r.text || r.title, provider: "exa" }));
-        candidateUrls.push(...urls);
-        addEvent("provider_completed", `Exa AI retrieved ${urls.length} candidate URLs.`);
+    providerFetches.push((async () => {
+      const t0 = Date.now();
+      try {
+        const exaRes = await fetch("https://api.exa.ai/search", {
+          method: "POST",
+          headers: {
+            "x-api-key": env.EXA_API_KEY,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            query: `${query} capital project facility investment announcement`,
+            numResults: 5,
+            useAutoprompt: true
+          }),
+          signal: AbortSignal.timeout(6000)
+        });
+        const elapsed = Date.now() - t0;
+        recordApiUsage("Exa Neural Search", elapsed, exaRes.ok);
+        if (exaRes.ok) {
+          const exaData = await exaRes.json();
+          const urls = (exaData.results || []).map(r => ({ url: r.url, title: r.title, snippet: r.text || r.title, provider: "exa" }));
+          addEvent("provider_completed", `Exa AI retrieved ${urls.length} candidate URLs in ${elapsed}ms.`);
+          return urls;
+        }
+      } catch (e) {
+        recordApiUsage("Exa Neural Search", Date.now() - t0, false);
       }
-    } catch (e) {
-      console.warn("Exa fetch error:", e);
-    }
+      return [];
+    })());
   }
 
   // Google Search if configured
   if (env.GOOGLE_SEARCH_API_KEY && env.GOOGLE_SEARCH_CX) {
-    try {
-      const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(query + " projects investments construction")}&num=5`;
-      const gRes = await fetch(gUrl);
-      if (gRes.ok) {
-        const gData = await gRes.json();
-        const urls = (gData.items || []).map(r => ({ url: r.link, title: r.title, snippet: r.snippet, provider: "google" }));
-        candidateUrls.push(...urls);
-        addEvent("provider_completed", `Google Search retrieved ${urls.length} candidate URLs.`);
+    providerFetches.push((async () => {
+      const t0 = Date.now();
+      try {
+        const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(query + " projects investments construction")}&num=5`;
+        const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(5000) });
+        const elapsed = Date.now() - t0;
+        recordApiUsage("Google Custom Search", elapsed, gRes.ok);
+        if (gRes.ok) {
+          const gData = await gRes.json();
+          const urls = (gData.items || []).map(r => ({ url: r.link, title: r.title, snippet: r.snippet, provider: "google" }));
+          addEvent("provider_completed", `Google Search retrieved ${urls.length} candidate URLs in ${elapsed}ms.`);
+          return urls;
+        }
+      } catch (e) {
+        recordApiUsage("Google Custom Search", Date.now() - t0, false);
       }
-    } catch (e) {
-      console.warn("Google fetch error:", e);
-    }
+      return [];
+    })());
   }
 
-  // If external search providers are unconfigured, use Workers AI Web Discovery
-  if (candidateUrls.length === 0) {
-    addEvent("provider_notice", `External search keys unconfigured. Engaging Cloudflare Workers AI Edge Discovery for '${query}'`);
-    // Seed matching candidates from verified project records matching the query
-    for (const [_, p] of store.projects) {
-      if (
-        p.canonical_name.toLowerCase().includes(targetCategory.toLowerCase()) ||
-        p.category.toLowerCase().includes(targetCategory.toLowerCase()) ||
-        query.toLowerCase().split(" ").some(w => w.length > 3 && p.canonical_name.toLowerCase().includes(w))
-      ) {
-        candidateUrls.push({
-          url: p.sources[0]?.source_url || `https://verified-project-intelligence.org/projects/${p.id}`,
-          title: p.canonical_name,
-          snippet: p.description,
-          provider: "edge_ai_discovery"
-        });
-      }
-    }
-  }
+  const providerResults = await Promise.all(providerFetches);
+  const candidateUrls = providerResults.flat();
 
-  // 4. Extraction & Validation (Zero Duplicates & Valid Sites Only)
-  addEvent("extraction_started", `Evaluating ${candidateUrls.length} source URLs for capital project parameters.`);
+  // 4. Pre-LLM Validation, Deduplication & Parallel Extraction
+  addEvent("extraction_started", `Evaluating ${candidateUrls.length} candidate source URLs for capital project parameters.`);
 
-  const extractedProjects = [];
+  const validCandidates = [];
   const seenUrls = new Set();
 
   for (const item of candidateUrls) {
     const rawUrl = item.url;
-
-    // Validation Check: Blocks non-HTML files, social media, dictionaries
     const val = validateAndNormalizeUrl(rawUrl);
     if (!val.valid || !val.cleanUrl) {
-      addEvent("candidate_rejected", `REJECTED URL: ${rawUrl} -> Reason: ${val.reason}`);
+      addEvent("candidate_rejected", `REJECTED: ${rawUrl} -> Reason: ${val.reason}`);
       continue;
     }
-
-    const cleanUrl = val.cleanUrl;
-
-    // Deduplication Check
-    if (seenUrls.has(cleanUrl)) {
-      addEvent("candidate_rejected", `REJECTED URL: ${cleanUrl} -> Reason: Duplicate source URL already evaluated in this search run`);
+    if (seenUrls.has(val.cleanUrl)) {
+      addEvent("candidate_rejected", `REJECTED: ${val.cleanUrl} -> Reason: Duplicate URL already queued`);
       continue;
     }
-    seenUrls.add(cleanUrl);
+    seenUrls.add(val.cleanUrl);
+    validCandidates.push({ ...item, cleanUrl: val.cleanUrl });
+  }
 
-    addEvent("url_fetched", `Fetched candidate URL: ${cleanUrl} | Title: '${item.title?.slice(0, 60)}'`);
+  // Process valid candidate URLs in parallel (up to 5 concurrent fetches)
+  const extractionPromises = validCandidates.slice(0, 5).map(async (item) => {
+    const cleanUrl = item.cleanUrl;
 
     // Cache Check: Has this URL already been extracted?
     if (store.urlCache.has(cleanUrl)) {
       const cached = store.urlCache.get(cleanUrl);
-      extractedProjects.push(cached);
       addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${cached.canonical_name}' (Source: ${cleanUrl})`);
-      continue;
+      return cached;
     }
+
+    addEvent("url_fetched", `Fetching candidate URL: ${cleanUrl}`);
 
     // Edge Live Web Fetch
     const pageContent = await fetchUrlContent(cleanUrl);
@@ -650,18 +588,22 @@ async function executeDiscoveryPipeline(env, searchRunId, query, requestedCatego
 
       store.projects.set(projId, projectRecord);
       store.urlCache.set(cleanUrl, projectRecord);
-      extractedProjects.push(projectRecord);
 
-      const capStr = projectRecord.capacity_value ? ` | Capacity: ${projectRecord.capacity_value} ${projectRecord.capacity_unit || ''}` : '';
-      const invStr = projectRecord.investment_value ? ` | Investment: $${projectRecord.investment_value.toLocaleString()}` : '';
+      const capStr = projectRecord.capacity_value ? ` | ${projectRecord.capacity_value} ${projectRecord.capacity_unit || ''}` : '';
+      const invStr = projectRecord.investment_value ? ` | $${(projectRecord.investment_value / 1e9).toFixed(1)}B` : '';
       addEvent("candidate_accepted", `ACCEPTED: '${projectRecord.canonical_name}' [${projectRecord.category}]${capStr}${invStr} (Source: ${cleanUrl})`);
+      return projectRecord;
     } else {
-      addEvent("candidate_rejected", `REJECTED URL: ${cleanUrl} -> Reason: ${aiExtracted?.reason || 'No capital project metrics identified in webpage text'}`);
+      addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> ${aiExtracted?.reason || 'No project metrics identified'}`);
+      return null;
     }
-  }
+  });
+
+  const resolvedExtractions = await Promise.all(extractionPromises);
+  const extractedProjects = resolvedExtractions.filter(Boolean);
 
   // 5. Ranking & Deduplication
-  addEvent("deduplication_completed", `Consolidated ${extractedProjects.length} candidate extractions into ${extractedProjects.length} canonical projects.`);
+  addEvent("deduplication_completed", `Consolidated ${extractedProjects.length} candidate projects.`);
 
   const searchResults = extractedProjects.map((p, index) => ({
     id: "sr-" + crypto.randomUUID().slice(0, 8),
@@ -691,7 +633,7 @@ async function executeDiscoveryPipeline(env, searchRunId, query, requestedCatego
   // Save to queryCache
   store.queryCache.set(normalizedQuery, searchRunId);
 
-  addEvent("search_completed", `Discovery complete. ${searchResults.length} verified projects extracted and stored in ${Date.now() - startTime}ms.`);
+  addEvent("search_completed", `Discovery complete. ${searchResults.length} verified projects extracted in ${Date.now() - startTime}ms.`);
 
   return searchResults;
 }
@@ -864,7 +806,7 @@ export default {
         };
         store.searches.set(searchRunId, searchRunRecord);
 
-        // Run discovery pipeline in edge context
+        // Run discovery pipeline asynchronously in edge context
         const requestedCat = body?.categories?.[0];
         const requestedLoc = body?.location;
         ctx.waitUntil(executeDiscoveryPipeline(env, searchRunId, query, requestedCat, requestedLoc));
