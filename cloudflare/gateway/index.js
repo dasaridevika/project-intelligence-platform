@@ -513,6 +513,50 @@ function extractLocation(queryStr) {
   return "Global";
 }
 
+// Resilient public web search fallback (activated if primary API providers return 0 results)
+async function searchWebFallback(query) {
+  try {
+    const fallbackUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query + " project facility construction announcement")}`;
+    const res = await fetch(fallbackUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Accept: "text/html"
+      },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!res.ok) return [];
+    const html = await res.text();
+    const urls = [];
+    const linkRegex = /<a[^>]+class="result__url"[^>]+href="([^"]+)"/gi;
+    const titleRegex = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+    let match;
+    const titles = [];
+    while ((match = titleRegex.exec(html)) !== null && titles.length < 15) {
+      titles.push(match[1].replace(/<[^>]+>/g, "").trim());
+    }
+    let idx = 0;
+    while ((match = linkRegex.exec(html)) !== null && urls.length < 15) {
+      let rawHref = match[1];
+      if (rawHref.includes("uddg=")) {
+        const uddgMatch = rawHref.match(/uddg=([^&]+)/);
+        if (uddgMatch) rawHref = decodeURIComponent(uddgMatch[1]);
+      }
+      if (rawHref.startsWith("http")) {
+        urls.push({
+          url: rawHref,
+          title: titles[idx] || "Capital Project Announcement",
+          snippet: titles[idx] || "",
+          provider: "web_fallback"
+        });
+        idx++;
+      }
+    }
+    return urls;
+  } catch (_) {
+    return [];
+  }
+}
+
 // ==============================================================================
 // 4. PARALLEL HIGH-EFFICIENCY DISCOVERY PIPELINE
 // ==============================================================================
@@ -580,22 +624,35 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            query: `${query} capital project facility investment announcement`,
-            numResults: 5,
-            useAutoprompt: true
+            query: `${query} capital project OR facility OR investment OR expansion`,
+            numResults: 15,
+            useAutoprompt: true,
+            contents: {
+              text: { maxCharacters: 3000 }
+            }
           }),
-          signal: AbortSignal.timeout(6000)
+          signal: AbortSignal.timeout(8000)
         });
         const elapsed = Date.now() - t0;
         recordApiUsage("Exa Neural Search", elapsed, exaRes.ok);
         if (exaRes.ok) {
           const exaData = await exaRes.json();
-          const urls = (exaData.results || []).map(r => ({ url: r.url, title: r.title, snippet: r.text || r.title, provider: "exa" }));
-          addEvent("provider_completed", `Exa AI retrieved ${urls.length} candidate URLs in ${elapsed}ms.`);
+          const urls = (exaData.results || []).map(r => ({
+            url: r.url,
+            title: r.title,
+            snippet: r.text ? r.text.slice(0, 250) : r.title,
+            text: r.text || "",
+            provider: "exa"
+          }));
+          addEvent("provider_completed", `Exa AI retrieved ${urls.length} candidate URLs with neural content in ${elapsed}ms.`);
           return urls;
+        } else {
+          const errText = await exaRes.text();
+          addEvent("provider_error", `Exa AI Search responded with HTTP ${exaRes.status}: ${errText.slice(0, 120)}`);
         }
       } catch (e) {
         recordApiUsage("Exa Neural Search", Date.now() - t0, false);
+        addEvent("provider_error", `Exa AI Search network notice: ${e?.message || e}`);
       }
       return [];
     })());
@@ -606,8 +663,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     providerFetches.push((async () => {
       const t0 = Date.now();
       try {
-        const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(query + " projects investments construction")}&num=5`;
-        const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(5000) });
+        const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(query + " projects investments construction")}&num=10`;
+        const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(6000) });
         const elapsed = Date.now() - t0;
         recordApiUsage("Google Custom Search", elapsed, gRes.ok);
         if (gRes.ok) {
@@ -615,16 +672,30 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           const urls = (gData.items || []).map(r => ({ url: r.link, title: r.title, snippet: r.snippet, provider: "google" }));
           addEvent("provider_completed", `Google Search retrieved ${urls.length} candidate URLs in ${elapsed}ms.`);
           return urls;
+        } else {
+          const errText = await gRes.text();
+          addEvent("provider_error", `Google Search responded with HTTP ${gRes.status}: ${errText.slice(0, 120)}`);
         }
       } catch (e) {
         recordApiUsage("Google Custom Search", Date.now() - t0, false);
+        addEvent("provider_error", `Google Search network notice: ${e?.message || e}`);
       }
       return [];
     })());
   }
 
   const providerResults = await Promise.all(providerFetches);
-  const candidateUrls = providerResults.flat();
+  let candidateUrls = providerResults.flat();
+
+  // If primary API providers returned no candidates, run resilient public search fallback
+  if (candidateUrls.length === 0) {
+    addEvent("provider_started", `Primary providers returned 0 candidates. Engaging resilient public discovery fallback.`);
+    const fallbackResults = await searchWebFallback(query);
+    if (fallbackResults.length > 0) {
+      candidateUrls = fallbackResults;
+      addEvent("provider_completed", `Fallback discovery retrieved ${candidateUrls.length} candidate URLs.`);
+    }
+  }
 
   // 4. Pre-LLM Validation, Deduplication & Parallel Extraction
   addEvent("extraction_started", `Evaluating ${candidateUrls.length} candidate source URLs for capital project parameters.`);
@@ -652,8 +723,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     validCandidates.push({ ...item, cleanUrl: val.cleanUrl });
   }
 
-  // Process valid candidate URLs in parallel (up to 5 concurrent fetches)
-  const extractionPromises = validCandidates.slice(0, 5).map(async (item) => {
+  // Process valid candidate URLs in parallel (up to 15 concurrent extractions)
+  const extractionPromises = validCandidates.slice(0, 15).map(async (item) => {
     const cleanUrl = item.cleanUrl;
 
     // Cache Check: Has this URL already been extracted?
@@ -663,17 +734,28 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       return cached;
     }
 
-    addEvent("url_fetched", `Fetching candidate URL: ${cleanUrl}`);
+    addEvent("url_fetched", `Analyzing candidate URL: ${cleanUrl}`);
 
-    // Edge Live Web Fetch
-    const pageContent = await fetchUrlContent(cleanUrl);
-    if (!pageContent.ok) {
-      store.failedUrls.set(cleanUrl, pageContent.error);
-      addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Host Error: ${pageContent.error}`);
-      return null;
+    // If candidate already contains full text from Exa neural search, use it directly to bypass bot-blocks
+    let pageText = item.text || "";
+    let pageStatus = 200;
+
+    if (!pageText || pageText.length < 150) {
+      const pageContent = await fetchUrlContent(cleanUrl);
+      if (pageContent.ok && pageContent.text) {
+        pageText = pageContent.text;
+        pageStatus = pageContent.status;
+      } else if (item.snippet && item.snippet.length > 50) {
+        // Graceful fallback to snippet if website has bot-block / anti-crawl protection
+        pageText = item.snippet;
+        pageStatus = pageContent.status || 200;
+        addEvent("url_fallback", `Bot-block bypass: Used search index snippet for ${cleanUrl}`);
+      } else {
+        store.failedUrls.set(cleanUrl, pageContent.error);
+        addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Host Error: ${pageContent.error}`);
+        return null;
+      }
     }
-
-    const pageText = pageContent.text;
 
     // AI Extraction via Workers AI (Llama 3.1)
     const aiExtracted = await extractProjectWithWorkersAI(env.AI, pageText, cleanUrl, targetCategory);
@@ -687,8 +769,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         status: aiExtracted.status || "Active",
         category: aiExtracted.category || targetCategory || "Capital Projects",
         country: aiExtracted.country || targetLocation,
-        http_status: pageContent.status || 200,
-        summary: aiExtracted.summary || pageContent.metaDesc || item.snippet || "",
+        http_status: pageStatus || 200,
+        summary: aiExtracted.summary || item.snippet || "",
         created_at: new Date().toISOString()
       };
 
