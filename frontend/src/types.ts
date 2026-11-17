@@ -23,55 +23,26 @@ export interface SearchRun {
   created_at: string;
 }
 
-export interface ProjectSource {
-  id: string;
-  provider: string;
-  source_url: string;
-  source_title?: string;
-  publication_date?: string;
-  discovery_timestamp: string;
-  raw_snippet?: string;
-}
-
 export interface Project {
   id: string;
   canonical_name: string;
-  normalized_name?: string;
-  category: string;
+  project_url: string;
   status: string;
-  developer?: string;
-  location_city?: string;
-  location_state?: string;
-  location_country?: string;
-  investment_value?: number;
-  investment_currency?: string;
-  capacity_value?: number;
-  capacity_unit?: string;
-  announced_date?: string;
-  estimated_completion_date?: string;
-  description?: string;
-  metadata?: Record<string, any>;
-  sources_count?: number;
-  sources?: ProjectSource[];
+  category: string;
+  http_status?: number;
+  summary?: string;
   created_at: string;
 }
 
 export interface SearchResultItem {
   project_id: string;
   canonical_name: string;
+  project_url: string;
   category: string;
   status: string;
-  developer?: string;
-  location_city?: string;
-  location_state?: string;
-  location_country?: string;
-  investment_value?: number;
-  investment_currency?: string;
-  capacity_value?: number;
-  capacity_unit?: string;
-  relevance_score: number;
-  ranking_factors: Record<string, any>;
-  sources: ProjectSource[];
+  http_status?: number;
+  summary?: string;
+  relevance_score?: number;
 }
 
 export interface ActivityEvent {

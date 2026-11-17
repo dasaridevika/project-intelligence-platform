@@ -138,17 +138,11 @@ export const api = {
       const mapped: Project[] = res.data.results.map((r: any) => ({
         id: r.project_id || r.id,
         canonical_name: r.canonical_name,
-        category: r.category,
-        status: r.status,
-        developer: r.developer,
-        location_city: r.location_city,
-        location_state: r.location_state,
-        location_country: r.location_country,
-        investment_value: r.investment_value,
-        investment_currency: r.investment_currency,
-        capacity_value: r.capacity_value,
-        capacity_unit: r.capacity_unit,
-        sources: r.sources,
+        project_url: r.project_url || r.project?.project_url || (r.sources && r.sources[0]?.source_url) || '',
+        category: r.category || 'Capital Projects',
+        status: r.status || 'Active',
+        http_status: r.http_status || 200,
+        summary: r.summary || '',
         created_at: new Date().toISOString(),
       }));
       saveStoredProjects(mapped);

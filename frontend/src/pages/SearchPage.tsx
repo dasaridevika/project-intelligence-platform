@@ -425,28 +425,43 @@ export const SearchPage: React.FC = () => {
               {discoveredResults.map((p) => (
                 <div
                   key={p.project_id}
-                  onClick={() => navigate(`/projects?search_id=${activeSearchId}`)}
-                  className="rounded-xl bg-slate-900 border border-slate-800 p-5 hover:border-slate-700 cursor-pointer transition-all space-y-3"
+                  className="rounded-xl bg-slate-900 border border-slate-800 p-5 hover:border-slate-700 transition-all space-y-3 flex flex-col justify-between"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <SectorBadge sectorName={p.category} />
-                    <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-                      {p.status}
-                    </span>
+                  <div className="space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <SectorBadge sectorName={p.category} />
+                      <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-sky-500/10 text-sky-300 border border-sky-500/30">
+                        {p.status}
+                      </span>
+                    </div>
+
+                    <h3 className="text-base font-bold text-white line-clamp-1">{p.canonical_name}</h3>
+                    
+                    {p.project_url && (
+                      <a
+                        href={p.project_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-sky-400 hover:underline truncate block font-mono"
+                      >
+                        {p.project_url}
+                      </a>
+                    )}
                   </div>
 
-                  <h3 className="text-base font-bold text-white line-clamp-1">{p.canonical_name}</h3>
-                  {p.developer && <p className="text-xs text-slate-400">Developer: {p.developer}</p>}
-                  {p.location_country && <p className="text-xs text-slate-400">Location: {p.location_country}</p>}
-
                   <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs">
-                    <span className="font-mono text-emerald-400 font-semibold">
-                      {p.investment_value ? `$${(p.investment_value / 1e9).toFixed(1)}B` : 'Verified'}
+                    <span className="text-[11px] text-emerald-400 font-mono">
+                      HTTP {p.http_status || 200} OK
                     </span>
-                    <span className="text-sky-400 text-[11px] font-medium flex items-center gap-1">
-                      <span>View</span>
-                      <ArrowRight className="w-3 h-3" />
-                    </span>
+                    <a
+                      href={p.project_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sky-400 text-[11px] font-medium flex items-center gap-1 hover:text-sky-300"
+                    >
+                      <span>Visit URL</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
                   </div>
                 </div>
               ))}

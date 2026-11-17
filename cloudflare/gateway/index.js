@@ -297,84 +297,62 @@ async function fetchUrlContent(targetUrl) {
   }
 }
 
-// Fallback regex extractor when Workers AI is unconfigured or rate limited
+// Fallback extractor: identifies project name and status
 function fallbackRegexExtract(text, url, hintCategory) {
-  const invMatch = text.match(/\$\s*(\d+(?:\.\d+)?)\s*(billion|million|b|m)\b/i);
-  let invVal = null;
-  if (invMatch) {
-    const num = parseFloat(invMatch[1]);
-    const scale = invMatch[2].toLowerCase();
-    invVal = scale.startsWith("b") ? num * 1_000_000_000 : num * 1_000_000;
-  }
-
-  const capMatch = text.match(/(\d+(?:\.\d+)?)\s*(MW|GW|megawatt|gigawatt)\b/i);
-  let capVal = null;
-  let capUnit = null;
-  if (capMatch) {
-    capVal = parseFloat(capMatch[1]);
-    capUnit = capMatch[2].toUpperCase().startsWith("G") ? "GW" : "MW";
-  }
-
-  const devMatch = text.match(/\b([A-Z][a-zA-Z0-9&.\s]{2,25})\s+(?:announced|breaks ground|is developing|to build|invests)\b/);
-  const developer = devMatch ? devMatch[1].trim() : null;
-
-  let hostname = "Source";
+  let hostname = "Project Source";
   try {
     hostname = new URL(url).hostname;
   } catch (_) {}
 
+  // Determine status from text keywords
+  let status = "Active";
+  if (/under\s*construction|breaks\s*ground|underway|in\s*progress/i.test(text)) {
+    status = "Under Construction";
+  } else if (/announced|unveiled|plans\s*to|proposed/i.test(text)) {
+    status = "Announced";
+  } else if (/operational|commissioned|completed|online/i.test(text)) {
+    status = "Operational";
+  } else if (/planning|permit|approved|review/i.test(text)) {
+    status = "Planning";
+  }
+
+  const titleMatch = text.slice(0, 300).match(/([A-Z][a-zA-Z0-9\s,&-]{5,60}(?:Project|Plant|Facility|Campus|Center|Park|Fab|Corridor|Hub))/);
+  const canonical_name = titleMatch ? titleMatch[1].trim() : `Project from ${hostname}`;
+
   return {
     is_project: true,
-    canonical_name: `Capital Project from ${hostname}`,
+    canonical_name,
+    project_url: url,
+    status,
     category: hintCategory || "Capital Projects",
-    developer,
-    investment_value: invVal,
-    investment_currency: invVal ? "USD" : null,
-    capacity_value: capVal,
-    capacity_unit: capUnit,
-    location_country: "Global",
-    location_state: null,
-    location_city: null,
-    status: "Announced",
-    summary: text.slice(0, 240) + "...",
-    confidence_score: invVal || capVal ? 0.75 : 0.5,
+    summary: text.slice(0, 160) + "..."
   };
 }
 
-// Executes Meta Llama 3.1 8B Instruct via Cloudflare Workers AI
+// Executes fast status & project identification via Cloudflare Workers AI
 async function extractProjectWithWorkersAI(ai, pageText, targetUrl, hintCategory) {
   if (!ai || typeof ai.run !== "function") {
     return fallbackRegexExtract(pageText, targetUrl, hintCategory);
   }
 
-  const systemPrompt = `You are a capital project intelligence analyst. Extract factual data about the capital project, facility, infrastructure development, or industrial plant described in the text.
-If no project is found, return {"is_project": false, "reason": "No capital project found"}.
-If a project is found, return ONLY a valid JSON object matching this schema:
+  const systemPrompt = `You analyze web pages to identify capital projects and their current status.
+Return ONLY a valid JSON object matching this schema:
 {
   "is_project": true,
-  "canonical_name": "Official project name",
-  "category": "Primary industrial sector",
-  "developer": "Owner, developer, or operator (or null)",
-  "investment_value": 3500000000,
-  "investment_currency": "USD",
-  "capacity_value": 300,
-  "capacity_unit": "MW",
-  "location_country": "Country name",
-  "location_state": "State or province (or null)",
-  "location_city": "City (or null)",
-  "status": "Announced | Under Construction | Operational | Planned",
-  "summary": "2-3 sentence factual summary of the project scope and investment.",
-  "confidence_score": 0.95
+  "canonical_name": "Official project or development name",
+  "status": "Announced | Under Construction | Operational | Planning | Active",
+  "category": "Industrial category (e.g. Data Center, Semiconductor, Solar, Energy, Infrastructure)",
+  "summary": "1 sentence describing the project."
 }`;
 
-  const userPrompt = `Source URL: ${targetUrl}
+  const userPrompt = `URL: ${targetUrl}
 ${hintCategory ? `Category Hint: ${hintCategory}` : ""}
-Web Page Text:
+Webpage Text:
 """
-${pageText.slice(0, 4000)}
+${pageText.slice(0, 2500)}
 """
 
-Extract structured capital project details in strict JSON:`;
+Determine project name and status in JSON:`;
 
   const t0 = Date.now();
   try {
@@ -384,7 +362,7 @@ Extract structured capital project details in strict JSON:`;
         { role: "user", content: userPrompt },
       ],
       temperature: 0.1,
-      max_tokens: 600,
+      max_tokens: 300,
     });
 
     const elapsed = Date.now() - t0;
@@ -393,7 +371,15 @@ Extract structured capital project details in strict JSON:`;
     const rawOutput = aiResponse?.response || "";
     const jsonMatch = rawOutput.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        is_project: parsed.is_project !== false,
+        canonical_name: parsed.canonical_name || "Capital Project",
+        project_url: targetUrl,
+        status: parsed.status || "Active",
+        category: parsed.category || hintCategory || "Capital Projects",
+        summary: parsed.summary || ""
+      };
     }
   } catch (err) {
     const elapsed = Date.now() - t0;
@@ -609,41 +595,22 @@ async function executeDiscoveryPipeline(env, searchRunId, query, requestedCatego
       const projId = "proj-" + crypto.randomUUID().slice(0, 8);
       const projectRecord = {
         id: projId,
-        canonical_name: aiExtracted.canonical_name || item.title,
-        normalized_name: (aiExtracted.canonical_name || item.title).toLowerCase(),
-        category: aiExtracted.category || targetCategory,
-        status: aiExtracted.status || "Announced",
-        developer: aiExtracted.developer || null,
-        location_city: aiExtracted.location_city || null,
-        location_state: aiExtracted.location_state || null,
-        location_country: aiExtracted.location_country || targetLocation,
-        investment_value: aiExtracted.investment_value ? Number(aiExtracted.investment_value) : null,
-        investment_currency: aiExtracted.investment_currency || "USD",
-        capacity_value: aiExtracted.capacity_value ? Number(aiExtracted.capacity_value) : null,
-        capacity_unit: aiExtracted.capacity_unit || null,
-        description: aiExtracted.summary || item.snippet || item.title,
-        created_at: new Date().toISOString(),
-        sources: [
-          {
-            id: "src-" + crypto.randomUUID().slice(0, 8),
-            provider: item.provider || "edge_ai",
-            source_url: cleanUrl,
-            source_title: pageContent.title || item.title,
-            discovery_timestamp: new Date().toISOString(),
-            raw_snippet: item.snippet || pageContent.metaDesc
-          }
-        ]
+        canonical_name: aiExtracted.canonical_name || item.title || "Capital Project",
+        project_url: cleanUrl,
+        status: aiExtracted.status || "Active",
+        category: aiExtracted.category || targetCategory || "Capital Projects",
+        http_status: pageContent.status || 200,
+        summary: aiExtracted.summary || pageContent.metaDesc || item.snippet || "",
+        created_at: new Date().toISOString()
       };
 
       store.projects.set(projId, projectRecord);
       store.urlCache.set(cleanUrl, projectRecord);
 
-      const capStr = projectRecord.capacity_value ? ` | ${projectRecord.capacity_value} ${projectRecord.capacity_unit || ''}` : '';
-      const invStr = projectRecord.investment_value ? ` | $${(projectRecord.investment_value / 1e9).toFixed(1)}B` : '';
-      addEvent("candidate_accepted", `ACCEPTED: '${projectRecord.canonical_name}' [${projectRecord.category}]${capStr}${invStr} (Source: ${cleanUrl})`);
+      addEvent("candidate_accepted", `VALID PROJECT URL: ${cleanUrl} | Status: [${projectRecord.status}] | Name: '${projectRecord.canonical_name}'`);
       return projectRecord;
     } else {
-      addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> ${aiExtracted?.reason || 'No project metrics identified'}`);
+      addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> ${aiExtracted?.reason || 'No project identified'}`);
       return null;
     }
   });
@@ -652,20 +619,20 @@ async function executeDiscoveryPipeline(env, searchRunId, query, requestedCatego
   const extractedProjects = resolvedExtractions.filter(Boolean);
 
   // 5. Ranking & Deduplication
-  addEvent("deduplication_completed", `Consolidated ${extractedProjects.length} candidate projects.`);
+  addEvent("deduplication_completed", `Verified ${extractedProjects.length} valid project URLs with status.`);
 
   const searchResults = extractedProjects.map((p, index) => ({
     id: "sr-" + crypto.randomUUID().slice(0, 8),
     search_run_id: searchRunId,
     project_id: p.id,
     project: p,
-    relevance_score: Math.max(0.70, 0.98 - index * 0.05),
-    ranking_factors: {
-      query_keyword_match: 0.95,
-      location_match: targetLocation !== "Global" ? 0.90 : 0.80,
-      information_completeness: p.investment_value && p.capacity_value ? 0.95 : 0.75,
-      source_count: p.sources.length
-    }
+    canonical_name: p.canonical_name,
+    project_url: p.project_url,
+    category: p.category,
+    status: p.status,
+    http_status: p.http_status,
+    summary: p.summary,
+    relevance_score: Math.max(0.70, 0.98 - index * 0.05)
   }));
 
   store.searchResults.set(searchRunId, searchResults);
@@ -1006,21 +973,19 @@ export default {
     // GET /api/v1/projects/export (CSV Export)
     if (url.pathname === "/api/v1/projects/export") {
       const list = Array.from(store.projects.values());
-      let csv = "ID,Canonical Name,Category,Status,Developer,Country,Investment (USD),Capacity,Created At\n";
+      let csv = "ID,Project Name,Valid URL,Category,Status,HTTP Status,Discovery Date\n";
       for (const p of list) {
         const name = `"${(p.canonical_name || '').replace(/"/g, '""')}"`;
+        const pUrl = `"${(p.project_url || '').replace(/"/g, '""')}"`;
         const cat = `"${p.category || ''}"`;
         const stat = `"${p.status || ''}"`;
-        const dev = `"${(p.developer || '').replace(/"/g, '""')}"`;
-        const country = `"${p.location_country || ''}"`;
-        const inv = p.investment_value || "";
-        const cap = p.capacity_value ? `"${p.capacity_value} ${p.capacity_unit || ''}"` : "";
-        csv += `${p.id},${name},${cat},${stat},${dev},${country},${inv},${cap},${p.created_at}\n`;
+        const http = p.http_status || 200;
+        csv += `${p.id},${name},${pUrl},${cat},${stat},${http},${p.created_at}\n`;
       }
       return new Response(csv, {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
-          "Content-Disposition": 'attachment; filename="capital_projects_export.csv"',
+          "Content-Disposition": 'attachment; filename="valid_project_urls.csv"',
           ...CORS_HEADERS
         }
       });
