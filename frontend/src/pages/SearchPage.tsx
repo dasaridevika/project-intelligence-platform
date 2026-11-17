@@ -173,7 +173,7 @@ export const SearchPage: React.FC = () => {
               setSearchProgress((p) => Math.min(p + 5, 85));
               setSearchStage(`Candidate Identified: ${ev.metadata?.canonical_name || (ev.metadata?.project as any)?.canonical_name || 'Capital Project'}`);
               const proj = ev.metadata?.project || (ev as any).project;
-              if (proj) {
+              if (proj && !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(proj.canonical_name || proj.title || '')) {
                 setDiscoveredResults((prev) => {
                   const exists = prev.some(item => (item.project_id && item.project_id === proj.id) || item.project_url === proj.project_url);
                   return exists ? prev : [...prev, {

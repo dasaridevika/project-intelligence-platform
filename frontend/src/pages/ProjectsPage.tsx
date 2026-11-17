@@ -54,19 +54,21 @@ export const ProjectsPage: React.FC = () => {
             api.getSearchResults(searchId),
           ]);
           setSearchRun(run);
-          const mapped: Project[] = (res.results || []).map((r: any) => ({
-            id: r.project_id || r.id,
-            canonical_name: r.canonical_name || 'Capital Project',
-            company: r.company || r.developer || r.project?.company || r.project?.developer || 'Leading Developer',
-            developer: r.developer || r.company || r.project?.developer || r.project?.company || 'Leading Developer',
-            date: r.date || r.project?.date || 'Latest 2026',
-            project_url: r.project_url || r.project?.project_url || '',
-            category: r.category || 'Capital Projects',
-            status: r.status || 'Active',
-            http_status: r.http_status || 200,
-            summary: r.summary || '',
-            created_at: new Date().toISOString(),
-          }));
+          const mapped: Project[] = (res.results || [])
+            .filter((r: any) => !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(r.canonical_name || r.name || r.title || ''))
+            .map((r: any) => ({
+              id: r.project_id || r.id,
+              canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',
+              company: r.company || r.developer || r.project?.company || r.project?.developer || 'Leading Developer',
+              developer: r.developer || r.company || r.project?.developer || r.project?.company || 'Leading Developer',
+              date: r.date || r.project?.date || 'Latest 2026',
+              project_url: r.project_url || r.project?.project_url || '',
+              category: r.category || 'Capital Projects',
+              status: r.status || 'Active',
+              http_status: r.http_status || 200,
+              summary: r.summary || '',
+              created_at: new Date().toISOString(),
+            }));
           setProjects(mapped);
           setTotalCount(res.total_results || mapped.length);
         } else {

@@ -187,6 +187,56 @@ async function persistStore(env) {
 // 3. PRE-LLM VALIDATION & URL NORMALIZATION
 // ==============================================================================
 
+// Filter URLs from exclusively foreign-language media domains and non-English ccTLDs
+function isForeignLanguageUrl(parsed) {
+  try {
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    
+    // Explicit English edition overrides
+    if (path.includes("/en/") || path.includes("/en-") || path.includes("/en_") || path.includes("/english/") || host.startsWith("en.")) {
+      return false;
+    }
+    
+    // Non-English ccTLDs that primarily publish in non-English
+    const nonEnglishTlds = [".cn", ".tw", ".ru", ".jp", ".kr", ".vn", ".th", ".ir", ".pl", ".cz"];
+    for (const tld of nonEnglishTlds) {
+      if (host.endsWith(tld)) return true;
+    }
+    
+    // Non-English language subpath prefixes: /zh/, /zh-tw/, /zh-cn/, /ja/, /ko/, /ru/
+    const foreignPathPrefixes = [/^\/zh\b/i, /^\/zh-[a-z]+\b/i, /^\/ja\b/i, /^\/ko\b/i, /^\/ru\b/i];
+    for (const p of foreignPathPrefixes) {
+      if (p.test(path)) return true;
+    }
+    
+    // Known exclusively non-English news domains
+    const nonEnglishDomains = [
+      "udn.com", "chinatimes.com", "cna.com.tw", "ettoday.net", "ltn.com.tw",
+      "sina.com", "sohu.com", "163.com", "xinhuanet.com", "people.com.cn", "huanqiu.com",
+      "nikkei.com", "asahi.com", "yomiuri.co.jp", "mainichi.jp",
+      "chosun.com", "donga.com", "joins.com", "yna.co.kr",
+      "tass.ru", "ria.ru", "rbc.ru", "lenta.ru", "kommersant.ru"
+    ];
+    for (const d of nonEnglishDomains) {
+      if (host === d || host.endsWith("." + d)) return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+function hasNonLatinScript(str) {
+  if (!str || typeof str !== "string") return false;
+  // Matches Chinese, Japanese, Korean, Cyrillic, Arabic, Hebrew, Thai, Devanagari
+  return /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0e00-\u0e7f\u0900-\u097f\u0590-\u05ff]/.test(str);
+}
+
+function isPredominantlyNonEnglish(text) {
+  if (!text || text.length < 40) return false;
+  const nonLatin = text.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0e00-\u0e7f\u0900-\u097f\u0590-\u05ff]/g);
+  return !!(nonLatin && nonLatin.length > 15);
+}
+
 function validateAndNormalizeUrl(rawUrl) {
   if (!rawUrl || typeof rawUrl !== "string") {
     return { valid: false, reason: "Missing or invalid URL" };
@@ -251,7 +301,12 @@ function validateAndNormalizeUrl(rawUrl) {
       }
     }
 
-    // 5. Strip tracking query parameters and hash fragments
+    // 5. Non-English foreign news & media domain filter
+    if (isForeignLanguageUrl(parsed)) {
+      return { valid: false, reason: `URL host or path indicates non-English local publication ('${host}'). Only English-language sources are accepted.` };
+    }
+
+    // 6. Strip tracking query parameters and hash fragments
     const searchParams = new URLSearchParams(parsed.search);
     for (const param of TRACKING_QUERY_PARAMS) {
       searchParams.delete(param);
@@ -352,9 +407,14 @@ function isNewsPublisher(name) {
     "landgate", "oxford economics", "oxfordeconomics", "globaldata", "jpmorgan",
     "pwc", "rba", "news", "times", "post", "journal", "herald", "tribune",
     "cnbc", "forbes", "ft.com", "financial times", "press release", "marketwatch",
-    "associated press", "prnewswire", "businesswire", "globenewswire"
+    "associated press", "prnewswire", "businesswire", "globenewswire",
+    // Generic non-developer words
+    "north america", "south america", "europe", "asia", "global", "worldwide",
+    "insights", "insight", "blog", "blogs", "articles", "article", "update", "updates",
+    "overview", "report", "reports", "tracker", "index", "atlas", "pipeline",
+    "technologies", "technology", "editorial", "staff", "editor", "author"
   ];
-  return newsIndicators.some(ind => n.includes(ind));
+  return newsIndicators.some(ind => n === ind || n.includes(ind));
 }
 
 // Extract company from text/headline dynamically (no hardcoded company array)
@@ -365,7 +425,7 @@ function extractCompanyDynamically(text, title, url) {
   const actionMatch = combined.match(/([A-Z][a-zA-Z0-9\s,&.-]{2,40}?)\s+(?:plans?(?:\s+to)?|to\s+build|breaks?\s+ground|invests?|announces?|awarded|secures?|expands?|constructs?|develops?|opens?|completes?|raises?)\b/);
   if (actionMatch && actionMatch[1]) {
     const candidate = actionMatch[1].replace(/^(?:the|a|an|after|as|with|in|on|at|by|for)\s+/i, "").trim();
-    if (candidate.length >= 3 && candidate.length <= 40 && !isNewsPublisher(candidate)) {
+    if (candidate.length >= 3 && candidate.length <= 40 && !isNewsPublisher(candidate) && !hasNonLatinScript(candidate)) {
       return candidate;
     }
   }
@@ -374,7 +434,7 @@ function extractCompanyDynamically(text, title, url) {
   const possessiveMatch = combined.match(/([A-Z][a-zA-Z0-9\s,&.-]{2,35})'s\s+(?:\$[\d.]+\s*(?:billion|million|bln|mln|b|m)?\s+)?(?:data\s*center|plant|facility|campus|megafab|gigafactory|project)/i);
   if (possessiveMatch && possessiveMatch[1]) {
     const candidate = possessiveMatch[1].replace(/^(?:the|a|an)\s+/i, "").trim();
-    if (candidate.length >= 3 && !isNewsPublisher(candidate)) {
+    if (candidate.length >= 3 && !isNewsPublisher(candidate) && !hasNonLatinScript(candidate)) {
       return candidate;
     }
   }
@@ -386,7 +446,10 @@ function extractCompanyDynamically(text, title, url) {
       const parts = host.split(".");
       if (parts.length >= 2) {
         const org = parts[0];
-        return org.charAt(0).toUpperCase() + org.slice(1);
+        const formatted = org.charAt(0).toUpperCase() + org.slice(1);
+        if (!isNewsPublisher(formatted) && !hasNonLatinScript(formatted)) {
+          return formatted;
+        }
       }
     }
   } catch (_) {}
@@ -495,18 +558,32 @@ function fallbackRegexExtract(text, url, titleHint, hintCategory) {
     };
   }
 
+  // Reject non-English text
+  if (hasNonLatinScript(titleHint) || hasNonLatinScript(text.slice(0, 300))) {
+    return {
+      is_project: false,
+      reason: "Non-English source text rejected by platform English language standard"
+    };
+  }
+
   // Check for facility / plant / project indicators
   const facilityMatch = (titleHint || text.slice(0, 400)).match(/([A-Z][a-zA-Z0-9\s,&-]{3,50}(?:Project|Plant|Facility|Campus|Center|Centre|Park|Fab|Corridor|Hub|Farm|Station))/);
   const canonical_name = facilityMatch ? facilityMatch[1].trim() : (titleHint || extractProjectNameFromUrl(url));
 
-  if (!canonical_name || canonical_name.length < 5 || canonical_name === "Capital Project") {
+  if (!canonical_name || canonical_name.length < 5 || canonical_name === "Capital Project" || hasNonLatinScript(canonical_name)) {
     return {
       is_project: false,
-      reason: "Unable to verify a specific named physical development project"
+      reason: "Unable to verify a specific named physical development project in English"
     };
   }
 
   const company = extractCompanyDynamically(text, titleHint, url);
+  if (hasNonLatinScript(company)) {
+    return {
+      is_project: false,
+      reason: "Non-English developer entity detected"
+    };
+  }
 
   return {
     is_project: true,
@@ -538,11 +615,18 @@ A VALID CAPITAL PROJECT MUST:
 3. Have a verifiable location (city, state, region, or country).
 4. Be in a real development lifecycle stage: Announced, Planning, Under Construction, or Operational.
 
+CRITICAL REQUIREMENT - STRICT ENGLISH ONLY:
+- Every single field in your JSON output (canonical_name, company, location, category, date, summary, reason) MUST be written in fluent, standard English.
+- If the source webpage, project name, or developer has foreign terms (e.g. Spanish, German, French, Italian, Portuguese, Chinese, Japanese, etc.), YOU MUST TRANSLATE AND ROMANIZE ALL DETAILS INTO CLEAR, PROFESSIONAL ENGLISH.
+- For foreign company or project names, provide their official English or Romanized/Pinyin name (e.g. "Taiwan Semiconductor Manufacturing Co. (TSMC)", "China Telecom", "Contemporary Amperex Technology (CATL)", "Iberdrola").
+- NEVER output Chinese characters, Japanese kanji/kana, Korean hangul, Cyrillic, or non-English text. If you cannot provide English information, set "is_project": false with reason "Non-English source without verified English translation".
+
 YOU MUST REJECT (set "is_project": false) IF:
 1. The page is macroeconomic analysis, industry trends, or market growth forecasts (e.g. "Data center construction to peak in 2030").
 2. The page is selling or previewing a paid market research report, whitepaper, or industry outlook (e.g. GlobalData reports, consulting whitepapers).
 3. The page is an opinion article, stock recommendation, or general thought leadership without a specific physical project.
 4. The page is a corporate homepage, contact directory, hospital department list, or login portal.
+5. The page is in a non-English language and cannot be verified with high confidence into English.
 
 RESPONSE FORMAT:
 Return ONLY a valid JSON object matching one of these two schemas:
@@ -550,19 +634,19 @@ Return ONLY a valid JSON object matching one of these two schemas:
 If VALID PROJECT:
 {
   "is_project": true,
-  "canonical_name": "Official specific name of the project or facility",
-  "company": "Specific company, developer, or operator building/investing in the project (NOT the media/news outlet)",
-  "location": "City, State/Region, Country",
+  "canonical_name": "Official specific name of the project or facility in English",
+  "company": "Specific company, developer, or operator building/investing in the project in English (NOT the media/news outlet)",
+  "location": "City, State/Region, Country in English",
   "status": "Announced | Planning | Under Construction | Operational",
-  "category": "Industrial category (e.g. Hyperscale Data Center, Semiconductor Fab, Battery Gigafactory, Solar Farm)",
+  "category": "Industrial category in English (e.g. Hyperscale Data Center, Semiconductor Megafab, Battery Gigafactory, Solar Farm)",
   "date": "Announcement, start, or publication date (e.g. November 2026, 2026-11, or 2026)",
-  "summary": "1-2 complete factual sentences describing the project, developer, and its development scope."
+  "summary": "1-2 complete factual sentences in fluent English describing the project, developer, and its development scope."
 }
 
 If NOT A PROJECT:
 {
   "is_project": false,
-  "reason": "Specific reason explaining why it is not a specific physical capital project"
+  "reason": "Specific reason in English explaining why it is not a specific physical capital project"
 }`;
 
   const userPrompt = `URL: ${targetUrl}
@@ -599,6 +683,18 @@ Evaluate whether this is a genuine capital project in JSON:`;
         };
       }
 
+      // Strict English safety verification
+      if (
+        hasNonLatinScript(parsed.canonical_name) ||
+        hasNonLatinScript(parsed.company) ||
+        hasNonLatinScript(parsed.summary)
+      ) {
+        return {
+          is_project: false,
+          reason: "Non-English characters detected in AI extracted attributes"
+        };
+      }
+
       let companyVal = parsed.company;
       if (!companyVal || isNewsPublisher(companyVal)) {
         companyVal = extractCompanyDynamically(pageText, hintTitle, targetUrl);
@@ -607,6 +703,13 @@ Evaluate whether this is a genuine capital project in JSON:`;
       let projectName = parsed.canonical_name;
       if (!projectName || projectName.startsWith("Project from") || projectName.length < 5) {
         projectName = hintTitle || extractProjectNameFromUrl(targetUrl);
+      }
+
+      if (hasNonLatinScript(projectName) || hasNonLatinScript(companyVal)) {
+        return {
+          is_project: false,
+          reason: "Non-English title or developer detected"
+        };
       }
 
       let projectDate = parsed.date;
@@ -680,7 +783,7 @@ function extractLocation(queryStr) {
 async function searchWebFallback(query) {
   try {
     const qStr = query.includes("2026") ? query : `${query} 2026`;
-    const fallbackUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(qStr + " capital project facility construction announcement")}`;
+    const fallbackUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(qStr + " capital project facility construction announcement")}&kl=us-en`;
     const res = await fetch(fallbackUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -696,7 +799,10 @@ async function searchWebFallback(query) {
     let match;
     const titles = [];
     while ((match = titleRegex.exec(html)) !== null && titles.length < 15) {
-      titles.push(match[1].replace(/<[^>]+>/g, "").trim());
+      const cleanSnippet = match[1].replace(/<[^>]+>/g, "").trim();
+      if (!hasNonLatinScript(cleanSnippet)) {
+        titles.push(cleanSnippet);
+      }
     }
     let idx = 0;
     while ((match = linkRegex.exec(html)) !== null && urls.length < 15) {
@@ -706,13 +812,16 @@ async function searchWebFallback(query) {
         if (uddgMatch) rawHref = decodeURIComponent(uddgMatch[1]);
       }
       if (rawHref.startsWith("http")) {
-        urls.push({
-          url: rawHref,
-          title: titles[idx] || "Capital Project Announcement",
-          snippet: titles[idx] || "",
-          published_date: extractDateFromTextOrUrl(titles[idx], rawHref),
-          provider: "web_fallback"
-        });
+        const t = titles[idx] || "Capital Project Announcement";
+        if (!hasNonLatinScript(t)) {
+          urls.push({
+            url: rawHref,
+            title: t,
+            snippet: t,
+            published_date: extractDateFromTextOrUrl(t, rawHref),
+            provider: "web_fallback"
+          });
+        }
         idx++;
       }
     }
@@ -776,11 +885,18 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   addEvent("search_created", `Search accepted for: '${query}'. Dispatched to Cloudflare Workers AI edge pipeline.`);
   addEvent("query_analyzed", `NLP Analysis: Category '${targetCategory}' [${sectorInfo.group || 'Industrial'}], Location '${targetLocation}'`);
 
-  // 2. Query Cache Pre-check: Only use cache if results have verified project names and companies
+  // 2. Query Cache Pre-check: Only use cache if results have verified project names and companies in English
   if (store.queryCache.has(normalizedQuery)) {
     const priorRunId = store.queryCache.get(normalizedQuery);
     const cachedResults = store.searchResults.get(priorRunId) || [];
-    const isValidCache = cachedResults.length > 0 && cachedResults.every(r => r.canonical_name && !r.canonical_name.startsWith("Project from") && (r.company || r.developer));
+    const isValidCache = cachedResults.length > 0 && cachedResults.every(r => 
+      r.canonical_name && 
+      !r.canonical_name.startsWith("Project from") && 
+      !hasNonLatinScript(r.canonical_name) &&
+      !hasNonLatinScript(r.summary) &&
+      !hasNonLatinScript(r.company) &&
+      (r.company || r.developer)
+    );
     if (isValidCache) {
       addEvent("query_cache_hit", `Cache Hit: Query '${query}' already executed with ${cachedResults.length} verified projects. Zero external calls or LLM inferences needed.`);
       store.searchResults.set(searchRunId, cachedResults);
@@ -807,7 +923,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     providerFetches.push((async () => {
       const t0 = Date.now();
       try {
-        const exaQuery = query.includes("2026") ? query : `${query} 2026 capital project OR facility OR investment OR expansion`;
+        const exaQuery = query.includes("2026") ? `${query} English` : `${query} 2026 capital project facility investment in English`;
         const exaRes = await fetch("https://api.exa.ai/search", {
           method: "POST",
           headers: {
@@ -829,14 +945,16 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         recordApiUsage("Exa Neural Search", elapsed, exaRes.ok);
         if (exaRes.ok) {
           const exaData = await exaRes.json();
-          const urls = (exaData.results || []).map(r => ({
-            url: r.url,
-            title: r.title,
-            snippet: r.text ? r.text.slice(0, 250) : r.title,
-            text: r.text || "",
-            published_date: r.publishedDate || extractDateFromTextOrUrl(r.text, r.url),
-            provider: "exa"
-          }));
+          const urls = (exaData.results || [])
+            .filter(r => !hasNonLatinScript(r.title))
+            .map(r => ({
+              url: r.url,
+              title: r.title,
+              snippet: r.text ? r.text.slice(0, 250) : r.title,
+              text: r.text || "",
+              published_date: r.publishedDate || extractDateFromTextOrUrl(r.text, r.url),
+              provider: "exa"
+            }));
           addEvent("provider_completed", `Exa AI retrieved ${urls.length} candidate URLs for 2026 projects in ${elapsed}ms.`);
           return urls;
         } else {
@@ -857,19 +975,21 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       const t0 = Date.now();
       try {
         const gQuery = query.includes("2026") ? query : `${query} 2026 projects investments construction`;
-        const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(gQuery)}&num=10`;
+        const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(gQuery)}&num=10&lr=lang_en&hl=en`;
         const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(6000) });
         const elapsed = Date.now() - t0;
         recordApiUsage("Google Custom Search", elapsed, gRes.ok);
         if (gRes.ok) {
           const gData = await gRes.json();
-          const urls = (gData.items || []).map(r => ({
-            url: r.link,
-            title: r.title,
-            snippet: r.snippet,
-            published_date: extractDateFromTextOrUrl(r.snippet, r.link),
-            provider: "google"
-          }));
+          const urls = (gData.items || [])
+            .filter(r => !hasNonLatinScript(r.title))
+            .map(r => ({
+              url: r.link,
+              title: r.title,
+              snippet: r.snippet,
+              published_date: extractDateFromTextOrUrl(r.snippet, r.link),
+              provider: "google"
+            }));
           addEvent("provider_completed", `Google Search retrieved ${urls.length} candidate URLs in ${elapsed}ms.`);
           return urls;
         } else {
@@ -935,6 +1055,9 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         cached.canonical_name &&
         !cached.canonical_name.startsWith("Project from") &&
         !cached.canonical_name.startsWith("Capital Project at") &&
+        !hasNonLatinScript(cached.canonical_name) &&
+        !hasNonLatinScript(cached.summary) &&
+        !hasNonLatinScript(cached.company) &&
         !isNewsPublisher(cached.company)
       ) {
         addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${cached.canonical_name}' (Source: ${cleanUrl})`, "ai_worker", { project: cached, canonical_name: cached.canonical_name });
@@ -967,22 +1090,44 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       }
     }
 
+    // Safety check: Filter out candidate page if text is predominantly non-English
+    if (isPredominantlyNonEnglish(pageText)) {
+      addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Language Filter: Non-English text detected. Only English sources accepted.`);
+      return null;
+    }
+
     // AI Extraction via Workers AI (Llama 3.1)
     const aiExtracted = await extractProjectWithWorkersAI(env.AI, pageText, cleanUrl, item.title, targetCategory);
 
     if (aiExtracted && aiExtracted.is_project !== false) {
+      // Safety check: ensure project record has zero non-Latin foreign characters
+      if (
+        hasNonLatinScript(aiExtracted.canonical_name) ||
+        hasNonLatinScript(aiExtracted.company) ||
+        hasNonLatinScript(aiExtracted.summary)
+      ) {
+        addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Language Filter: Non-English characters found in AI extracted attributes.`);
+        return null;
+      }
+
       const projId = "proj-" + crypto.randomUUID().slice(0, 8);
       let companyName = aiExtracted.company;
       if (!companyName || isNewsPublisher(companyName)) {
         companyName = extractCompanyDynamically(pageText, item.title, cleanUrl);
       }
+      const projectName = aiExtracted.canonical_name || item.title || "Capital Project";
+      if (hasNonLatinScript(projectName) || hasNonLatinScript(companyName)) {
+        addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Language Filter: Non-English project title or developer entity.`);
+        return null;
+      }
+
       let projectDate = aiExtracted.date || item.published_date;
       if (!projectDate || projectDate.length < 4) {
         projectDate = extractDateFromTextOrUrl(pageText, cleanUrl, item.published_date);
       }
       const projectRecord = {
         id: projId,
-        canonical_name: aiExtracted.canonical_name || item.title || "Capital Project",
+        canonical_name: projectName,
         company: companyName,
         developer: companyName,
         project_url: cleanUrl,

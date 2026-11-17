@@ -37,13 +37,22 @@ apiClient.interceptors.response.use(
 // DURABLE PERSISTENCE LAYER (Saves data across code updates & redeploys)
 // ==============================================================================
 
-const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v2';
-const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v2';
+const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v3';
+const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v3';
+
+function hasNonLatin(str?: string): boolean {
+  if (!str) return false;
+  return /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff]/.test(str);
+}
 
 function getStoredProjects(): Project[] {
   try {
     const raw = localStorage.getItem(STORAGE_PROJECTS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const list = JSON.parse(raw);
+    return Array.isArray(list)
+      ? list.filter(p => p.canonical_name && !p.canonical_name.startsWith('Project from') && !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary))
+      : [];
   } catch {
     return [];
   }
@@ -51,10 +60,11 @@ function getStoredProjects(): Project[] {
 
 function saveStoredProjects(projects: Project[]) {
   try {
+    const cleanProjects = projects.filter(p => !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary));
     const existing = getStoredProjects();
     const map = new Map<string, Project>();
     for (const p of existing) map.set(p.id, p);
-    for (const p of projects) map.set(p.id, p);
+    for (const p of cleanProjects) map.set(p.id, p);
     const merged = Array.from(map.values()).slice(-500);
     localStorage.setItem(STORAGE_PROJECTS_KEY, JSON.stringify(merged));
   } catch (err) {
@@ -65,7 +75,9 @@ function saveStoredProjects(projects: Project[]) {
 function getStoredSearches(): SearchRun[] {
   try {
     const raw = localStorage.getItem(STORAGE_SEARCHES_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list.filter(s => !hasNonLatin(s.query)) : [];
   } catch {
     return [];
   }
@@ -135,20 +147,27 @@ export const api = {
   ): Promise<{ search_run_id: string; query: string; status: string; total_results: number; results: SearchResultItem[] }> => {
     const res = await apiClient.get(`/search/${id}/results`);
     if (res.data?.results) {
-      const mapped: Project[] = res.data.results.map((r: any) => ({
-        id: r.project_id || r.id,
-        canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',
-        company: r.company || r.developer || r.project?.company || r.project?.developer || 'Leading Developer',
-        developer: r.developer || r.company || r.project?.developer || r.project?.company || 'Leading Developer',
-        project_url: r.project_url || r.project?.project_url || (r.sources && r.sources[0]?.source_url) || '',
-        category: r.category || 'Capital Projects',
-        status: r.status || 'Active',
-        date: r.date || r.project?.date || 'Latest 2026',
-        http_status: r.http_status || 200,
-        summary: r.summary || '',
-        created_at: new Date().toISOString(),
-      }));
+      const mapped: Project[] = res.data.results
+        .filter((r: any) => !hasNonLatin(r.canonical_name) && !hasNonLatin(r.title) && !hasNonLatin(r.summary))
+        .map((r: any) => ({
+          id: r.project_id || r.id,
+          canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',
+          company: r.company || r.developer || r.project?.company || r.project?.developer || 'Leading Developer',
+          developer: r.developer || r.company || r.project?.developer || r.project?.company || 'Leading Developer',
+          project_url: r.project_url || r.project?.project_url || (r.sources && r.sources[0]?.source_url) || '',
+          category: r.category || 'Capital Projects',
+          status: r.status || 'Active',
+          date: r.date || r.project?.date || 'Latest 2026',
+          http_status: r.http_status || 200,
+          summary: r.summary || '',
+          created_at: new Date().toISOString(),
+        }));
       saveStoredProjects(mapped);
+      return {
+        ...res.data,
+        results: mapped as any,
+        total_results: mapped.length,
+      };
     }
     return res.data;
   },
