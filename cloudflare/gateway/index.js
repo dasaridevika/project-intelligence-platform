@@ -47,6 +47,30 @@ const TRACKING_QUERY_PARAMS = [
   "gclid", "fbclid", "ref", "source", "mc_cid", "mc_eid"
 ];
 
+// Patterns for non-article boilerplate paths to reject before LLM inference
+const JUNK_PATH_PATTERNS = [
+  /\/login\b/i, /\/signin\b/i, /\/signup\b/i, /\/auth\b/i, /\/account\b/i,
+  /\/cookie/i, /\/cookies/i, /\/privacy/i, /\/terms/i, /\/datenschutz/i,
+  /\/impressum/i, /\/mentions-legales/i, /\/politique-de-confidentialite/i,
+  /\/terminos-y-condiciones/i, /\/aviso-legal/i,
+  /\/staff\b/i, /\/staff-directory\b/i, /\/directory\b/i, /\/phonebook\b/i,
+  /\/contact-us\b/i, /\/clinical-departments\b/i, /\/departments?\b/i,
+  /\/cart\b/i, /\/checkout\b/i, /\/pdf\//i
+];
+
+// Corporate suffix heuristics for verified country origin (never guess from founder name)
+const CORPORATE_SUFFIX_COUNTRIES = [
+  { regex: /\b(?:S\.p\.A\.|SpA)\b/i, country: "Italy" },
+  { regex: /\b(?:GmbH|A\.G\.|AG)\b/i, country: "Germany" },
+  { regex: /\b(?:S\.A\.|SAS|SARL)\b/i, country: "France" },
+  { regex: /\b(?:B\.V\.|N\.V\.)\b/i, country: "Netherlands" },
+  { regex: /\b(?:Pty\s*Ltd)\b/i, country: "Australia" },
+  { regex: /\b(?:Pte\s*Ltd)\b/i, country: "Singapore" },
+  { regex: /\b(?:K\.K\.|Kabushiki\s*Kaisha)\b/i, country: "Japan" },
+  { regex: /\b(?:Ltd\.|Limited)\b/i, country: "United Kingdom" },
+  { regex: /\b(?:Inc\.|LLC|Corp\.|Corporation)\b/i, country: "United States" }
+];
+
 // ==============================================================================
 // 2. EDGE MEMORY STORE & DYNAMIC TELEMETRY TRACKER
 // ==============================================================================
@@ -57,6 +81,7 @@ const store = {
   projects: new Map(),
   activityEvents: new Map(),
   urlCache: new Map(),
+  failedUrls: new Map(),
   queryCache: new Map(),
   systemErrors: [],
   apiUsage: [
@@ -181,7 +206,13 @@ function validateAndNormalizeUrl(rawUrl) {
   }
 
   try {
-    const parsed = new URL(rawUrl.trim());
+    // 1. Fix Windows backslash bug & unencoded spaces
+    let sanitized = rawUrl.trim().replace(/\\/g, "/");
+    if (sanitized.includes(" ")) {
+      sanitized = sanitized.replace(/\s+/g, "%20");
+    }
+
+    const parsed = new URL(sanitized);
 
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return { valid: false, reason: `Unsupported protocol '${parsed.protocol}'. Only HTTP and HTTPS are permitted.` };
@@ -211,15 +242,29 @@ function validateAndNormalizeUrl(rawUrl) {
       }
     }
 
-    // File extension check (only HTML/text pages allowed, no PDFs or binaries)
-    const pathname = parsed.pathname.toLowerCase();
+    // 2. Path normalization: collapse multiple slashes, strip redundant trailing slash to prevent duplicate links
+    let cleanPath = parsed.pathname.replace(/\/+/g, "/");
+    if (cleanPath.length > 1 && cleanPath.endsWith("/")) {
+      cleanPath = cleanPath.slice(0, -1);
+    }
+    parsed.pathname = cleanPath;
+
+    // 3. File extension check (only HTML/text pages allowed, no PDFs or binaries)
+    const lowerPath = cleanPath.toLowerCase();
     for (const ext of INVALID_FILE_EXTENSIONS) {
-      if (pathname.endsWith(ext)) {
+      if (lowerPath.endsWith(ext) || lowerPath.includes(ext + "/")) {
         return { valid: false, reason: `URL points to non-HTML file type ('${ext}'). Only public HTML articles are allowed.` };
       }
     }
 
-    // Strip tracking query parameters and hash fragments
+    // 4. Pre-filter junk, foreign language legal/cookies, login, and staff directory paths
+    for (const pattern of JUNK_PATH_PATTERNS) {
+      if (pattern.test(cleanPath)) {
+        return { valid: false, reason: `URL matches non-article/boilerplate path filter ('${pattern.source}'). Filtered before AI evaluation.` };
+      }
+    }
+
+    // 5. Strip tracking query parameters and hash fragments
     const searchParams = new URLSearchParams(parsed.search);
     for (const param of TRACKING_QUERY_PARAMS) {
       searchParams.delete(param);
@@ -281,10 +326,19 @@ async function fetchUrlContent(targetUrl) {
         "Accept-Language": "en-US,en;q=0.9",
       },
       redirect: "follow",
-      signal: AbortSignal.timeout(6000),
+      signal: AbortSignal.timeout(4000), // Fail-fast: 4000ms max timeout to prevent worker freezes
     });
 
     const elapsed = Date.now() - t0;
+    if (res.status === 403) {
+      return { ok: false, title: "", metaDesc: "", text: "", status: 403, error: "Bot-blocked (HTTP 403) - Access Forbidden", elapsed };
+    }
+    if (res.status === 503) {
+      return { ok: false, title: "", metaDesc: "", text: "", status: 503, error: "Temporarily unreachable (HTTP 503) - Server Unavailable", elapsed };
+    }
+    if (res.status === 404) {
+      return { ok: false, title: "", metaDesc: "", text: "", status: 404, error: "Dead domain or page not found (HTTP 404)", elapsed };
+    }
     if (!res.ok) {
       return { ok: false, title: "", metaDesc: "", text: "", status: res.status, error: `HTTP ${res.status}`, elapsed };
     }
@@ -293,7 +347,12 @@ async function fetchUrlContent(targetUrl) {
     const cleaned = cleanHtml(html);
     return { ok: true, ...cleaned, status: res.status, elapsed };
   } catch (err) {
-    return { ok: false, title: "", metaDesc: "", text: "", status: 0, error: err?.message || String(err), elapsed: Date.now() - t0 };
+    const elapsed = Date.now() - t0;
+    const isTimeout = err?.name === "TimeoutError" || err?.message?.includes("timeout");
+    const errMsg = isTimeout
+      ? "Connection timed out (fail-fast abort)"
+      : (err?.message || "SSL certificate bypassed / network host unreachable");
+    return { ok: false, title: "", metaDesc: "", text: "", status: 0, error: errMsg, elapsed };
   }
 }
 
@@ -335,18 +394,34 @@ async function extractProjectWithWorkersAI(ai, pageText, targetUrl, hintCategory
     return fallbackRegexExtract(pageText, targetUrl, hintCategory);
   }
 
-  const systemPrompt = `You analyze web pages to identify capital projects and their current status.
+  // Detect corporate suffix for verified country origin (never guess from founder name)
+  let countryHint = "";
+  for (const item of CORPORATE_SUFFIX_COUNTRIES) {
+    if (item.regex.test(pageText)) {
+      countryHint = item.country;
+      break;
+    }
+  }
+
+  const systemPrompt = `You analyze web pages to identify capital projects and their current lifecycle status.
+Rules:
+- Identify if this page discusses a specific capital project, industrial facility, or infrastructure development.
+- Reject pages that are general staff directories, company login pages, hospital department lists, generic store menus, or dead placeholders.
+- Never guess or infer a company or project country from the founder's personal name; only use explicit location mentions or official corporate suffixes.
+- Formulate complete sentences for summary and status reasons; do not truncate sentences.
 Return ONLY a valid JSON object matching this schema:
 {
   "is_project": true,
   "canonical_name": "Official project or development name",
   "status": "Announced | Under Construction | Operational | Planning | Active",
   "category": "Industrial category (e.g. Data Center, Semiconductor, Solar, Energy, Infrastructure)",
-  "summary": "1 sentence describing the project."
+  "country": "Country name if verified, or null",
+  "summary": "1-2 complete sentences describing the project status."
 }`;
 
   const userPrompt = `URL: ${targetUrl}
 ${hintCategory ? `Category Hint: ${hintCategory}` : ""}
+${countryHint ? `Corporate Registry Location: ${countryHint}` : ""}
 Webpage Text:
 """
 ${pageText.slice(0, 2500)}
@@ -362,7 +437,7 @@ Determine project name and status in JSON:`;
         { role: "user", content: userPrompt },
       ],
       temperature: 0.1,
-      max_tokens: 300,
+      max_tokens: 450,
     });
 
     const elapsed = Date.now() - t0;
@@ -378,6 +453,7 @@ Determine project name and status in JSON:`;
         project_url: targetUrl,
         status: parsed.status || "Active",
         category: parsed.category || hintCategory || "Capital Projects",
+        country: parsed.country || countryHint || null,
         summary: parsed.summary || ""
       };
     }
@@ -441,7 +517,7 @@ function extractLocation(queryStr) {
 // 4. PARALLEL HIGH-EFFICIENCY DISCOVERY PIPELINE
 // ==============================================================================
 
-async function executeDiscoveryPipeline(env, searchRunId, query, requestedCategory, requestedLocation) {
+async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedCategory, requestedLocation) {
   const startTime = Date.now();
   const normalizedQuery = query.toLowerCase().trim();
 
@@ -563,6 +639,11 @@ async function executeDiscoveryPipeline(env, searchRunId, query, requestedCatego
       addEvent("candidate_rejected", `REJECTED: ${rawUrl} -> Reason: ${val.reason}`);
       continue;
     }
+    // Pre-check failed or dead URLs to avoid repetitive hangs
+    if (store.failedUrls.has(val.cleanUrl)) {
+      addEvent("candidate_rejected", `REJECTED: ${val.cleanUrl} -> Reason: Dead/unreachable URL (${store.failedUrls.get(val.cleanUrl)})`);
+      continue;
+    }
     if (seenUrls.has(val.cleanUrl)) {
       addEvent("candidate_rejected", `REJECTED: ${val.cleanUrl} -> Reason: Duplicate URL already queued`);
       continue;
@@ -586,7 +667,13 @@ async function executeDiscoveryPipeline(env, searchRunId, query, requestedCatego
 
     // Edge Live Web Fetch
     const pageContent = await fetchUrlContent(cleanUrl);
-    const pageText = pageContent.ok ? pageContent.text : (item.snippet || item.title);
+    if (!pageContent.ok) {
+      store.failedUrls.set(cleanUrl, pageContent.error);
+      addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Host Error: ${pageContent.error}`);
+      return null;
+    }
+
+    const pageText = pageContent.text;
 
     // AI Extraction via Workers AI (Llama 3.1)
     const aiExtracted = await extractProjectWithWorkersAI(env.AI, pageText, cleanUrl, targetCategory);
@@ -599,6 +686,7 @@ async function executeDiscoveryPipeline(env, searchRunId, query, requestedCatego
         project_url: cleanUrl,
         status: aiExtracted.status || "Active",
         category: aiExtracted.category || targetCategory || "Capital Projects",
+        country: aiExtracted.country || targetLocation,
         http_status: pageContent.status || 200,
         summary: aiExtracted.summary || pageContent.metaDesc || item.snippet || "",
         created_at: new Date().toISOString()
@@ -610,7 +698,7 @@ async function executeDiscoveryPipeline(env, searchRunId, query, requestedCatego
       addEvent("candidate_accepted", `VALID PROJECT URL: ${cleanUrl} | Status: [${projectRecord.status}] | Name: '${projectRecord.canonical_name}'`);
       return projectRecord;
     } else {
-      addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> ${aiExtracted?.reason || 'No project identified'}`);
+      addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Reason: Non-project page filtered`);
       return null;
     }
   });
@@ -650,7 +738,11 @@ async function executeDiscoveryPipeline(env, searchRunId, query, requestedCatego
   store.queryCache.set(normalizedQuery, searchRunId);
 
   // Durable KV Persistence (survives worker redeploys)
-  ctx.waitUntil(persistStore(env));
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil(persistStore(env));
+  } else {
+    await persistStore(env);
+  }
 
   addEvent("search_completed", `Discovery complete. ${searchResults.length} verified projects extracted in ${Date.now() - startTime}ms.`);
 
@@ -862,7 +954,7 @@ export default {
         // Run discovery pipeline asynchronously in edge context
         const requestedCat = body?.categories?.[0];
         const requestedLoc = body?.location;
-        ctx.waitUntil(executeDiscoveryPipeline(env, searchRunId, query, requestedCat, requestedLoc));
+        ctx.waitUntil(executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedCat, requestedLoc));
 
         return jsonRes({
           search_run_id: searchRunId,
