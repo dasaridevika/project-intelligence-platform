@@ -1265,7 +1265,7 @@ async function mapConcurrent(items, concurrency, fn) {
 // 4. PARALLEL HIGH-EFFICIENCY DISCOVERY PIPELINE
 // ==============================================================================
 
-async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedCategory, requestedLocation) {
+async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedCategory, requestedLocation, requestedProviders = ["exa", "google"]) {
   const startTime = Date.now();
   const normalizedQuery = query.toLowerCase().trim();
 
@@ -1327,6 +1327,15 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   }
 
   // 3. Provider Search Dispatch (Strict 1 Request Policy: At most 1 search API call per query)
+  const queryTelemetry = {
+    exa_search: 0,
+    google_search: 0,
+    fallback_search: 0,
+    web_content_fetches: 0,
+    workers_ai_inferences: 0,
+    total_requests: 0
+  };
+
   addEvent("provider_started", `Executing web discovery for query: '${query}'`);
 
   let candidateUrls = [];
@@ -1858,7 +1867,8 @@ export default {
         // Run discovery pipeline
         const requestedCat = body?.categories?.[0];
         const requestedLoc = body?.location;
-        await executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedCat, requestedLoc);
+        const requestedProv = Array.isArray(body?.providers) && body.providers.length > 0 ? body.providers : ["exa", "google"];
+        await executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedCat, requestedLoc, requestedProv);
         const searchRun = store.searches.get(searchRunId);
         const searchResults = store.searchResults.get(searchRunId) || [];
 
