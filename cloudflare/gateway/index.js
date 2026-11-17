@@ -34,6 +34,11 @@ const BLOCKED_DOMAINS = [
   "wikipedia.org", "wiktionary.org", "dictionary.cambridge.org", "merriam-webster.com",
   "dictionary.com", "investopedia.com", "britannica.com", "techtarget.com",
   "computerhope.com", "coursera.org", "statista.com", "wordreference.com",
+  // Market research aggregators, bank research & consulting thought leadership
+  "oxfordeconomics.com", "globaldata.com", "grandviewresearch.com", "researchandmarkets.com",
+  "marketresearch.com", "gartner.com", "forrester.com", "ibisworld.com", "pwc.com",
+  "deloitte.com", "mckinsey.com", "bain.com", "bcg.com", "kpmg.com", "ey.com",
+  "jpmorgan.com", "morganstanley.com", "goldmansachs.com", "rba.gov.au",
   // Social media, video, and community forums
   "youtube.com", "youtu.be", "vimeo.com", "facebook.com", "fb.com", "twitter.com",
   "x.com", "instagram.com", "tiktok.com", "pinterest.com", "reddit.com", "quora.com",
@@ -55,7 +60,11 @@ const JUNK_PATH_PATTERNS = [
   /\/terminos-y-condiciones/i, /\/aviso-legal/i,
   /\/staff\b/i, /\/staff-directory\b/i, /\/directory\b/i, /\/phonebook\b/i,
   /\/contact-us\b/i, /\/clinical-departments\b/i, /\/departments?\b/i,
-  /\/cart\b/i, /\/checkout\b/i, /\/pdf\//i
+  /\/cart\b/i, /\/checkout\b/i, /\/pdf\//i,
+  // Reject macroeconomic research, whitepapers and report stores
+  /\/insights\//i, /\/resource\/.*economic/i, /\/store\/report\//i,
+  /\/market-analysis\//i, /\/data-centre-outlook/i, /\/whitepaper\b/i,
+  /\/ai-capex/i, /\/liquidity-insights/i
 ];
 
 // Corporate suffix heuristics for verified country origin (never guess from founder name)
@@ -356,7 +365,14 @@ async function fetchUrlContent(targetUrl) {
   }
 }
 
-function extractCompanyFromUrl(url) {
+function extractCompanyFromUrl(url, text = "") {
+  // Check known major industrial developers if mentioned
+  const known = ["Blackstone", "Prologis", "Skybox", "DataBank", "HScale", "TSMC", "Intel", "Microsoft", "Amazon", "AWS", "Google", "Meta", "Samsung", "NextEra", "Shell", "Chevron", "TotalEnergies"];
+  for (const k of known) {
+    if (new RegExp(`\\b${k}\\b`, "i").test(url) || (text && new RegExp(`\\b${k}\\b`, "i").test(text.slice(0, 500)))) {
+      return k;
+    }
+  }
   try {
     const host = new URL(url).hostname.replace(/^www\./, "");
     const parts = host.split(".");
@@ -365,7 +381,25 @@ function extractCompanyFromUrl(url) {
       return name.charAt(0).toUpperCase() + name.slice(1);
     }
   } catch (_) {}
-  return "Industrial Developer";
+  return "Infrastructure Developer";
+}
+
+function extractProjectNameFromUrl(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    const segments = pathname.split("/").filter(Boolean);
+    const last = segments[segments.length - 1] || "";
+    // Remove date suffix like -2025-08-27 or IDs, and clean hyphens
+    const clean = last
+      .replace(/-\d{4}-\d{2}-\d{2}$/, "")
+      .replace(/\.(html|htm|php|aspx)$/i, "")
+      .replace(/[-_]+/g, " ")
+      .trim();
+    if (clean.length > 8) {
+      return clean.replace(/\b[a-z]/g, c => c.toUpperCase());
+    }
+  } catch (_) {}
+  return "Capital Infrastructure Project";
 }
 
 // Fallback extractor: identifies project name, company and status
@@ -375,10 +409,19 @@ function fallbackRegexExtract(text, url, hintCategory) {
     hostname = new URL(url).hostname;
   } catch (_) {}
 
-  // Strict check: must contain project infrastructure keywords
-  const isProjectRelated = /(?:capital\s*project|megafab|gigafactory|semiconductor\s*fab|data\s*center|solar\s*farm|wind\s*farm|battery\s*storage|power\s*plant|manufacturing\s*facility|refinery|pipeline|campus\s*expansion|breaks\s*ground|under\s*construction|commissioned|investment)\b/i.test(text);
+  // Strict rejection of macroeconomic commentary, consulting and bank outlooks
+  const isResearchOrMacro = /(?:oxfordeconomics|globaldata|jpmorgan|morganstanley|goldmansachs|pwc|deloitte|mckinsey|bain|bcg|rba\.gov|gartner|market-analysis|store\/report|insights\/global-research|outlook\.html)/i.test(url);
+  if (isResearchOrMacro) {
+    return {
+      is_project: false,
+      reason: "Page is a macroeconomic research report or consulting outlook, not a specific project"
+    };
+  }
 
-  const titleMatch = text.slice(0, 300).match(/([A-Z][a-zA-Z0-9\s,&-]{5,60}(?:Project|Plant|Facility|Campus|Center|Park|Fab|Corridor|Hub))/);
+  // Strict check: must contain project infrastructure keywords
+  const isProjectRelated = /(?:capital\s*project|megafab|gigafactory|semiconductor\s*fab|data\s*center|data\s*centre|solar\s*farm|wind\s*farm|battery\s*storage|power\s*plant|manufacturing\s*facility|refinery|pipeline|campus\s*expansion|breaks\s*ground|under\s*construction|commissioned|investment)\b/i.test(text);
+
+  const titleMatch = text.slice(0, 300).match(/([A-Z][a-zA-Z0-9\s,&-]{5,60}(?:Project|Plant|Facility|Campus|Center|Centre|Park|Fab|Corridor|Hub))/);
 
   if (!isProjectRelated && !titleMatch) {
     return {
@@ -399,8 +442,13 @@ function fallbackRegexExtract(text, url, hintCategory) {
     status = "Planning";
   }
 
-  const canonical_name = titleMatch ? titleMatch[1].trim() : `Capital Project at ${hostname}`;
-  const company = extractCompanyFromUrl(url);
+  // Extract clean project name from titleMatch, or cleanly formatted URL slug
+  let canonical_name = titleMatch ? titleMatch[1].trim() : "";
+  if (!canonical_name || canonical_name.length < 5) {
+    canonical_name = extractProjectNameFromUrl(url);
+  }
+
+  const company = extractCompanyFromUrl(url, text);
 
   return {
     is_project: true,
