@@ -256,7 +256,7 @@ export const SystemPage: React.FC = () => {
             <h3 className="text-sm font-semibold text-white uppercase tracking-wider">
               Request Throughput & Efficiency
             </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {chartData.map((d, i) => (
                 <div key={i} className="p-4 rounded-lg bg-slate-950 border border-slate-800 space-y-1">
                   <span className="text-xs text-slate-400 font-medium">{d.name}</span>

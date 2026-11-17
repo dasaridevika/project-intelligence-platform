@@ -109,7 +109,7 @@ export const api = {
     categories?: string[];
     location?: string;
     providers?: string[];
-  }): Promise<{ search_run_id: string; status: string; query: string }> => {
+  }): Promise<{ search_run_id: string; status: string; query: string; api_telemetry?: any; results?: SearchResultItem[] }> => {
     const res = await apiClient.post('/search', data);
     return res.data;
   },
@@ -150,7 +150,7 @@ export const api = {
 
   getSearchResults: async (
     id: string
-  ): Promise<{ search_run_id: string; query: string; status: string; total_results: number; results: SearchResultItem[] }> => {
+  ): Promise<{ search_run_id: string; query: string; status: string; total_results: number; results: SearchResultItem[]; api_telemetry?: any }> => {
     const res = await apiClient.get(`/search/${id}/results`);
     if (res.data?.results) {
       const mapped: Project[] = res.data.results
@@ -177,6 +177,7 @@ export const api = {
         ...res.data,
         results: mapped as any,
         total_results: mapped.length,
+        api_telemetry: res.data?.api_telemetry,
       };
     }
     return res.data;

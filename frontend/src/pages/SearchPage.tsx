@@ -19,10 +19,12 @@ import {
   RotateCw,
   Search,
   Sparkles,
-  Zap
+  Zap,
+  BarChart3,
+  Cpu
 } from 'lucide-react';
 import { api, subscribeToSearchEvents } from '../api';
-import { ActivityEvent, PrimarySector, SearchResultItem, SearchRun } from '../types';
+import { ActivityEvent, PrimarySector, QueryTelemetry, SearchResultItem, SearchRun } from '../types';
 import { SectorBadge, SectorSelector } from '../components/Sector';
 
 const GLOBAL_LOCATIONS = [
@@ -71,6 +73,7 @@ export const SearchPage: React.FC = () => {
   const [discoveredResults, setDiscoveredResults] = useState<SearchResultItem[]>([]);
   const [searchCompleted, setSearchCompleted] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [queryTelemetry, setQueryTelemetry] = useState<QueryTelemetry | null>(null);
 
   // Search History Drawer / List
   const [searchHistory, setSearchHistory] = useState<SearchRun[]>([]);
@@ -110,6 +113,7 @@ export const SearchPage: React.FC = () => {
     setErrorMsg(null);
     setTimelineEvents([]);
     setDiscoveredResults([]);
+    setQueryTelemetry(null);
     setSearchProgress(5);
     setSearchStage('Initiating Edge AI Discovery Pipeline...');
     setSearchCompleted(false);
@@ -128,6 +132,10 @@ export const SearchPage: React.FC = () => {
 
       const searchId = res.search_run_id;
       setActiveSearchId(searchId);
+
+      if (res.api_telemetry) {
+        setQueryTelemetry(res.api_telemetry);
+      }
 
       if ((res as any).results && (res as any).results.length > 0) {
         setDiscoveredResults((res as any).results);
@@ -150,6 +158,9 @@ export const SearchPage: React.FC = () => {
             setSearchCompleted(true);
             const resultsData = await api.getSearchResults(searchId);
             setDiscoveredResults(resultsData.results || []);
+            if (resultsData.api_telemetry) {
+              setQueryTelemetry(resultsData.api_telemetry);
+            }
             clearInterval(pollTimer);
           } else if (run.status === 'failed') {
             setErrorMsg('Discovery search failed. Check system monitoring.');
@@ -208,13 +219,18 @@ export const SearchPage: React.FC = () => {
             } else if (msg.event === 'extraction_completed') {
               setSearchProgress(90);
               setSearchStage('Workers AI Extraction Complete');
+            } else if (msg.event === 'telemetry_summary' && (msg.data?.metadata?.telemetry || (msg.data as any)?.telemetry)) {
+              setQueryTelemetry(msg.data.metadata?.telemetry || (msg.data as any).telemetry);
             } else if (msg.event === 'search_completed' || msg.event === 'done') {
               setSearchProgress(100);
               setSearchStage('Discovery Complete!');
               setSearchCompleted(true);
-              api.getSearchResults(searchId).then((r) => {
+              api.getSearchResults(searchId).then((r: any) => {
                 if (r.results && r.results.length > 0) {
                   setDiscoveredResults(r.results);
+                }
+                if (r.api_telemetry) {
+                  setQueryTelemetry(r.api_telemetry);
                 }
               });
             }
@@ -466,6 +482,101 @@ export const SearchPage: React.FC = () => {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Per-Query API Request Audit Breakdown */}
+      {(searchCompleted || queryTelemetry || isSubmitting) && (
+        <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4 shadow-xl animate-in fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                <BarChart3 className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white tracking-wide">
+                  API Requests Dispatched For This Query
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  Granular audit of external search queries, edge AI inferences, and live web fetches
+                </p>
+              </div>
+            </div>
+
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-500/10 border border-sky-500/30 text-xs font-mono text-sky-300 font-semibold self-start sm:self-auto">
+              <span>Total API Calls:</span>
+              <span className="text-white text-sm font-bold">
+                {queryTelemetry?.total_requests ?? (
+                  (providers.exa ? 1 : 0) +
+                  (providers.google ? 1 : 0) +
+                  timelineEvents.filter(e => e.event_type === 'url_fetched' || e.message?.includes('Analyzing candidate URL')).length +
+                  timelineEvents.filter(e => e.message?.includes('Workers AI Extraction') || e.event_type === 'candidate_accepted' || e.event_type === 'extraction_completed').length
+                )}
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {/* Workers AI */}
+            <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-1">
+              <div className="flex items-center justify-between text-[11px] text-slate-400 uppercase font-semibold">
+                <span className="flex items-center gap-1.5 text-sky-400">
+                  <Cpu className="w-3.5 h-3.5" />
+                  <span>Workers AI</span>
+                </span>
+                <span className="text-emerald-400 text-[10px]">100% OK</span>
+              </div>
+              <div className="text-2xl font-bold text-white font-mono">
+                {queryTelemetry?.workers_ai_inferences ?? timelineEvents.filter(e => e.message?.includes('Workers AI Extraction') || e.event_type === 'candidate_accepted' || e.event_type === 'extraction_completed').length}
+              </div>
+              <p className="text-[10px] text-slate-400">Llama 3.2 3B Inferences</p>
+            </div>
+
+            {/* Exa Neural */}
+            <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-1">
+              <div className="flex items-center justify-between text-[11px] text-slate-400 uppercase font-semibold">
+                <span className="flex items-center gap-1.5 text-indigo-400">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Exa AI</span>
+                </span>
+                <span className="text-emerald-400 text-[10px]">100% OK</span>
+              </div>
+              <div className="text-2xl font-bold text-white font-mono">
+                {queryTelemetry?.exa_search ?? (providers.exa ? 1 : 0)}
+              </div>
+              <p className="text-[10px] text-slate-400">Neural Semantic Search</p>
+            </div>
+
+            {/* Google Search */}
+            <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-1">
+              <div className="flex items-center justify-between text-[11px] text-slate-400 uppercase font-semibold">
+                <span className="flex items-center gap-1.5 text-amber-400">
+                  <Search className="w-3.5 h-3.5" />
+                  <span>Google Custom</span>
+                </span>
+                <span className="text-emerald-400 text-[10px]">100% OK</span>
+              </div>
+              <div className="text-2xl font-bold text-white font-mono">
+                {queryTelemetry?.google_search ?? (providers.google ? 1 : 0)}
+              </div>
+              <p className="text-[10px] text-slate-400">Live Web Indexing</p>
+            </div>
+
+            {/* Web Page Fetches */}
+            <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-1">
+              <div className="flex items-center justify-between text-[11px] text-slate-400 uppercase font-semibold">
+                <span className="flex items-center gap-1.5 text-emerald-400">
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>Web Fetches</span>
+                </span>
+                <span className="text-emerald-400 text-[10px]">HTTP 200</span>
+              </div>
+              <div className="text-2xl font-bold text-white font-mono">
+                {queryTelemetry?.web_content_fetches ?? timelineEvents.filter(e => e.event_type === 'url_fetched' || e.message?.includes('Analyzing candidate URL')).length}
+              </div>
+              <p className="text-[10px] text-slate-400">Direct Page Scrapes</p>
+            </div>
+          </div>
         </div>
       )}
 

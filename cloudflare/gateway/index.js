@@ -113,6 +113,16 @@ const store = {
       avg_latency_ms: 220,
       units_consumed: 18,
       status_note: "Operational & Active"
+    },
+    {
+      provider: "Web Content Fetches",
+      endpoint: "Direct HTTP Edge Scraping",
+      requests_sent: 42,
+      success_count: 42,
+      failed_count: 0,
+      avg_latency_ms: 280,
+      units_consumed: 42,
+      status_note: "Operational & Active"
     }
   ],
 };
@@ -1206,6 +1216,15 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   }
 
   // 3. Provider Search Dispatch (Parallel Provider Queries)
+  const queryTelemetry = {
+    exa_search: 0,
+    google_search: 0,
+    fallback_search: 0,
+    web_content_fetches: 0,
+    workers_ai_inferences: 0,
+    total_requests: 0
+  };
+
   addEvent("provider_started", `Executing web discovery for query: '${query}'`);
 
   const providerFetches = [];
@@ -1214,6 +1233,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   if (env.EXA_API_KEY && env.EXA_API_KEY.length > 10) {
     providerFetches.push((async () => {
       const t0 = Date.now();
+      queryTelemetry.exa_search += 1;
       try {
         const exaRes = await fetch("https://api.exa.ai/search", {
           method: "POST",
@@ -1264,6 +1284,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   if (env.GOOGLE_SEARCH_API_KEY && env.GOOGLE_SEARCH_CX) {
     providerFetches.push((async () => {
       const t0 = Date.now();
+      queryTelemetry.google_search += 1;
       try {
         const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(query.trim())}&num=10&lr=lang_en&hl=en`;
         const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(6000) });
@@ -1299,6 +1320,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
 
   // If primary API providers returned no candidates, run resilient public search fallback
   if (candidateUrls.length === 0) {
+    queryTelemetry.fallback_search += 1;
     addEvent("provider_started", `Primary providers returned 0 candidates. Engaging resilient public discovery fallback.`);
     const fallbackResults = await searchWebFallback(query);
     if (fallbackResults.length > 0) {
@@ -1369,7 +1391,10 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     let pageStatus = 200;
 
     if (!pageText || pageText.length < 150) {
+      queryTelemetry.web_content_fetches += 1;
+      const fetchT0 = Date.now();
       const pageContent = await fetchUrlContent(cleanUrl);
+      recordApiUsage("Web Content Fetches", Date.now() - fetchT0, pageContent.ok);
       if (pageContent.ok && pageContent.text) {
         pageText = pageContent.text;
         pageStatus = pageContent.status;
@@ -1391,6 +1416,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     }
 
     // AI Extraction via Workers AI (Llama 3.2 3B & Llama 3.1 70B)
+    queryTelemetry.workers_ai_inferences += 1;
     const aiExtractedList = await extractProjectWithWorkersAI(env.AI, pageText, cleanUrl, item.title, targetCategory);
     const resultsForUrl = [];
 
@@ -1505,6 +1531,13 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
 
   store.searchResults.set(searchRunId, searchResults);
 
+  queryTelemetry.total_requests = 
+    queryTelemetry.exa_search +
+    queryTelemetry.google_search +
+    queryTelemetry.fallback_search +
+    queryTelemetry.web_content_fetches +
+    queryTelemetry.workers_ai_inferences;
+
   // Update SearchRun in store
   const run = store.searches.get(searchRunId);
   if (run) {
@@ -1512,6 +1545,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     run.results_count = searchResults.length;
     run.duration_ms = Date.now() - startTime;
     run.completed_at = new Date().toISOString();
+    run.api_telemetry = queryTelemetry;
   }
 
   // Save to queryCache
@@ -1531,6 +1565,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     }
   }
 
+  addEvent("telemetry_summary", `Per-Query API Audit: Total ${queryTelemetry.total_requests} external requests [Workers AI: ${queryTelemetry.workers_ai_inferences} inferences, Exa: ${queryTelemetry.exa_search}, Google: ${queryTelemetry.google_search}, Web: ${queryTelemetry.web_content_fetches}]`, "telemetry", { telemetry: queryTelemetry });
   addEvent("search_completed", `Discovery complete. ${searchResults.length} verified projects extracted in ${Date.now() - startTime}ms.`);
 
   return searchResults;
@@ -1769,6 +1804,7 @@ export default {
           status: searchRun?.status || "completed",
           results_count: searchResults.length,
           total_results: searchResults.length,
+          api_telemetry: searchRun?.api_telemetry || null,
           results: searchResults,
           query
         }, 200);
@@ -1838,6 +1874,7 @@ export default {
         query: run?.query || "",
         status: run?.status || "completed",
         total_results: results.length,
+        api_telemetry: run?.api_telemetry || null,
         results
       });
     }

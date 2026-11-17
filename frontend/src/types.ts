@@ -6,6 +6,15 @@ export interface PrimarySector {
   keywords?: string[];
 }
 
+export interface QueryTelemetry {
+  exa_search: number;
+  google_search: number;
+  fallback_search: number;
+  web_content_fetches: number;
+  workers_ai_inferences: number;
+  total_requests: number;
+}
+
 export interface SearchRun {
   id: string;
   query: string;
@@ -21,6 +30,7 @@ export interface SearchRun {
   started_at?: string;
   completed_at?: string;
   created_at: string;
+  api_telemetry?: QueryTelemetry;
 }
 
 export interface Project {
