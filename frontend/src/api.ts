@@ -7,7 +7,8 @@ import {
   SearchRun,
   SystemHealth,
   UsageAnalytics,
-} from '../types';
+  SSEMessage,
+} from './types';
 
 const API_BASE = '/api/v1';
 
@@ -16,15 +17,6 @@ export const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-});
-
-// Attach JWT access token if present
-apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
 });
 
 apiClient.interceptors.response.use(
@@ -53,7 +45,7 @@ export const api = {
     return res.data;
   },
 
-  listSearches: async (status?: string, limit = 20, offset = 0): Promise<SearchRun[]> => {
+  listSearches: async (status?: string, limit = 50, offset = 0): Promise<SearchRun[]> => {
     const params: Record<string, any> = { limit, offset };
     if (status) params.status = status;
     const res = await apiClient.get('/search', { params });
@@ -62,11 +54,6 @@ export const api = {
 
   getSearchRun: async (id: string): Promise<SearchRun> => {
     const res = await apiClient.get(`/search/${id}`);
-    return res.data;
-  },
-
-  executeSearchNow: async (id: string): Promise<any> => {
-    const res = await apiClient.post(`/search/${id}/execute`);
     return res.data;
   },
 
@@ -105,7 +92,7 @@ export const api = {
     return `/api/v1/projects/export?${q.toString()}`;
   },
 
-  // Analytics
+  // Analytics & Health
   getUsageAnalytics: async (): Promise<UsageAnalytics> => {
     const res = await apiClient.get('/analytics/usage');
     return res.data;
@@ -137,7 +124,7 @@ export const api = {
     return res.data;
   },
 
-  // Primary Sectors Taxonomy (462 Sectors & Definitions)
+  // Primary Sectors Taxonomy
   listSectors: async (params?: { q?: string; group?: string; limit?: number }): Promise<{ total: number; groups: string[]; sectors: PrimarySector[] }> => {
     const res = await apiClient.get('/sectors', { params });
     return res.data;
@@ -148,7 +135,7 @@ export const api = {
     return res.data;
   },
 
-  // Edge AI Worker (Cloudflare Workers AI - Llama 3.1 8B Web Fetcher & Extractor)
+  // Cloudflare Workers AI edge extraction
   aiExtractUrl: async (url: string, category?: string): Promise<any> => {
     const res = await apiClient.post('/ai/extract', { url, category });
     return res.data;
@@ -158,14 +145,63 @@ export const api = {
     const res = await apiClient.post('/ai/batch-extract', { urls, category });
     return res.data;
   },
-
-  getAiWorkerHealth: async (): Promise<any> => {
-    const res = await apiClient.get('/ai/health');
-    return res.data;
-  },
-
-  getSectorDetail: async (id: string): Promise<PrimarySector> => {
-    const res = await apiClient.get(`/sectors/${id}`);
-    return res.data;
-  },
 };
+
+// Real-time Server-Sent Events (SSE) subscriber
+export function subscribeToSearchEvents(
+  searchRunId: string,
+  onEvent: (msg: SSEMessage) => void,
+  onError?: (err: any) => void
+): () => void {
+  const url = `/api/v1/search/${searchRunId}/events`;
+  const eventSource = new EventSource(url);
+
+  eventSource.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      onEvent({ id: e.lastEventId, event: 'message', data });
+    } catch {
+      onEvent({ id: e.lastEventId, event: 'message', data: e.data });
+    }
+  };
+
+  const knownEvents = [
+    'search_created',
+    'query_analyzed',
+    'job_published',
+    'provider_started',
+    'provider_completed',
+    'provider_failed',
+    'provider_fallback',
+    'url_fetched',
+    'candidate_accepted',
+    'candidate_rejected',
+    'extraction_started',
+    'extraction_completed',
+    'deduplication_completed',
+    'ranking_evaluated',
+    'projects_saved',
+    'search_completed',
+    'search_failed',
+    'done'
+  ];
+
+  for (const evName of knownEvents) {
+    eventSource.addEventListener(evName, (e: any) => {
+      try {
+        const data = JSON.parse(e.data);
+        onEvent({ id: e.lastEventId, event: evName, data });
+      } catch {
+        onEvent({ id: e.lastEventId, event: evName, data: e.data });
+      }
+    });
+  }
+
+  eventSource.onerror = (err) => {
+    if (onError) onError(err);
+  };
+
+  return () => {
+    eventSource.close();
+  };
+}

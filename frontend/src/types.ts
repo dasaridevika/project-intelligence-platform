@@ -8,9 +8,8 @@ export interface PrimarySector {
 
 export interface SearchRun {
   id: string;
-  user_id?: string;
   query: string;
-  parsed_query: {
+  parsed_query?: {
     category?: string;
     location?: string;
     status?: string;
@@ -93,20 +92,24 @@ export interface ProviderUsageStat {
   failed_requests: number;
   success_rate: number;
   avg_latency_ms: number;
-  min_latency_ms: number;
-  max_latency_ms: number;
+  min_latency_ms?: number;
+  max_latency_ms?: number;
   total_units_consumed: number;
-  total_estimated_cost?: number;
-  quota_exhausted?: boolean;
-  quota_status?: string;
-  last_error_message?: string;
+  endpoint?: string;
+  requests_sent?: number;
+  success_count?: number;
+  failed_count?: number;
+  units_consumed?: number;
+  status_note?: string;
 }
 
 export interface UsageAnalytics {
-  total_searches: number;
-  total_projects: number;
+  total_searches?: number;
+  total_projects?: number;
+  total_requests?: number;
+  total_units?: number;
   providers: ProviderUsageStat[];
-  recent_activity_count: number;
+  recent_activity_count?: number;
 }
 
 export interface SystemHealth {
@@ -116,12 +119,20 @@ export interface SystemHealth {
   database_status?: string;
   edge_worker?: string;
   workers_ai_model?: string;
+  total_projects?: number;
+  total_searches?: number;
+  active_search_jobs: number;
+  unprocessed_outbox_events?: number;
+  recent_errors_count?: number;
   redis?: {
     status: string;
     provider: string;
     live_connected: boolean;
   };
-  active_search_jobs: number;
-  unprocessed_outbox_events?: number;
-  recent_errors_count?: number;
+}
+
+export interface SSEMessage {
+  id?: string;
+  event: string;
+  data: any;
 }

@@ -10,28 +10,17 @@ import {
   Database,
   ExternalLink,
   Globe,
+  History,
   Layers,
   Loader2,
+  RotateCw,
   Search,
   Sparkles,
   Zap
 } from 'lucide-react';
-import { api } from '../services/api';
-import { subscribeToSearchEvents, SSEMessage } from '../services/sse';
-import { ActivityEvent, PrimarySector, ProviderUsageStat, SearchResultItem } from '../types';
-import { SectorBadge } from '../components/SectorBadge';
-import { SectorSelector } from '../components/SectorSelector';
-
-const CATEGORIES = [
-  'All Categories',
-  'Data Center',
-  'Semiconductor',
-  'Solar Power',
-  'Renewable Energy',
-  'Infrastructure',
-  'EV & Battery',
-  'Hydrogen'
-];
+import { api, subscribeToSearchEvents } from '../api';
+import { ActivityEvent, PrimarySector, SearchResultItem, SearchRun } from '../types';
+import { SectorBadge, SectorSelector } from '../components/Sector';
 
 const GLOBAL_LOCATIONS = [
   'Worldwide (Global)',
@@ -69,7 +58,33 @@ export const SearchPage: React.FC = () => {
     exa: true,
     google: true,
   });
-  const [usageStats, setUsageStats] = useState<ProviderUsageStat[]>([]);
+
+  // Discovery Execution State
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeSearchId, setActiveSearchId] = useState<string | null>(null);
+  const [timelineEvents, setTimelineEvents] = useState<ActivityEvent[]>([]);
+  const [searchProgress, setSearchProgress] = useState<number>(0);
+  const [searchStage, setSearchStage] = useState<string>('');
+  const [discoveredResults, setDiscoveredResults] = useState<SearchResultItem[]>([]);
+  const [searchCompleted, setSearchCompleted] = useState<boolean>(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Search History Drawer / List
+  const [searchHistory, setSearchHistory] = useState<SearchRun[]>([]);
+  const [showHistory, setShowHistory] = useState<boolean>(false);
+
+  const loadHistory = async () => {
+    try {
+      const runs = await api.listSearches(undefined, 10);
+      setSearchHistory(runs);
+    } catch (err) {
+      console.warn('Failed to load recent searches:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadHistory();
+  }, [searchCompleted]);
 
   const handleSelectSector = (sector: PrimarySector | null) => {
     if (sector) {
@@ -83,36 +98,6 @@ export const SearchPage: React.FC = () => {
     const loc = selectedLocation !== 'Worldwide (Global)' ? selectedLocation : 'worldwide';
     setQuery(`Upcoming ${sectorName} projects in ${loc}`);
   };
-
-  const fetchUsageStats = async () => {
-    try {
-      const data = await api.getUsageAnalytics();
-      setUsageStats(data.providers || []);
-    } catch (err) {
-      console.warn('Unable to load provider usage analytics:', err);
-    }
-  };
-
-  useEffect(() => {
-    fetchUsageStats();
-  }, []);
-
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeSearchId, setActiveSearchId] = useState<string | null>(null);
-  const [timelineEvents, setTimelineEvents] = useState<ActivityEvent[]>([]);
-  const [searchProgress, setSearchProgress] = useState<number>(0);
-  const [searchStage, setSearchStage] = useState<string>('');
-  const [discoveredResults, setDiscoveredResults] = useState<SearchResultItem[]>([]);
-  const [searchCompleted, setSearchCompleted] = useState<boolean>(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  // Auto trigger if query param present
-  useEffect(() => {
-    const initialQuery = searchParams.get('q');
-    if (initialQuery && !activeSearchId) {
-      setQuery(initialQuery);
-    }
-  }, [searchParams]);
 
   const handleSearchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -131,7 +116,6 @@ export const SearchPage: React.FC = () => {
     if (providers.google) activeProviders.push('google');
 
     try {
-      // POST 202 Accepted
       const res = await api.createSearch({
         query: query.trim(),
         categories: selectedCategory !== 'All Categories' ? [selectedCategory] : undefined,
@@ -143,185 +127,113 @@ export const SearchPage: React.FC = () => {
       setActiveSearchId(searchId);
       setIsSubmitting(false);
 
-      // Polling fallback in case SSE stream is buffered by proxy
+      // Polling fallback
       const pollTimer = setInterval(async () => {
         try {
           const run = await api.getSearchRun(searchId);
           if (run.status === 'completed' || run.status === 'partially_completed') {
-            clearInterval(pollTimer);
             setSearchProgress(100);
+            setSearchStage('Discovery Complete!');
             setSearchCompleted(true);
-            setSearchStage('Search Complete');
-            const resData = await api.getSearchResults(searchId);
-            setDiscoveredResults(resData.results);
-            fetchUsageStats();
+            const resultsData = await api.getSearchResults(searchId);
+            setDiscoveredResults(resultsData.results || []);
+            clearInterval(pollTimer);
           } else if (run.status === 'failed') {
-            clearInterval(pollTimer);
-            setSearchProgress(100);
+            setErrorMsg('Discovery search failed. Check system monitoring.');
             setSearchCompleted(true);
-            setSearchStage('Execution Failed');
-            setErrorMsg('Search execution failed on providers.');
-          } else if (run.status === 'processing') {
-            setSearchStage('Extracting & Analyzing Projects...');
-            setSearchProgress((p) => Math.max(p, 50));
+            clearInterval(pollTimer);
           }
-        } catch (e) {
-          // ignore transient poll errors
+        } catch {
+          // ignore transient poll error
         }
       }, 2000);
 
-      // Connect to SSE Stream
+      // Real-time Server-Sent Events (SSE) Stream
       const unsubscribe = subscribeToSearchEvents(
         searchId,
-        async (msg: SSEMessage) => {
-          if (msg.event === 'done') {
-            clearInterval(pollTimer);
-            setSearchProgress(100);
-            setSearchCompleted(true);
-            unsubscribe();
-            fetchUsageStats();
-            // Fetch completed results
-            try {
-              const resData = await api.getSearchResults(searchId);
-              setDiscoveredResults(resData.results);
-            } catch (err) {
-              console.error('Failed to fetch search results:', err);
-            }
-          } else if (msg.data && typeof msg.data === 'object' && msg.data.event_type) {
-            setTimelineEvents((prev) => {
-              if (prev.some((e) => e.event_id === msg.data.event_id)) return prev;
-              return [...prev, msg.data];
-            });
+        (msg) => {
+          if (msg.data && typeof msg.data === 'object') {
+            const ev = msg.data as ActivityEvent;
+            setTimelineEvents((prev) => [ev, ...prev].slice(0, 30));
 
-            // Update progress percentages based on event types
-            switch (msg.data.event_type) {
-              case 'search_created':
-                setSearchProgress(10);
-                setSearchStage('Search Enqueued');
-                break;
-              case 'query_analyzed':
-                setSearchProgress(20);
-                setSearchStage('Query NLP Analyzed');
-                break;
-              case 'provider_started':
-                setSearchProgress(35);
-                setSearchStage('Executing External Providers');
-                break;
-              case 'provider_completed':
-                setSearchProgress(50);
-                setSearchStage('Provider Results Received');
-                break;
-              case 'extraction_started':
-                setSearchProgress(65);
-                setSearchStage('Extracting Structured Capital Projects');
-                break;
-              case 'extraction_completed':
-                setSearchProgress(75);
-                setSearchStage('Data Extraction Completed');
-                break;
-              case 'deduplication_completed':
-                setSearchProgress(85);
-                setSearchStage('Deduplication & Entity Matching');
-                break;
-              case 'search_completed':
-                setSearchProgress(100);
-                setSearchStage('Search Complete');
-                setSearchCompleted(true);
-                break;
-              case 'search_failed':
-                setSearchProgress(100);
-                setSearchStage('Execution Failed');
-                setSearchCompleted(true);
-                break;
+            // Stage updates
+            if (msg.event === 'query_analyzed') {
+              setSearchProgress(20);
+              setSearchStage('Edge Taxonomy Matching Complete');
+            } else if (msg.event === 'provider_started') {
+              setSearchProgress(40);
+              setSearchStage(`Searching Live Sources via ${msg.data.provider || 'Web Providers'}...`);
+            } else if (msg.event === 'url_fetched') {
+              setSearchProgress((p) => Math.min(p + 5, 75));
+              setSearchStage(`Fetching & Sanitizing: ${msg.data.url?.slice(0, 45) || 'webpage'}...`);
+            } else if (msg.event === 'candidate_accepted') {
+              setSearchProgress((p) => Math.min(p + 5, 85));
+              setSearchStage(`Candidate Identified: ${msg.data.title || 'Capital Project'}`);
+            } else if (msg.event === 'extraction_completed') {
+              setSearchProgress(90);
+              setSearchStage('Workers AI Extraction Complete');
+            } else if (msg.event === 'search_completed' || msg.event === 'done') {
+              setSearchProgress(100);
+              setSearchStage('Discovery Complete!');
+              setSearchCompleted(true);
+              api.getSearchResults(searchId).then((r) => setDiscoveredResults(r.results || []));
             }
           }
         },
-        (err) => {
-          console.warn('SSE stream error/closed:', err);
+        () => {
+          // Fallback handled by pollTimer
         }
       );
+
+      return () => {
+        unsubscribe();
+        clearInterval(pollTimer);
+      };
     } catch (err: any) {
       setIsSubmitting(false);
-      const errorDetail =
-        err?.response?.data?.detail ||
-        err?.response?.data?.message ||
-        err?.message ||
-        'Failed to connect to backend service.';
-      setErrorMsg(errorDetail);
+      setErrorMsg(err?.message || 'Failed to dispatch search execution.');
     }
   };
 
   return (
-    <div className="max-w-7xl mx-auto space-y-8">
-      {/* Search Header */}
-      <div>
-        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-sky-400 mb-1">
-          <Globe className="w-4 h-4" />
-          <span>Global Intelligence Query Builder</span>
+    <div className="max-w-6xl mx-auto space-y-8">
+      {/* Search Header Banner */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 border border-slate-800 p-8 shadow-2xl">
+        <div className="max-w-3xl space-y-3">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-sky-500/10 border border-sky-500/20 text-xs font-medium text-sky-400">
+            <Globe className="w-3.5 h-3.5" />
+            <span>100% Serverless Edge Capital Project Intelligence</span>
+          </div>
+
+          <h1 className="text-3xl font-bold text-white tracking-tight sm:text-4xl">
+            Global Project Discovery
+          </h1>
+
+          <p className="text-slate-300 text-sm leading-relaxed">
+            Discover hyperscale data centers, semiconductor fabs, gigafactories, and clean energy corridors. Powered by Cloudflare Workers AI with pre-LLM URL deduplication and 462 primary sector definitions.
+          </p>
         </div>
-        <h1 className="text-2xl font-bold text-white tracking-tight sm:text-3xl">
-          Project Discovery Search
-        </h1>
-        <p className="text-sm text-slate-300 mt-1">
-          Enter an international query to discover hyperscale data centers, semiconductor fabs, renewable parks, and infrastructure globally.
-        </p>
       </div>
 
       {/* Main Search Form Card */}
-      <div className="rounded-xl bg-slate-900 border border-slate-800 p-6 shadow-xl">
-        {/* Quota Exhaustion Alert Banner */}
-        {usageStats.some((p) => p.quota_exhausted) && (
-          <div className="mb-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex items-start gap-3 shadow-lg">
-            <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <p className="font-semibold text-rose-200">API Free Credits / Quota Depleted</p>
-              {usageStats
-                .filter((p) => p.quota_exhausted)
-                .map((p) => (
-                  <p key={p.provider} className="text-xs text-rose-300/90">
-                    <span className="font-semibold uppercase tracking-wider">{p.provider === 'google' ? 'Google Search' : p.provider.toUpperCase()}:</span>{' '}
-                    {p.last_error_message || 'Free credits finished or quota limit reached (HTTP 402/429). Please top up your API balance.'}
-                  </p>
-                ))}
-            </div>
-          </div>
-        )}
-
-        {/* Live Requests Sent Counter Bar */}
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs">
-          <div className="flex items-center gap-2 text-slate-300 font-medium">
-            <Zap className="w-4 h-4 text-sky-400" />
-            <span>API Requests Sent Till Now:</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-5">
-            {usageStats.map((p) => (
-              <div key={p.provider} className="flex items-center gap-2">
-                <span className="font-bold text-slate-300 uppercase tracking-wider">
-                  {p.provider === 'google' ? 'Google Search' : p.provider.toUpperCase()}:
-                </span>
-                <span className="px-2.5 py-0.5 rounded-md bg-slate-800 text-white font-mono font-semibold">
-                  {p.total_requests} requests
-                </span>
-                {p.quota_exhausted ? (
-                  <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-bold uppercase tracking-wider">
-                    ⚠️ Credits Finished
-                  </span>
-                ) : (
-                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-medium uppercase tracking-wider">
-                    Active
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
+      <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 sm:p-8 space-y-6 shadow-xl">
         <form onSubmit={handleSearchSubmit} className="space-y-6">
           {/* Query Bar */}
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">
-              Natural Language Discovery Query
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-300">
+                Natural Language Discovery Query
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowHistory(!showHistory)}
+                className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1 font-medium transition-colors"
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>{showHistory ? 'Hide History' : 'Recent Searches'}</span>
+              </button>
+            </div>
+
             <div className="relative">
               <input
                 type="text"
@@ -334,7 +246,34 @@ export const SearchPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Primary Sector Taxonomy Selector (462 Sectors & Definitions) */}
+          {/* Recent Searches Drawer (if toggled) */}
+          {showHistory && searchHistory.length > 0 && (
+            <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2 text-xs animate-in fade-in">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">
+                Previous Searches
+              </span>
+              <div className="divide-y divide-slate-800/60">
+                {searchHistory.map((run) => (
+                  <div
+                    key={run.id}
+                    onClick={() => {
+                      setQuery(run.query);
+                      setShowHistory(false);
+                      navigate(`/projects?search_id=${run.id}`);
+                    }}
+                    className="py-2 flex items-center justify-between cursor-pointer hover:text-sky-400 transition-colors"
+                  >
+                    <span className="text-slate-200 truncate max-w-md">{run.query}</span>
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      {run.results_count || 0} projects &rarr;
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Primary Sector Taxonomy Selector */}
           <SectorSelector
             selectedSector={selectedCategory}
             onSelectSector={handleSelectSector}
@@ -342,7 +281,7 @@ export const SearchPage: React.FC = () => {
           />
 
           {/* Filters Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1.5">
                 Target Region / Geography
@@ -350,7 +289,7 @@ export const SearchPage: React.FC = () => {
               <select
                 value={selectedLocation}
                 onChange={(e) => setSelectedLocation(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-slate-200 text-sm focus:outline-none focus:ring-1 focus:ring-sky-500"
+                className="w-full px-3.5 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-slate-200 text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-sky-500"
               >
                 {GLOBAL_LOCATIONS.map((loc) => (
                   <option key={loc} value={loc}>
@@ -364,7 +303,7 @@ export const SearchPage: React.FC = () => {
               <label className="block text-xs font-medium text-slate-300 mb-1.5">
                 External Search Providers
               </label>
-              <div className="flex items-center gap-4 py-2 px-3 rounded-lg bg-slate-950 border border-slate-700">
+              <div className="flex items-center gap-6 py-2 px-3.5 rounded-lg bg-slate-950 border border-slate-700 h-[42px]">
                 <label className="flex items-center gap-2 text-xs font-medium text-slate-300 cursor-pointer">
                   <input
                     type="checkbox"
@@ -381,245 +320,138 @@ export const SearchPage: React.FC = () => {
                     onChange={(e) => setProviders({ ...providers, google: e.target.checked })}
                     className="rounded bg-slate-800 border-slate-600 text-sky-500 focus:ring-0"
                   />
-                  <span>Google Search</span>
+                  <span>Google Custom Search</span>
                 </label>
               </div>
             </div>
           </div>
 
-          {errorMsg && (
-            <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-                <span>{errorMsg}</span>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => {
-                  setErrorMsg(null);
-                  handleSearchSubmit(e as any);
-                }}
-                disabled={isSubmitting || !query.trim()}
-                className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 font-medium text-xs shrink-0 transition-colors self-end sm:self-auto"
-              >
-                Retry Search
-              </button>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between pt-2">
-            <span className="text-xs text-slate-300">
-              Asynchronous execution: returns HTTP 202 and streams progress live via SSE.
-            </span>
-            <button
-              type="submit"
-              disabled={isSubmitting || !query.trim()}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white font-medium text-sm transition-all shadow-lg shadow-sky-600/30"
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Enqueuing...</span>
-                </>
-              ) : (
-                <>
-                  <Search className="w-4 h-4" />
-                  <span>Submit Discovery Search</span>
-                </>
-              )}
-            </button>
-          </div>
+          {/* Submit Button */}
+          <button
+            type="submit"
+            disabled={isSubmitting || !query.trim() || query.length < 3}
+            className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 disabled:opacity-50 text-white font-semibold text-sm transition-all shadow-lg shadow-sky-600/20 flex items-center justify-center gap-2 cursor-pointer"
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Dispatching Edge AI Workers...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4" />
+                <span>Execute Capital Project Discovery</span>
+              </>
+            )}
+          </button>
         </form>
+
+        {errorMsg && (
+          <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs sm:text-sm flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
       </div>
 
-      {/* Live Search Execution Box */}
-      {activeSearchId && (
-        <div className="rounded-xl bg-slate-900 border border-slate-800 p-6 space-y-6">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
-                <Activity className="w-4 h-4 animate-pulse" />
-              </div>
-              <div>
-                <h3 className="text-base font-semibold text-white">Live Execution Timeline</h3>
-                <p className="text-xs text-slate-400 font-mono">Job ID: {activeSearchId}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-semibold text-sky-400">{searchStage || 'Processing'}</span>
-              <span className="text-xs text-slate-400 font-mono">({searchProgress}%)</span>
-            </div>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-800">
-            <div
-              className="bg-gradient-to-r from-sky-500 to-indigo-500 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${searchProgress}%` }}
-            />
-          </div>
-
-          {/* Activity Events Timeline */}
-          <div className="space-y-2.5 max-h-96 overflow-y-auto pr-2">
-            {timelineEvents.map((ev, i) => {
-              const isAccepted = ev.event_type === 'candidate_accepted';
-              const isRejected = ev.event_type === 'candidate_rejected';
-              const isFetched = ev.event_type === 'url_fetched';
-              const isRanked = ev.event_type === 'ranking_evaluated';
-
-              return (
-                <div
-                  key={ev.event_id || i}
-                  className={`flex items-start gap-3 p-2.5 rounded-lg border text-xs transition-colors ${
-                    isAccepted
-                      ? 'bg-emerald-950/20 border-emerald-500/30'
-                      : isRejected
-                      ? 'bg-amber-950/20 border-amber-500/30'
-                      : isFetched
-                      ? 'bg-sky-950/20 border-sky-500/20'
-                      : isRanked
-                      ? 'bg-purple-950/20 border-purple-500/20'
-                      : 'bg-slate-950/40 border-slate-800/60'
-                  }`}
-                >
-                  <div className="mt-0.5 shrink-0">
-                    {isAccepted ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    ) : isRejected ? (
-                      <AlertTriangle className="w-4 h-4 text-amber-400" />
-                    ) : isFetched ? (
-                      <Globe className="w-4 h-4 text-sky-400" />
-                    ) : isRanked ? (
-                      <Sparkles className="w-4 h-4 text-purple-400" />
-                    ) : (
-                      <Activity className="w-4 h-4 text-sky-400" />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0 space-y-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span
-                        className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border ${
-                          isAccepted
-                            ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30'
-                            : isRejected
-                            ? 'text-amber-300 bg-amber-500/10 border-amber-500/30'
-                            : isFetched
-                            ? 'text-sky-300 bg-sky-500/10 border-sky-500/30'
-                            : isRanked
-                            ? 'text-purple-300 bg-purple-500/10 border-purple-500/30'
-                            : 'text-slate-400 bg-slate-800 border-slate-700'
-                        }`}
-                      >
-                        {ev.event_type}
-                      </span>
-                      <span className="text-[10px] text-slate-500 font-mono">
-                        {new Date(ev.timestamp).toLocaleTimeString()}
-                      </span>
-                    </div>
-                    <p
-                      className={`break-words ${
-                        isAccepted
-                          ? 'text-emerald-200 font-medium'
-                          : isRejected
-                          ? 'text-amber-200/90'
-                          : 'text-slate-200'
-                      }`}
-                    >
-                      {ev.message}
-                    </p>
-                    <p className="text-[10px] text-slate-400 font-mono">
-                      Component: {ev.component}
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {searchCompleted && (
-            <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
-              <span className="text-xs font-medium text-emerald-400 flex items-center gap-1.5">
-                <CheckCircle2 className="w-4 h-4" />
-                Discovery complete. {discoveredResults.length} canonical projects extracted.
+      {/* Real-time Execution Stream (Progress & Timeline) */}
+      {(searchProgress > 0 || timelineEvents.length > 0) && (
+        <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 sm:p-8 space-y-6 shadow-xl animate-in fade-in">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs sm:text-sm">
+              <span className="font-semibold text-white flex items-center gap-2">
+                <Activity className="w-4 h-4 text-sky-400" />
+                <span>{searchStage || 'Processing...'}</span>
               </span>
-              <button
-                onClick={() => navigate(`/results?search_id=${activeSearchId}`)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition-colors"
-              >
-                <span>View Full Results Explorer</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
+              <span className="font-mono text-sky-400">{searchProgress}%</span>
+            </div>
+
+            <div className="w-full h-2 rounded-full bg-slate-950 overflow-hidden border border-slate-800">
+              <div
+                className="h-full bg-gradient-to-r from-sky-500 to-indigo-500 transition-all duration-300"
+                style={{ width: `${searchProgress}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Timeline Events Feed */}
+          {timelineEvents.length > 0 && (
+            <div className="space-y-2 pt-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Live Audit Activity Stream
+              </h3>
+              <div className="max-h-48 overflow-y-auto space-y-1.5 font-mono text-xs pr-2">
+                {timelineEvents.map((ev, i) => (
+                  <div key={i} className="flex items-start justify-between gap-3 text-slate-300">
+                    <span className="text-sky-400 shrink-0">[{ev.component || 'Edge'}]</span>
+                    <span className="truncate flex-1">{ev.message}</span>
+                    <span className="text-[10px] text-slate-500 shrink-0">
+                      {new Date(ev.timestamp).toLocaleTimeString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Discovered Projects Preview Table */}
-      {discoveredResults.length > 0 && (
-        <div className="rounded-xl bg-slate-900 border border-slate-800 p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-            <div>
-              <h3 className="text-base font-semibold text-white">Discovered Capital Projects</h3>
-              <p className="text-xs text-slate-400">Normalized records deduplicated from external search providers</p>
-            </div>
-            <span className="text-xs px-2.5 py-1 rounded bg-slate-800 text-slate-300 font-medium">
-              {discoveredResults.length} Projects
-            </span>
+      {/* Discovered Results Yield */}
+      {searchCompleted && (
+        <div className="space-y-4 animate-in fade-in">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold text-white flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+              <span>Discovered Capital Projects ({discoveredResults.length})</span>
+            </h2>
+
+            {activeSearchId && (
+              <button
+                onClick={() => navigate(`/projects?search_id=${activeSearchId}`)}
+                className="text-xs text-sky-400 hover:text-sky-300 font-semibold flex items-center gap-1"
+              >
+                <span>Open in Repository</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-950/60 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-800">
-                <tr>
-                  <th className="py-3 px-4">Project Name</th>
-                  <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4">Developer</th>
-                  <th className="py-3 px-4">Location</th>
-                  <th className="py-3 px-4">Capacity / Investment</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Relevance</th>
-                  <th className="py-3 px-4">Sources</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/80">
-                {discoveredResults.map((item) => (
-                  <tr
-                    key={item.project_id}
-                    onClick={() => navigate(`/projects/${item.project_id}`)}
-                    className="hover:bg-slate-800/40 cursor-pointer transition-colors"
-                  >
-                    <td className="py-3 px-4 font-medium text-slate-200 max-w-xs truncate">
-                      {item.canonical_name}
-                    </td>
-                    <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
-                      <SectorBadge sectorName={item.category} />
-                    </td>
-                    <td className="py-3 px-4 text-slate-300">{item.developer || '—'}</td>
-                    <td className="py-3 px-4 text-slate-300">
-                      {[item.location_city, item.location_state, item.location_country].filter(Boolean).join(', ') || 'Global'}
-                    </td>
-                    <td className="py-3 px-4 text-slate-300">
-                      {item.capacity_value ? `${item.capacity_value} ${item.capacity_unit}` : ''}
-                      {item.investment_value ? ` • ${item.investment_currency || '$'}${item.investment_value.toLocaleString()}` : ''}
-                      {!item.capacity_value && !item.investment_value ? '—' : ''}
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-300 border border-slate-700">
-                        {item.status}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 font-mono font-semibold text-sky-400">
-                      {(item.relevance_score * 100).toFixed(1)}%
-                    </td>
-                    <td className="py-3 px-4 text-slate-400 font-mono">
-                      {item.sources?.length || 1} URL(s)
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {discoveredResults.length === 0 ? (
+            <div className="text-center py-12 bg-slate-900 border border-slate-800 rounded-xl space-y-2">
+              <p className="text-sm text-slate-400">No project candidates matched this query criteria.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {discoveredResults.map((p) => (
+                <div
+                  key={p.project_id}
+                  onClick={() => navigate(`/projects?search_id=${activeSearchId}`)}
+                  className="rounded-xl bg-slate-900 border border-slate-800 p-5 hover:border-slate-700 cursor-pointer transition-all space-y-3"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <SectorBadge sectorName={p.category} />
+                    <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                      {p.status}
+                    </span>
+                  </div>
+
+                  <h3 className="text-base font-bold text-white line-clamp-1">{p.canonical_name}</h3>
+                  {p.developer && <p className="text-xs text-slate-400">Developer: {p.developer}</p>}
+                  {p.location_country && <p className="text-xs text-slate-400">Location: {p.location_country}</p>}
+
+                  <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs">
+                    <span className="font-mono text-emerald-400 font-semibold">
+                      {p.investment_value ? `$${(p.investment_value / 1e9).toFixed(1)}B` : 'Verified'}
+                    </span>
+                    <span className="text-sky-400 text-[11px] font-medium flex items-center gap-1">
+                      <span>View</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
