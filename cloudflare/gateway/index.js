@@ -122,6 +122,55 @@ function recordApiUsage(providerName, latencyMs, isSuccess = true) {
   }
 }
 
+// Durable KV Persistence Layer (Survives worker code changes & redeploys)
+async function hydrateStore(env) {
+  if (!env.PROJECT_DATA) return;
+  try {
+    if (store.projects.size === 0) {
+      const savedProjects = await env.PROJECT_DATA.get("projects", "json");
+      if (Array.isArray(savedProjects)) {
+        for (const p of savedProjects) {
+          if (p?.id) {
+            store.projects.set(p.id, p);
+            if (p.sources?.[0]?.source_url) {
+              store.urlCache.set(p.sources[0].source_url, p);
+            }
+          }
+        }
+      }
+    }
+    if (store.searches.size === 0) {
+      const savedSearches = await env.PROJECT_DATA.get("searches", "json");
+      if (Array.isArray(savedSearches)) {
+        for (const s of savedSearches) {
+          if (s?.id) {
+            store.searches.set(s.id, s);
+            if (s.query) {
+              store.queryCache.set(s.query.toLowerCase().trim(), s.id);
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("KV store hydration notice:", err?.message || err);
+  }
+}
+
+async function persistStore(env) {
+  if (!env.PROJECT_DATA) return;
+  try {
+    const projectsList = Array.from(store.projects.values()).slice(-200);
+    const searchesList = Array.from(store.searches.values()).slice(-50);
+    await Promise.all([
+      env.PROJECT_DATA.put("projects", JSON.stringify(projectsList)),
+      env.PROJECT_DATA.put("searches", JSON.stringify(searchesList)),
+    ]);
+  } catch (err) {
+    console.warn("KV store persistence notice:", err?.message || err);
+  }
+}
+
 // ==============================================================================
 // 3. PRE-LLM VALIDATION & URL NORMALIZATION
 // ==============================================================================
@@ -633,6 +682,9 @@ async function executeDiscoveryPipeline(env, searchRunId, query, requestedCatego
   // Save to queryCache
   store.queryCache.set(normalizedQuery, searchRunId);
 
+  // Durable KV Persistence (survives worker redeploys)
+  ctx.waitUntil(persistStore(env));
+
   addEvent("search_completed", `Discovery complete. ${searchResults.length} verified projects extracted in ${Date.now() - startTime}ms.`);
 
   return searchResults;
@@ -646,6 +698,9 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    // Auto-hydrate from durable storage if store is fresh
+    await hydrateStore(env);
+
     // 1. CORS Preflight
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -658,6 +713,37 @@ export default {
         status,
         headers: { "Content-Type": "application/json", "X-Trace-Id": traceId, ...CORS_HEADERS },
       });
+
+    // Sync / Restore endpoint for durable persistence across redeploys
+    if ((url.pathname === "/api/v1/sync" || url.pathname === "/api/sync") && request.method === "POST") {
+      try {
+        const body = await request.json();
+        if (Array.isArray(body?.projects)) {
+          for (const p of body.projects) {
+            if (p?.id && !store.projects.has(p.id)) {
+              store.projects.set(p.id, p);
+              if (p.sources?.[0]?.source_url) {
+                store.urlCache.set(p.sources[0].source_url, p);
+              }
+            }
+          }
+        }
+        if (Array.isArray(body?.searches)) {
+          for (const s of body.searches) {
+            if (s?.id && !store.searches.has(s.id)) {
+              store.searches.set(s.id, s);
+              if (s.query) {
+                store.queryCache.set(s.query.toLowerCase().trim(), s.id);
+              }
+            }
+          }
+        }
+        ctx.waitUntil(persistStore(env));
+        return jsonRes({ success: true, total_projects: store.projects.size, total_searches: store.searches.size });
+      } catch (err) {
+        return jsonRes({ error: "Sync failed", details: err?.message || String(err) }, 400);
+      }
+    }
 
     // 2. Health & Readiness Endpoints
     if (url.pathname === "/health" || url.pathname === "/ready" || url.pathname === "/api/health") {

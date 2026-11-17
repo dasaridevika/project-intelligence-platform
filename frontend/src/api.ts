@@ -33,6 +33,57 @@ apiClient.interceptors.response.use(
   }
 );
 
+// ==============================================================================
+// DURABLE PERSISTENCE LAYER (Saves data across code updates & redeploys)
+// ==============================================================================
+
+const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v2';
+const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v2';
+
+function getStoredProjects(): Project[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_PROJECTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredProjects(projects: Project[]) {
+  try {
+    const existing = getStoredProjects();
+    const map = new Map<string, Project>();
+    for (const p of existing) map.set(p.id, p);
+    for (const p of projects) map.set(p.id, p);
+    const merged = Array.from(map.values()).slice(-500);
+    localStorage.setItem(STORAGE_PROJECTS_KEY, JSON.stringify(merged));
+  } catch (err) {
+    console.warn('LocalStorage save notice:', err);
+  }
+}
+
+function getStoredSearches(): SearchRun[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_SEARCHES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredSearches(searches: SearchRun[]) {
+  try {
+    const existing = getStoredSearches();
+    const map = new Map<string, SearchRun>();
+    for (const s of existing) map.set(s.id, s);
+    for (const s of searches) map.set(s.id, s);
+    const merged = Array.from(map.values()).slice(-100);
+    localStorage.setItem(STORAGE_SEARCHES_KEY, JSON.stringify(merged));
+  } catch (err) {
+    console.warn('LocalStorage save notice:', err);
+  }
+}
+
 export const api = {
   // Search
   createSearch: async (data: {
@@ -46,21 +97,62 @@ export const api = {
   },
 
   listSearches: async (status?: string, limit = 50, offset = 0): Promise<SearchRun[]> => {
-    const params: Record<string, any> = { limit, offset };
-    if (status) params.status = status;
-    const res = await apiClient.get('/search', { params });
-    return res.data;
+    try {
+      const params: Record<string, any> = { limit, offset };
+      if (status) params.status = status;
+      const res = await apiClient.get('/search', { params });
+      const serverRuns = res.data || [];
+      if (Array.isArray(serverRuns) && serverRuns.length > 0) {
+        saveStoredSearches(serverRuns);
+      }
+      const stored = getStoredSearches();
+      // If server store is fresh/empty after a redeploy, sync stored searches back to server!
+      if (serverRuns.length === 0 && stored.length > 0) {
+        apiClient.post('/sync', { searches: stored }).catch(() => {});
+        return stored;
+      }
+      return serverRuns;
+    } catch (err) {
+      const stored = getStoredSearches();
+      if (stored.length > 0) return stored;
+      throw err;
+    }
   },
 
   getSearchRun: async (id: string): Promise<SearchRun> => {
-    const res = await apiClient.get(`/search/${id}`);
-    return res.data;
+    try {
+      const res = await apiClient.get(`/search/${id}`);
+      return res.data;
+    } catch (err) {
+      const stored = getStoredSearches().find(s => s.id === id);
+      if (stored) return stored;
+      throw err;
+    }
   },
 
   getSearchResults: async (
     id: string
   ): Promise<{ search_run_id: string; query: string; status: string; total_results: number; results: SearchResultItem[] }> => {
     const res = await apiClient.get(`/search/${id}/results`);
+    if (res.data?.results) {
+      const mapped: Project[] = res.data.results.map((r: any) => ({
+        id: r.project_id || r.id,
+        canonical_name: r.canonical_name,
+        category: r.category,
+        status: r.status,
+        developer: r.developer,
+        location_city: r.location_city,
+        location_state: r.location_state,
+        location_country: r.location_country,
+        investment_value: r.investment_value,
+        investment_currency: r.investment_currency,
+        capacity_value: r.capacity_value,
+        capacity_unit: r.capacity_unit,
+        sources: r.sources,
+        created_at: new Date().toISOString(),
+      }));
+      saveStoredProjects(mapped);
+    }
     return res.data;
   },
 
@@ -76,13 +168,47 @@ export const api = {
     sort_by?: string;
     sort_order?: string;
   }): Promise<{ total: number; page: number; page_size: number; projects: Project[] }> => {
-    const res = await apiClient.get('/projects', { params });
-    return res.data;
+    try {
+      const res = await apiClient.get('/projects', { params });
+      const serverProjects = res.data?.projects || [];
+      if (serverProjects.length > 0) {
+        saveStoredProjects(serverProjects);
+      }
+      const stored = getStoredProjects();
+      // If server store is fresh/empty after a redeploy, sync stored projects back to server!
+      if (serverProjects.length === 0 && stored.length > 0) {
+        apiClient.post('/sync', { projects: stored }).catch(() => {});
+        return {
+          total: stored.length,
+          page: 1,
+          page_size: stored.length,
+          projects: stored,
+        };
+      }
+      return res.data;
+    } catch (err) {
+      const stored = getStoredProjects();
+      if (stored.length > 0) {
+        return {
+          total: stored.length,
+          page: 1,
+          page_size: stored.length,
+          projects: stored,
+        };
+      }
+      throw err;
+    }
   },
 
   getProject: async (id: string): Promise<Project> => {
-    const res = await apiClient.get(`/projects/${id}`);
-    return res.data;
+    try {
+      const res = await apiClient.get(`/projects/${id}`);
+      return res.data;
+    } catch (err) {
+      const stored = getStoredProjects().find(p => p.id === id);
+      if (stored) return stored;
+      throw err;
+    }
   },
 
   getExportCsvUrl: (category?: string, status?: string): string => {
