@@ -137,7 +137,9 @@ export const api = {
     if (res.data?.results) {
       const mapped: Project[] = res.data.results.map((r: any) => ({
         id: r.project_id || r.id,
-        canonical_name: r.canonical_name,
+        canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',
+        company: r.company || r.developer || r.project?.company || r.project?.developer || 'Leading Developer',
+        developer: r.developer || r.company || r.project?.developer || r.project?.company || 'Leading Developer',
         project_url: r.project_url || r.project?.project_url || (r.sources && r.sources[0]?.source_url) || '',
         category: r.category || 'Capital Projects',
         status: r.status || 'Active',

@@ -170,21 +170,21 @@ export const SearchPage: React.FC = () => {
               setSearchStage(`Fetching & Sanitizing: ${msg.data.url?.slice(0, 45) || 'webpage'}...`);
             } else if (msg.event === 'candidate_accepted' || ev.event_type === 'candidate_accepted') {
               setSearchProgress((p) => Math.min(p + 5, 85));
-              setSearchStage(`Candidate Identified: ${ev.metadata?.canonical_name || 'Capital Project'}`);
-              if (ev.metadata?.project) {
-                const proj = ev.metadata.project;
+              setSearchStage(`Candidate Identified: ${ev.metadata?.canonical_name || (ev.metadata?.project as any)?.canonical_name || 'Capital Project'}`);
+              const proj = ev.metadata?.project || (ev as any).project;
+              if (proj) {
                 setDiscoveredResults((prev) => {
                   const exists = prev.some(item => (item.project_id && item.project_id === proj.id) || item.project_url === proj.project_url);
                   return exists ? prev : [...prev, {
                     project_id: proj.id,
-                    canonical_name: proj.canonical_name,
-                    company: proj.company || proj.developer,
-                    developer: proj.developer || proj.company,
+                    canonical_name: proj.canonical_name || proj.name || proj.title || 'Capital Project',
+                    company: proj.company || proj.developer || 'Leading Developer',
+                    developer: proj.developer || proj.company || 'Leading Developer',
                     project_url: proj.project_url,
-                    category: proj.category,
-                    status: proj.status,
-                    http_status: proj.http_status,
-                    summary: proj.summary,
+                    category: proj.category || 'Capital Projects',
+                    status: proj.status || 'Active',
+                    http_status: proj.http_status || 200,
+                    summary: proj.summary || '',
                     relevance_score: 0.95
                   }];
                 });
@@ -450,15 +450,24 @@ export const SearchPage: React.FC = () => {
                 Live Audit Activity Stream
               </h3>
               <div className="max-h-48 overflow-y-auto space-y-1.5 font-mono text-xs pr-2">
-                {timelineEvents.map((ev, i) => (
-                  <div key={i} className="flex items-start justify-between gap-3 text-slate-300">
-                    <span className="text-sky-400 shrink-0">[{ev.component || 'Edge'}]</span>
-                    <span className="truncate flex-1">{ev.message}</span>
-                    <span className="text-[10px] text-slate-500 shrink-0">
-                      {new Date(ev.timestamp).toLocaleTimeString()}
-                    </span>
-                  </div>
-                ))}
+                {timelineEvents.map((ev, i) => {
+                  const comp = ev.component || (ev as any).sender || 'ai_worker';
+                  const text = ev.message || (ev as any).msg || (ev as any).text || (ev.metadata?.canonical_name ? `Project Identified: ${ev.metadata.canonical_name}` : '');
+                  const time = ev.timestamp && !isNaN(new Date(ev.timestamp).getTime())
+                    ? new Date(ev.timestamp).toLocaleTimeString()
+                    : new Date().toLocaleTimeString();
+                  return (
+                    <div key={i} className="flex items-start justify-between gap-3 text-slate-300">
+                      <span className="text-sky-400 shrink-0">[{comp}]</span>
+                      <span className="truncate flex-1 min-w-0 font-medium" title={text}>
+                        {text}
+                      </span>
+                      <span className="text-[10px] text-slate-500 shrink-0 font-mono">
+                        {time}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -518,14 +527,16 @@ export const SearchPage: React.FC = () => {
                       </span>
                     </div>
 
-                    <h3 className="text-base font-bold text-white line-clamp-1">{p.canonical_name}</h3>
+                    <h3 className="text-base font-bold text-white line-clamp-1">
+                      {p.canonical_name || (p as any).name || (p as any).title || (p as any).project?.canonical_name || 'Capital Project'}
+                    </h3>
                     
-                    {(p.company || p.developer) && (
-                      <div className="flex items-center gap-1.5 text-xs text-sky-200/90 font-medium">
-                        <Building2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                        <span className="truncate">{p.company || p.developer}</span>
-                      </div>
-                    )}
+                    <div className="flex items-center gap-1.5 text-xs text-sky-200/90 font-medium">
+                      <Building2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                      <span className="truncate">
+                        {p.company || p.developer || (p as any).project?.company || (p as any).project?.developer || 'Leading Developer'}
+                      </span>
+                    </div>
                     
                     {p.project_url && (
                       <a

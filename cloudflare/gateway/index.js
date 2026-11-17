@@ -711,6 +711,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       event_type: eventType,
       component,
       message,
+      msg: message,
+      text: message,
       metadata,
       timestamp: new Date().toISOString()
     };
@@ -728,11 +730,12 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   addEvent("search_created", `Search accepted for: '${query}'. Dispatched to Cloudflare Workers AI edge pipeline.`);
   addEvent("query_analyzed", `NLP Analysis: Category '${targetCategory}' [${sectorInfo.group || 'Industrial'}], Location '${targetLocation}'`);
 
-  // 2. Query Cache Pre-check: Don't re-run if this exact query already has verified results
+  // 2. Query Cache Pre-check: Only use cache if results have verified project names and companies
   if (store.queryCache.has(normalizedQuery)) {
     const priorRunId = store.queryCache.get(normalizedQuery);
     const cachedResults = store.searchResults.get(priorRunId) || [];
-    if (cachedResults.length > 0) {
+    const isValidCache = cachedResults.length > 0 && cachedResults.every(r => r.canonical_name && !r.canonical_name.startsWith("Project from") && (r.company || r.developer));
+    if (isValidCache) {
       addEvent("query_cache_hit", `Cache Hit: Query '${query}' already executed with ${cachedResults.length} verified projects. Zero external calls or LLM inferences needed.`);
       store.searchResults.set(searchRunId, cachedResults);
       const run = store.searches.get(searchRunId);
@@ -743,6 +746,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       }
       addEvent("search_completed", `Discovery complete via memory cache: ${cachedResults.length} projects linked in ${Date.now() - startTime}ms.`);
       return cachedResults;
+    } else {
+      store.queryCache.delete(normalizedQuery);
     }
   }
 
@@ -1247,7 +1252,15 @@ export default {
         sseBody += `event: message\ndata: ${JSON.stringify(ev)}\n\n`;
       }
       if (run && (run.status === "completed" || run.status === "failed")) {
-        sseBody += `event: message\ndata: ${JSON.stringify({ event_type: "search_completed", message: "Discovery execution complete." })}\n\n`;
+        sseBody += `event: message\ndata: ${JSON.stringify({
+          event_id: crypto.randomUUID(),
+          search_run_id: sId,
+          event_type: "search_completed",
+          component: "ai_worker",
+          message: "Discovery execution complete.",
+          msg: "Discovery execution complete.",
+          timestamp: new Date().toISOString()
+        })}\n\n`;
       }
 
       return new Response(sseBody, {
