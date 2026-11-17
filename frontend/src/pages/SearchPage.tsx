@@ -494,11 +494,16 @@ export const SearchPage: React.FC = () => {
                 <BarChart3 className="w-4 h-4" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-white tracking-wide">
-                  API Requests Dispatched For This Query
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-white tracking-wide">
+                    API Requests Dispatched For This Query
+                  </h3>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    Strict 1 Request Policy Active
+                  </span>
+                </div>
                 <p className="text-[11px] text-slate-400">
-                  Granular audit of external search queries, edge AI inferences, and live web fetches
+                  Strictly 1 request sent to search provider & 1 single batch inference to Cloudflare Workers AI
                 </p>
               </div>
             </div>

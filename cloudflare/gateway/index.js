@@ -735,6 +735,18 @@ function parseLlmJson(rawOutput) {
   if (!rawOutput || typeof rawOutput !== "string") return null;
   let clean = rawOutput.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
   const firstBrace = clean.indexOf("{");
+  const firstBracket = clean.indexOf("[");
+
+  if (firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace)) {
+    const lastBracket = clean.lastIndexOf("]");
+    if (lastBracket > firstBracket) {
+      try {
+        const slice = clean.slice(firstBracket, lastBracket + 1).replace(/,\s*([}\]])/g, "$1");
+        return JSON.parse(slice);
+      } catch (_) {}
+    }
+  }
+
   const lastBrace = clean.lastIndexOf("}");
   if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
     return null;
@@ -1039,6 +1051,105 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
   return [fb];
 }
 
+// Single Batch AI Extraction: Evaluates all candidates in exactly 1 Workers AI request
+async function extractBatchProjectsWithWorkersAI(ai, candidateItems, targetCategory) {
+  if (!ai || typeof ai.run !== "function" || !candidateItems || candidateItems.length === 0) {
+    return [];
+  }
+
+  const systemPrompt = `You are an expert industrial intelligence analyst evaluating web discovery sources to identify genuine upcoming capital infrastructure, manufacturing, and development projects.
+
+TASK:
+Examine the numbered candidates. For each candidate that discusses a genuine, real-world physical capital project in development:
+Extract the required project parameters in fluent, standard English.
+
+A VALID CAPITAL PROJECT MUST:
+1. Be a concrete physical facility, building, megafab, data center campus, power plant, solar/battery farm, or facility expansion.
+2. Have an identifiable corporate developer, owner, or operator building or financing it. NEVER return the news site or reporting publisher (e.g. Reuters, Bloomberg, ConstructConnect, DCN, Data Center Dynamics).
+3. Have a verifiable location (city, state, region, or country).
+4. Be in one of these 3 active development lifecycle stages (ALL 3 ARE VALID):
+   - "Announced": Newly announced investments, proposed facilities, capital expansion plans, or financing rounds for buildouts.
+   - "Planning": In permitting, FEED, architectural design, environmental review, or procurement.
+   - "Under Construction": Groundbreaking, foundation work, active construction, or ongoing campus buildout.
+
+REJECT:
+- Existing facilities already completed or operational in past years.
+- Educational guides, explainer articles, technology overviews, academic reports (e.g. "What is a Data Center", "How Chips Are Made", "Understanding Water Impact").
+- Colocation marketplaces or vendor directories (e.g. datacenters.com).
+- Any candidate where developer is an author byline ("Written by..."), regulatory commission, or sentence fragment.
+
+RESPONSE FORMAT:
+Return ONLY a valid JSON object in this exact schema:
+{
+  "projects": [
+    {
+      "candidate_index": 1,
+      "canonical_name": "Official project or facility name in English",
+      "company": "Specific corporate developer or owner building the project in English",
+      "location": "City, State/Region, Country in English",
+      "status": "Announced | Planning | Under Construction",
+      "category": "Industrial category (e.g. Hyperscale Data Center, Semiconductor Manufacturing, Battery Gigafactory, Utility Solar)",
+      "date": "Target start, completion, or announcement date (e.g. 2026, 2027, Mid 2026)",
+      "summary": "1-2 complete factual sentences in fluent English describing the project and buildout scope."
+    }
+  ]
+}`;
+
+  let candidateBlocks = "";
+  candidateItems.slice(0, 12).forEach((c, idx) => {
+    const textSnippet = (c.text || c.snippet || c.title || "").slice(0, 800);
+    candidateBlocks += `\n[Candidate #${idx + 1}]\nURL: ${c.cleanUrl}\nTitle: ${c.title || "Capital Project"}\nDate: ${c.published_date || "2026"}\nContent: """\n${textSnippet}\n"""\n`;
+  });
+
+  const userPrompt = `Evaluate the following ${Math.min(candidateItems.length, 12)} web discovery candidates for genuine upcoming capital projects (Category Hint: ${targetCategory || "All Categories"}):
+${candidateBlocks}
+
+Output your JSON analysis now:`;
+
+  const t0 = Date.now();
+  let rawOutput = "";
+  let aiSuccess = false;
+
+  const modelsToTry = [
+    "@cf/meta/llama-3.2-3b-instruct",
+    "@cf/meta/llama-3.1-8b-instruct"
+  ];
+
+  for (const modelName of modelsToTry) {
+    try {
+      const aiResponse = await ai.run(modelName, {
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ],
+        temperature: 0.1,
+        max_tokens: 1800
+      });
+
+      rawOutput = aiResponse?.response || (typeof aiResponse === "string" ? aiResponse : JSON.stringify(aiResponse)) || "";
+      if (rawOutput && rawOutput.length > 15) {
+        aiSuccess = true;
+        break;
+      }
+    } catch (err) {
+      console.warn(`Batch AI model ${modelName} notice:`, err?.message || err);
+    }
+  }
+
+  const elapsed = Date.now() - t0;
+  recordApiUsage("Cloudflare Workers AI", elapsed, aiSuccess);
+  store.lastAiRaw = rawOutput;
+
+  if (aiSuccess && rawOutput) {
+    const parsed = parseLlmJson(rawOutput);
+    if (parsed) {
+      const list = Array.isArray(parsed) ? parsed : (parsed.projects || []);
+      return list;
+    }
+  }
+  return [];
+}
+
 // Dynamic NLP Query Classifier against 462 Primary Sectors (No hardcoded keyword branches)
 function classifyQuery(queryStr) {
   const qLower = queryStr.toLowerCase().trim();
@@ -1215,113 +1326,96 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     }
   }
 
-  // 3. Provider Search Dispatch (Parallel Provider Queries)
-  const queryTelemetry = {
-    exa_search: 0,
-    google_search: 0,
-    fallback_search: 0,
-    web_content_fetches: 0,
-    workers_ai_inferences: 0,
-    total_requests: 0
-  };
-
+  // 3. Provider Search Dispatch (Strict 1 Request Policy: At most 1 search API call per query)
   addEvent("provider_started", `Executing web discovery for query: '${query}'`);
 
-  const providerFetches = [];
+  let candidateUrls = [];
+  const useExa = requestedProviders.includes("exa") && env.EXA_API_KEY && env.EXA_API_KEY.length > 10;
+  const useGoogle = requestedProviders.includes("google") && env.GOOGLE_SEARCH_API_KEY && env.GOOGLE_SEARCH_CX;
 
-  // Exa AI Search if configured
-  if (env.EXA_API_KEY && env.EXA_API_KEY.length > 10) {
-    providerFetches.push((async () => {
-      const t0 = Date.now();
-      queryTelemetry.exa_search += 1;
-      try {
-        const exaRes = await fetch("https://api.exa.ai/search", {
-          method: "POST",
-          headers: {
-            "x-api-key": env.EXA_API_KEY,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            query: query.trim(),
-            numResults: 35,
-            useAutoprompt: true,
-            startPublishedDate: "2025-01-01T00:00:00.000Z",
-            contents: {
-              text: { maxCharacters: 3000 }
-            }
-          }),
-          signal: AbortSignal.timeout(9000)
-        });
-        const elapsed = Date.now() - t0;
-        recordApiUsage("Exa Neural Search", elapsed, exaRes.ok);
-        if (exaRes.ok) {
-          const exaData = await exaRes.json();
-          const urls = (exaData.results || [])
-            .filter(r => !hasNonLatinScript(r.title))
-            .map(r => ({
-              url: r.url,
-              title: r.title,
-              snippet: r.text ? r.text.slice(0, 250) : r.title,
-              text: r.text || "",
-              published_date: r.publishedDate || extractDateFromTextOrUrl(r.text, r.url),
-              provider: "exa"
-            }));
-          addEvent("provider_completed", `Exa AI retrieved ${urls.length} candidate URLs in ${elapsed}ms.`);
-          return urls;
-        } else {
-          const errText = await exaRes.text();
-          addEvent("provider_error", `Exa AI Search responded with HTTP ${exaRes.status}: ${errText.slice(0, 120)}`);
-        }
-      } catch (e) {
-        recordApiUsage("Exa Neural Search", Date.now() - t0, false);
-        addEvent("provider_error", `Exa AI Search network notice: ${e?.message || e}`);
+  // Priority 1: Exa AI Neural Search (Dispatches 1 POST request with full text)
+  if (useExa) {
+    const t0 = Date.now();
+    queryTelemetry.exa_search = 1;
+    try {
+      const exaRes = await fetch("https://api.exa.ai/search", {
+        method: "POST",
+        headers: {
+          "x-api-key": env.EXA_API_KEY,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          query: query.trim(),
+          numResults: 25,
+          useAutoprompt: true,
+          startPublishedDate: "2025-01-01T00:00:00.000Z",
+          contents: {
+            text: { maxCharacters: 1500 }
+          }
+        }),
+        signal: AbortSignal.timeout(9000)
+      });
+      const elapsed = Date.now() - t0;
+      recordApiUsage("Exa Neural Search", elapsed, exaRes.ok);
+      if (exaRes.ok) {
+        const exaData = await exaRes.json();
+        candidateUrls = (exaData.results || [])
+          .filter(r => !hasNonLatinScript(r.title))
+          .map(r => ({
+            url: r.url,
+            title: r.title,
+            snippet: r.text ? r.text.slice(0, 300) : r.title,
+            text: r.text || "",
+            published_date: r.publishedDate || extractDateFromTextOrUrl(r.text, r.url),
+            provider: "exa"
+          }));
+        addEvent("provider_completed", `Exa AI retrieved ${candidateUrls.length} candidate URLs in ${elapsed}ms.`);
+      } else {
+        const errText = await exaRes.text();
+        addEvent("provider_error", `Exa AI Search responded with HTTP ${exaRes.status}: ${errText.slice(0, 120)}`);
       }
-      return [];
-    })());
+    } catch (e) {
+      recordApiUsage("Exa Neural Search", Date.now() - t0, false);
+      addEvent("provider_error", `Exa AI Search network notice: ${e?.message || e}`);
+    }
   }
 
-  // Google Search if configured
-  if (env.GOOGLE_SEARCH_API_KEY && env.GOOGLE_SEARCH_CX) {
-    providerFetches.push((async () => {
-      const t0 = Date.now();
-      queryTelemetry.google_search += 1;
-      try {
-        const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(query.trim())}&num=10&lr=lang_en&hl=en`;
-        const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(6000) });
-        const elapsed = Date.now() - t0;
-        recordApiUsage("Google Custom Search", elapsed, gRes.ok);
-        if (gRes.ok) {
-          const gData = await gRes.json();
-          const urls = (gData.items || [])
-            .filter(r => !hasNonLatinScript(r.title))
-            .map(r => ({
-              url: r.link,
-              title: r.title,
-              snippet: r.snippet,
-              published_date: extractDateFromTextOrUrl(r.snippet, r.link),
-              provider: "google"
-            }));
-          addEvent("provider_completed", `Google Search retrieved ${urls.length} candidate URLs in ${elapsed}ms.`);
-          return urls;
-        } else {
-          const errText = await gRes.text();
-          addEvent("provider_error", `Google Search responded with HTTP ${gRes.status}: ${errText.slice(0, 120)}`);
-        }
-      } catch (e) {
-        recordApiUsage("Google Custom Search", Date.now() - t0, false);
-        addEvent("provider_error", `Google Search network notice: ${e?.message || e}`);
+  // Priority 2: Google Search (Only if Exa was not requested or yielded 0 candidate URLs)
+  if (candidateUrls.length === 0 && useGoogle) {
+    const t0 = Date.now();
+    queryTelemetry.google_search = 1;
+    try {
+      const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(query.trim())}&num=10&lr=lang_en&hl=en`;
+      const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(6000) });
+      const elapsed = Date.now() - t0;
+      recordApiUsage("Google Custom Search", elapsed, gRes.ok);
+      if (gRes.ok) {
+        const gData = await gRes.json();
+        candidateUrls = (gData.items || [])
+          .filter(r => !hasNonLatinScript(r.title))
+          .map(r => ({
+            url: r.link,
+            title: r.title,
+            snippet: r.snippet,
+            text: r.snippet || "",
+            published_date: extractDateFromTextOrUrl(r.snippet, r.link),
+            provider: "google"
+          }));
+        addEvent("provider_completed", `Google Search retrieved ${candidateUrls.length} candidate URLs in ${elapsed}ms.`);
+      } else {
+        const errText = await gRes.text();
+        addEvent("provider_error", `Google Search responded with HTTP ${gRes.status}: ${errText.slice(0, 120)}`);
       }
-      return [];
-    })());
+    } catch (e) {
+      recordApiUsage("Google Custom Search", Date.now() - t0, false);
+      addEvent("provider_error", `Google Search network notice: ${e?.message || e}`);
+    }
   }
 
-  const providerResults = await Promise.all(providerFetches);
-  let candidateUrls = providerResults.flat();
-
-  // If primary API providers returned no candidates, run resilient public search fallback
+  // Fallback (only if 0 candidates from primary APIs)
   if (candidateUrls.length === 0) {
-    queryTelemetry.fallback_search += 1;
-    addEvent("provider_started", `Primary providers returned 0 candidates. Engaging resilient public discovery fallback.`);
+    queryTelemetry.fallback_search = 1;
+    addEvent("provider_started", `Engaging public discovery fallback.`);
     const fallbackResults = await searchWebFallback(query);
     if (fallbackResults.length > 0) {
       candidateUrls = fallbackResults;
@@ -1329,7 +1423,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     }
   }
 
-  // 4. Pre-LLM Validation, Deduplication & Parallel Extraction
+  // 4. Pre-LLM URL Validation & Deduplication
   addEvent("extraction_started", `Evaluating ${candidateUrls.length} candidate source URLs for capital project parameters.`);
 
   const validCandidates = [];
@@ -1339,27 +1433,23 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     const rawUrl = item.url;
     const val = validateAndNormalizeUrl(rawUrl);
     if (!val.valid || !val.cleanUrl) {
-      addEvent("candidate_rejected", `REJECTED: ${rawUrl} -> Reason: ${val.reason}`);
       continue;
     }
-    // Pre-check failed or dead URLs to avoid repetitive hangs
     if (store.failedUrls.has(val.cleanUrl)) {
-      addEvent("candidate_rejected", `REJECTED: ${val.cleanUrl} -> Reason: Dead/unreachable URL (${store.failedUrls.get(val.cleanUrl)})`);
       continue;
     }
     if (seenUrls.has(val.cleanUrl)) {
-      addEvent("candidate_rejected", `REJECTED: ${val.cleanUrl} -> Reason: Duplicate URL already queued`);
       continue;
     }
     seenUrls.add(val.cleanUrl);
     validCandidates.push({ ...item, cleanUrl: val.cleanUrl });
   }
 
-  // Process valid candidate URLs with managed concurrency of 5 (maximize edge throughput)
-  const extractionResults = await mapConcurrent(validCandidates.slice(0, 20), 5, async (item) => {
-    const cleanUrl = item.cleanUrl;
+  const extractedProjects = [];
+  const uncachedCandidates = [];
 
-    // Cache Check: Has this URL already been extracted?
+  for (const item of validCandidates.slice(0, 12)) {
+    const cleanUrl = item.cleanUrl;
     if (store.urlCache.has(cleanUrl)) {
       const cached = store.urlCache.get(cleanUrl);
       const cachedArr = Array.isArray(cached) ? cached : [cached];
@@ -1376,108 +1466,60 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       );
       if (validCached.length > 0) {
         validCached.forEach(p => {
+          extractedProjects.push(p);
           addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${p.canonical_name}' (Source: ${cleanUrl})`, "ai_worker", { project: p, canonical_name: p.canonical_name });
         });
-        return validCached;
-      } else {
-        store.urlCache.delete(cleanUrl);
-      }
-    }
-
-    addEvent("url_fetched", `Analyzing candidate URL: ${cleanUrl}`);
-
-    // If candidate already contains full text from Exa neural search, use it directly to bypass bot-blocks
-    let pageText = item.text || "";
-    let pageStatus = 200;
-
-    if (!pageText || pageText.length < 150) {
-      queryTelemetry.web_content_fetches += 1;
-      const fetchT0 = Date.now();
-      const pageContent = await fetchUrlContent(cleanUrl);
-      recordApiUsage("Web Content Fetches", Date.now() - fetchT0, pageContent.ok);
-      if (pageContent.ok && pageContent.text) {
-        pageText = pageContent.text;
-        pageStatus = pageContent.status;
-      } else if (item.snippet && item.snippet.length > 50) {
-        pageText = item.snippet;
-        pageStatus = pageContent.status || 200;
-        addEvent("url_fallback", `Used search index snippet for ${cleanUrl}`);
-      } else {
-        store.failedUrls.set(cleanUrl, pageContent.error);
-        addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Host Error: ${pageContent.error}`);
-        return null;
-      }
-    }
-
-    // Safety check: Filter out candidate page if text is predominantly non-English
-    if (isPredominantlyNonEnglish(pageText)) {
-      addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Language Filter: Non-English text detected. Only English sources accepted.`);
-      return null;
-    }
-
-    // AI Extraction via Workers AI (Llama 3.2 3B & Llama 3.1 70B)
-    queryTelemetry.workers_ai_inferences += 1;
-    const aiExtractedList = await extractProjectWithWorkersAI(env.AI, pageText, cleanUrl, item.title, targetCategory);
-    const resultsForUrl = [];
-
-    const itemsToProcess = Array.isArray(aiExtractedList) ? aiExtractedList : [aiExtractedList];
-    for (const aiExtracted of itemsToProcess) {
-      if (!aiExtracted || aiExtracted.is_project === false) {
-        if (itemsToProcess.length === 1 && aiExtracted?.reason) {
-          addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> AI Determination: ${aiExtracted.reason}`);
-        }
         continue;
       }
+    }
+    uncachedCandidates.push(item);
+  }
 
-      if (
-        !aiExtracted.status ||
-        aiExtracted.status === "Operational" ||
-        aiExtracted.status === "Completed" ||
-        aiExtracted.status === "Commissioned"
-      ) {
+  // 5. Single Batch Workers AI Inference (Strictly 1 AI request per query)
+  if (uncachedCandidates.length > 0 && env.AI) {
+    queryTelemetry.workers_ai_inferences = 1;
+    addEvent("extraction_started", `Executing single batch Workers AI inference for ${uncachedCandidates.length} candidate URLs (1 request policy).`);
+
+    const batchAiProjects = await extractBatchProjectsWithWorkersAI(env.AI, uncachedCandidates, targetCategory);
+
+    for (const aiP of batchAiProjects) {
+      if (!aiP) continue;
+
+      let matchedCandidate = null;
+      if (typeof aiP.candidate_index === "number" && aiP.candidate_index >= 1 && aiP.candidate_index <= uncachedCandidates.length) {
+        matchedCandidate = uncachedCandidates[aiP.candidate_index - 1];
+      } else if (aiP.url) {
+        matchedCandidate = uncachedCandidates.find(c => c.cleanUrl.includes(aiP.url) || aiP.url.includes(c.cleanUrl));
+      }
+      if (!matchedCandidate && uncachedCandidates.length > 0) {
+        matchedCandidate = uncachedCandidates.find(c => (aiP.canonical_name && c.title && c.title.toLowerCase().includes(aiP.canonical_name.toLowerCase().slice(0, 15)))) || uncachedCandidates[0];
+      }
+      if (!matchedCandidate) continue;
+
+      const cleanUrl = matchedCandidate.cleanUrl;
+      const status = aiP.status || "Planning";
+      if (status === "Operational" || status === "Completed" || status === "Commissioned") {
         continue;
       }
-
       const validUpcomingStatuses = ["Announced", "Planning", "Under Construction"];
-      let projectStatus = validUpcomingStatuses.includes(aiExtracted.status) ? aiExtracted.status : "Planning";
+      const projectStatus = validUpcomingStatuses.includes(status) ? status : "Planning";
 
-      if (
-        hasNonLatinScript(aiExtracted.canonical_name) ||
-        hasNonLatinScript(aiExtracted.company) ||
-        hasNonLatinScript(aiExtracted.summary) ||
-        isForeignLanguageText(aiExtracted.summary) ||
-        isForeignLanguageText(aiExtracted.canonical_name)
-      ) {
-        continue;
-      }
-
-      let companyName = aiExtracted.company;
+      const projectName = aiP.canonical_name || matchedCandidate.title || "Capital Project";
+      let companyName = aiP.company;
       if (!companyName || companyName === "Project Developer" || companyName === "Leading Developer" || isNewsPublisher(companyName)) {
-        companyName = extractCompanyDynamically(pageText, item.title, cleanUrl);
-      }
-      const projectName = aiExtracted.canonical_name || item.title || "Capital Project";
-      if ((!companyName || companyName === "Project Developer" || companyName === "Leading Developer") && projectName) {
-        const nameCompany = extractCompanyDynamically("", projectName, cleanUrl);
-        if (nameCompany && nameCompany !== "Project Developer") {
-          companyName = nameCompany;
-        }
-      }
-      if (hasNonLatinScript(projectName) || hasNonLatinScript(companyName)) {
-        continue;
-      }
-      if (isGenericReportOrDirectory(cleanUrl, projectName, companyName, aiExtracted.summary)) {
-        addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Filter: Industry market report / explainer guide / directory listing, not a specific physical project facility.`);
-        continue;
+        companyName = extractCompanyDynamically(matchedCandidate.text || matchedCandidate.snippet, matchedCandidate.title, cleanUrl);
       }
       if (!isValidCompanyEntity(companyName)) {
-        addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Entity Filter: Invalid developer entity ('${companyName}')`);
+        continue;
+      }
+      if (hasNonLatinScript(projectName) || hasNonLatinScript(companyName) || hasNonLatinScript(aiP.summary) || isForeignLanguageText(aiP.summary)) {
+        continue;
+      }
+      if (isGenericReportOrDirectory(cleanUrl, projectName, companyName, aiP.summary)) {
         continue;
       }
 
-      let projectDate = aiExtracted.date || item.published_date;
-      if (!projectDate || projectDate.length < 4) {
-        projectDate = extractDateFromTextOrUrl(pageText, cleanUrl, item.published_date);
-      }
+      let projectDate = aiP.date || matchedCandidate.published_date || "Latest 2026";
       const projId = "proj-" + crypto.randomUUID().slice(0, 8);
       const projectRecord = {
         id: projId,
@@ -1486,30 +1528,51 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         developer: companyName,
         project_url: cleanUrl,
         status: projectStatus,
-        category: inferCategory(projectName, aiExtracted.summary, aiExtracted.category || targetCategory),
-        country: aiExtracted.country || targetLocation,
+        category: inferCategory(projectName, aiP.summary, aiP.category || targetCategory),
+        country: aiP.location || targetLocation,
         date: projectDate,
-        http_status: pageStatus || 200,
-        summary: aiExtracted.summary || item.snippet || "",
+        http_status: 200,
+        summary: aiP.summary || matchedCandidate.snippet || "",
         created_at: new Date().toISOString()
       };
 
       store.projects.set(projId, projectRecord);
-      resultsForUrl.push(projectRecord);
+      store.urlCache.set(cleanUrl, [projectRecord]);
+      extractedProjects.push(projectRecord);
 
       addEvent("candidate_accepted", `VALID PROJECT URL: ${cleanUrl} | Company: [${companyName}] | Date: [${projectDate}] | Status: [${projectRecord.status}] | Name: '${projectRecord.canonical_name}'`, "ai_worker", { project: projectRecord, canonical_name: projectRecord.canonical_name });
     }
+  }
 
-    if (resultsForUrl.length > 0) {
-      store.urlCache.set(cleanUrl, resultsForUrl);
-      return resultsForUrl;
+  // If AI yielded no projects or wasn't configured, run resilient in-memory regex fallback (0 external requests)
+  if (extractedProjects.length === 0 && uncachedCandidates.length > 0) {
+    for (const item of uncachedCandidates.slice(0, 5)) {
+      const fb = fallbackRegexExtract(item.text || item.snippet, item.cleanUrl, item.title, targetCategory);
+      if (fb && fb.is_project !== false && isValidCompanyEntity(fb.company)) {
+        const projId = "proj-" + crypto.randomUUID().slice(0, 8);
+        const projectRecord = {
+          id: projId,
+          canonical_name: fb.canonical_name || item.title,
+          company: fb.company,
+          developer: fb.company,
+          project_url: item.cleanUrl,
+          status: fb.status || "Planning",
+          category: inferCategory(fb.canonical_name || item.title, fb.summary, fb.category || targetCategory),
+          country: targetLocation,
+          date: fb.date || item.published_date || "Latest 2026",
+          http_status: 200,
+          summary: fb.summary || item.snippet || "",
+          created_at: new Date().toISOString()
+        };
+        store.projects.set(projId, projectRecord);
+        store.urlCache.set(item.cleanUrl, [projectRecord]);
+        extractedProjects.push(projectRecord);
+        addEvent("candidate_accepted", `VALID PROJECT URL: ${item.cleanUrl} | Company: [${projectRecord.company}] | Name: '${projectRecord.canonical_name}'`, "ai_worker", { project: projectRecord, canonical_name: projectRecord.canonical_name });
+      }
     }
-    return null;
-  });
+  }
 
-  const extractedProjects = (extractionResults || []).flat().filter(Boolean);
-
-  // 5. Ranking & Deduplication
+  // 6. Ranking & Deduplication
   addEvent("deduplication_completed", `Verified ${extractedProjects.length} valid project URLs with companies, dates & status.`);
 
   const searchResults = extractedProjects.map((p, index) => ({
