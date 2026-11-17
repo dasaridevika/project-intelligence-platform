@@ -30,15 +30,10 @@ const INVALID_FILE_EXTENSIONS = [
 ];
 
 const BLOCKED_DOMAINS = [
-  // Encyclopedias, dictionaries, glossaries, general reference
+  // Encyclopedias, dictionaries, glossaries, general reference (never host actual projects)
   "wikipedia.org", "wiktionary.org", "dictionary.cambridge.org", "merriam-webster.com",
   "dictionary.com", "investopedia.com", "britannica.com", "techtarget.com",
-  "computerhope.com", "coursera.org", "statista.com", "wordreference.com",
-  // Market research aggregators, bank research & consulting thought leadership
-  "oxfordeconomics.com", "globaldata.com", "grandviewresearch.com", "researchandmarkets.com",
-  "marketresearch.com", "gartner.com", "forrester.com", "ibisworld.com", "pwc.com",
-  "deloitte.com", "mckinsey.com", "bain.com", "bcg.com", "kpmg.com", "ey.com",
-  "jpmorgan.com", "morganstanley.com", "goldmansachs.com", "rba.gov.au",
+  "computerhope.com", "coursera.org", "wordreference.com",
   // Social media, video, and community forums
   "youtube.com", "youtu.be", "vimeo.com", "facebook.com", "fb.com", "twitter.com",
   "x.com", "instagram.com", "tiktok.com", "pinterest.com", "reddit.com", "quora.com",
@@ -60,11 +55,7 @@ const JUNK_PATH_PATTERNS = [
   /\/terminos-y-condiciones/i, /\/aviso-legal/i,
   /\/staff\b/i, /\/staff-directory\b/i, /\/directory\b/i, /\/phonebook\b/i,
   /\/contact-us\b/i, /\/clinical-departments\b/i, /\/departments?\b/i,
-  /\/cart\b/i, /\/checkout\b/i, /\/pdf\//i,
-  // Reject macroeconomic research, whitepapers and report stores
-  /\/insights\//i, /\/resource\/.*economic/i, /\/store\/report\//i,
-  /\/market-analysis\//i, /\/data-centre-outlook/i, /\/whitepaper\b/i,
-  /\/ai-capex/i, /\/liquidity-insights/i
+  /\/cart\b/i, /\/checkout\b/i, /\/pdf\//i
 ];
 
 // Corporate suffix heuristics for verified country origin (never guess from founder name)
@@ -402,31 +393,16 @@ function extractProjectNameFromUrl(url) {
   return "Capital Infrastructure Project";
 }
 
-// Fallback extractor: identifies project name, company and status
+// Fallback extractor: semantic evaluation if AI is momentarily unreachable
 function fallbackRegexExtract(text, url, hintCategory) {
-  let hostname = "Project Source";
-  try {
-    hostname = new URL(url).hostname;
-  } catch (_) {}
+  // Check if text is general macroeconomic commentary without physical project announcements
+  const hasPhysicalAsset = /(?:data\s*cent(?:er|re)|semiconductor|wafer\s*fab|megafab|gigafactory|solar\s*farm|wind\s*farm|battery\s*storage|power\s*plant|manufacturing\s*facility|refinery|pipeline|transmission\s*line|campus\s*expansion|facility)/i.test(text);
+  const hasProjectVerb = /(?:breaks\s*ground|under\s*construction|building\s*a\s*\$|announced\s*plans\s*to\s*build|awarded\s*contract|investing\s*\$|facility\s*expansion|groundbreaking|plans\s*\$|million\s*expansion)/i.test(text);
 
-  // Strict rejection of macroeconomic commentary, consulting and bank outlooks
-  const isResearchOrMacro = /(?:oxfordeconomics|globaldata|jpmorgan|morganstanley|goldmansachs|pwc|deloitte|mckinsey|bain|bcg|rba\.gov|gartner|market-analysis|store\/report|insights\/global-research|outlook\.html)/i.test(url);
-  if (isResearchOrMacro) {
+  if (!hasPhysicalAsset || !hasProjectVerb) {
     return {
       is_project: false,
-      reason: "Page is a macroeconomic research report or consulting outlook, not a specific project"
-    };
-  }
-
-  // Strict check: must contain project infrastructure keywords
-  const isProjectRelated = /(?:capital\s*project|megafab|gigafactory|semiconductor\s*fab|data\s*center|data\s*centre|solar\s*farm|wind\s*farm|battery\s*storage|power\s*plant|manufacturing\s*facility|refinery|pipeline|campus\s*expansion|breaks\s*ground|under\s*construction|commissioned|investment)\b/i.test(text);
-
-  const titleMatch = text.slice(0, 300).match(/([A-Z][a-zA-Z0-9\s,&-]{5,60}(?:Project|Plant|Facility|Campus|Center|Centre|Park|Fab|Corridor|Hub))/);
-
-  if (!isProjectRelated && !titleMatch) {
-    return {
-      is_project: false,
-      reason: "Page text does not contain capital project infrastructure or development indicators"
+      reason: "Page text lacks concrete physical capital facility and construction lifecycle indicators"
     };
   }
 
@@ -442,7 +418,7 @@ function fallbackRegexExtract(text, url, hintCategory) {
     status = "Planning";
   }
 
-  // Extract clean project name from titleMatch, or cleanly formatted URL slug
+  const titleMatch = text.slice(0, 300).match(/([A-Z][a-zA-Z0-9\s,&-]{5,60}(?:Project|Plant|Facility|Campus|Center|Centre|Park|Fab|Corridor|Hub))/);
   let canonical_name = titleMatch ? titleMatch[1].trim() : "";
   if (!canonical_name || canonical_name.length < 5) {
     canonical_name = extractProjectNameFromUrl(url);
@@ -462,7 +438,7 @@ function fallbackRegexExtract(text, url, hintCategory) {
   };
 }
 
-// Executes fast status & project identification via Cloudflare Workers AI
+// Executes deep intelligent project evaluation via Cloudflare Workers AI
 async function extractProjectWithWorkersAI(ai, pageText, targetUrl, hintCategory) {
   if (!ai || typeof ai.run !== "function") {
     return fallbackRegexExtract(pageText, targetUrl, hintCategory);
@@ -477,22 +453,41 @@ async function extractProjectWithWorkersAI(ai, pageText, targetUrl, hintCategory
     }
   }
 
-  const systemPrompt = `You analyze web pages to identify capital projects and their current lifecycle status.
-Rules:
-- Identify if this page discusses a specific capital project, industrial facility, or infrastructure development.
-- Identify the specific company, developer, or owner leading/working on the project (e.g. TSMC, Microsoft, Intel, Amazon AWS, Samsung, NextEra Energy, TotalEnergies).
-- Reject pages that are general staff directories, company login pages, hospital department lists, generic store menus, or dead placeholders.
-- Never guess or infer a company or project country from the founder's personal name; only use explicit location mentions or official corporate suffixes.
-- Formulate complete sentences for summary and status reasons; do not truncate sentences.
-Return ONLY a valid JSON object matching this schema:
+  const systemPrompt = `You are an expert industrial intelligence analyst evaluating web pages to identify genuine capital infrastructure and development projects.
+
+TASK:
+Determine if the provided webpage discusses a SPECIFIC, REAL-WORLD CAPITAL PROJECT.
+
+A VALID CAPITAL PROJECT MUST:
+1. Cover a concrete physical facility, building, plant, megafab, hyperscale data center, power plant, solar/wind farm, transmission line, or manufacturing site.
+2. Have an identifiable company, developer, or operator building or financing it (e.g. Blackstone, TSMC, Prologis, Microsoft, Intel).
+3. Have a verifiable location (city, state, region, or country).
+4. Be in a real development lifecycle stage: Announced, Planning, Under Construction, or Operational.
+
+YOU MUST REJECT (set "is_project": false) IF:
+1. The page is macroeconomic analysis, industry trends, or market growth forecasts (e.g. "Data center growth outpaces economy", "Global construction outlook 2030", "AI capex analysis").
+2. The page is selling a paid market research report or whitepaper.
+3. The page is an opinion article, stock recommendation, or general thought leadership without a specific physical project.
+4. The page is a corporate homepage, contact directory, hospital department list, or login portal.
+
+RESPONSE FORMAT:
+Return ONLY a valid JSON object matching one of these two schemas:
+
+If VALID PROJECT:
 {
   "is_project": true,
-  "canonical_name": "Official project or development name",
-  "company": "Company or developer building/operating the project (e.g. TSMC, Microsoft, Intel, Amazon)",
+  "canonical_name": "Official specific name of the project or facility (e.g. Blackstone Aragon Hyperscale Campus, TSMC Fab 21)",
+  "company": "Company or developer building/operating the project (e.g. Blackstone, TSMC, Prologis)",
+  "location": "City, State/Region, Country",
   "status": "Announced | Under Construction | Operational | Planning | Active",
-  "category": "Industrial category (e.g. Data Center, Semiconductor, Solar, Energy, Infrastructure)",
-  "country": "Country name if verified, or null",
-  "summary": "1-2 complete sentences describing the project status."
+  "category": "Industrial category (e.g. Data Center, Semiconductor Plant, Solar Farm, Infrastructure)",
+  "summary": "1-2 complete factual sentences describing the project and its development scope."
+}
+
+If NOT A PROJECT:
+{
+  "is_project": false,
+  "reason": "Specific reason (e.g. 'Macroeconomic research commentary on AI spending rather than a physical project announcement')"
 }`;
 
   const userPrompt = `URL: ${targetUrl}
@@ -503,7 +498,7 @@ Webpage Text:
 ${pageText.slice(0, 2500)}
 """
 
-Determine project name, company working on it, and status in JSON:`;
+Evaluate if this is a genuine capital project in JSON:`;
 
   const t0 = Date.now();
   try {
@@ -523,16 +518,23 @@ Determine project name, company working on it, and status in JSON:`;
     const jsonMatch = rawOutput.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
-      const companyVal = parsed.company || extractCompanyFromUrl(targetUrl);
+      if (parsed.is_project === false) {
+        return {
+          is_project: false,
+          reason: parsed.reason || "AI evaluation: Article does not discuss a specific physical capital project"
+        };
+      }
+
+      const companyVal = parsed.company || extractCompanyFromUrl(targetUrl, pageText);
       return {
-        is_project: parsed.is_project !== false,
-        canonical_name: parsed.canonical_name || "Capital Project",
+        is_project: true,
+        canonical_name: parsed.canonical_name || extractProjectNameFromUrl(targetUrl),
         company: companyVal,
         developer: companyVal,
         project_url: targetUrl,
         status: parsed.status || "Active",
         category: parsed.category || hintCategory || "Capital Projects",
-        country: parsed.country || countryHint || null,
+        country: parsed.location || parsed.country || countryHint || null,
         summary: parsed.summary || ""
       };
     }
@@ -862,7 +864,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       addEvent("candidate_accepted", `VALID PROJECT URL: ${cleanUrl} | Company: [${companyName}] | Status: [${projectRecord.status}] | Name: '${projectRecord.canonical_name}'`);
       return projectRecord;
     } else {
-      addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Reason: Non-project page filtered`);
+      addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> AI Determination: ${aiExtracted?.reason || 'Non-project page filtered'}`);
       return null;
     }
   });
