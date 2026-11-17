@@ -12,6 +12,12 @@
   "vars": {
     "RATE_LIMIT_MAX_REQUESTS": "120"
   },
+  "kv_namespaces": [
+    {
+      "binding": "PROJECT_DATA",
+      "id": "cbee19cf2c014f2a94d464dd600cecdd"
+    }
+  ],
   "ai": {
     "binding": "AI"
   }

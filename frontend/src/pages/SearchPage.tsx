@@ -128,6 +128,16 @@ export const SearchPage: React.FC = () => {
 
       const searchId = res.search_run_id;
       setActiveSearchId(searchId);
+
+      if ((res as any).results && (res as any).results.length > 0) {
+        setDiscoveredResults((res as any).results);
+        setSearchProgress(100);
+        setSearchStage('Discovery Complete!');
+        setSearchCompleted(true);
+        setIsSubmitting(false);
+        return;
+      }
+
       setIsSubmitting(false);
 
       // Polling fallback
@@ -293,32 +303,10 @@ export const SearchPage: React.FC = () => {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Enter search query..."
+                placeholder="Enter any project search query (e.g. data center projects, solar farms, semiconductor fabs, gigafactories)..."
                 className="w-full pl-11 pr-4 py-3.5 rounded-xl bg-slate-950 border border-slate-700/80 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 text-sm sm:text-base shadow-inner"
               />
               <Search className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
-            </div>
-
-            {/* Quick Sector Discovery Pills */}
-            <div className="flex flex-wrap items-center gap-2 pt-2.5">
-              <span className="text-[11px] text-slate-400 font-medium">Quick Discovery (2026 Upcoming):</span>
-              {[
-                { label: 'Upcoming AI Data Centers (2026)', q: 'Upcoming hyperscale AI data center facilities 2026 construction planned' },
-                { label: 'Upcoming Semiconductor Megafabs (2026)', q: 'Upcoming semiconductor microchip megafab manufacturing plants 2026' },
-                { label: 'Upcoming Battery Gigafactories (2026)', q: 'Upcoming lithium battery energy storage gigafactory projects 2026' },
-                { label: 'Upcoming Utility-Scale Solar (2026)', q: 'Upcoming utility-scale solar photovoltaic power projects 2026' },
-                { label: 'Upcoming Offshore Wind Farms (2026)', q: 'Upcoming offshore wind farm construction 2026' },
-                { label: 'Upcoming Clean Hydrogen (2026)', q: 'Upcoming green hydrogen production facility announcements 2026' },
-              ].map((chip) => (
-                <button
-                  key={chip.label}
-                  type="button"
-                  onClick={() => setQuery(chip.q)}
-                  className="text-xs px-2.5 py-1 rounded-full bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition-colors"
-                >
-                  {chip.label}
-                </button>
-              ))}
             </div>
           </div>
 
