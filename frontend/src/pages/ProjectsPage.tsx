@@ -55,20 +55,28 @@ export const ProjectsPage: React.FC = () => {
           ]);
           setSearchRun(run);
           const mapped: Project[] = (res.results || [])
+            .filter((r: any) => {
+              const s = (r.status || '').toLowerCase();
+              return !s.includes('operational') && !s.includes('completed') && !s.includes('commissioned');
+            })
             .filter((r: any) => !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(r.canonical_name || r.name || r.title || ''))
-            .map((r: any) => ({
-              id: r.project_id || r.id,
-              canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',
-              company: r.company || r.developer || r.project?.company || r.project?.developer || 'Leading Developer',
-              developer: r.developer || r.company || r.project?.developer || r.project?.company || 'Leading Developer',
-              date: r.date || r.project?.date || 'Latest 2026',
-              project_url: r.project_url || r.project?.project_url || '',
-              category: r.category || 'Capital Projects',
-              status: r.status || 'Active',
-              http_status: r.http_status || 200,
-              summary: r.summary || '',
-              created_at: new Date().toISOString(),
-            }));
+            .map((r: any) => {
+              let st = r.status || 'Planning';
+              if (st === 'Active') st = 'Planning';
+              return {
+                id: r.project_id || r.id,
+                canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',
+                company: r.company || r.developer || r.project?.company || r.project?.developer || 'Leading Developer',
+                developer: r.developer || r.company || r.project?.developer || r.project?.company || 'Leading Developer',
+                date: r.date || r.project?.date || 'Latest 2026',
+                project_url: r.project_url || r.project?.project_url || '',
+                category: r.category || 'Capital Projects',
+                status: st,
+                http_status: r.http_status || 200,
+                summary: r.summary || '',
+                created_at: new Date().toISOString(),
+              };
+            });
           setProjects(mapped);
           setTotalCount(res.total_results || mapped.length);
         } else {
@@ -77,8 +85,12 @@ export const ProjectsPage: React.FC = () => {
             category: categoryFilter || undefined,
             status: statusFilter || undefined,
           });
-          setProjects(res.projects || []);
-          setTotalCount(res.total || (res.projects || []).length);
+          const validProjects = (res.projects || []).filter((p: Project) => {
+            const s = (p.status || '').toLowerCase();
+            return !s.includes('operational') && !s.includes('completed') && !s.includes('commissioned');
+          });
+          setProjects(validProjects);
+          setTotalCount(validProjects.length);
         }
       } catch (err) {
         console.error('Failed to load project records:', err);
@@ -104,7 +116,6 @@ export const ProjectsPage: React.FC = () => {
     const s = status.toLowerCase();
     if (s.includes('construction')) return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
     if (s.includes('announced')) return 'bg-sky-500/10 text-sky-400 border-sky-500/30';
-    if (s.includes('operational') || s.includes('completed')) return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
     if (s.includes('planning')) return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30';
     return 'bg-slate-800 text-slate-300 border-slate-700';
   };
@@ -184,12 +195,10 @@ export const ProjectsPage: React.FC = () => {
             onChange={(e) => setStatusFilter(e.target.value)}
             className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-sky-500"
           >
-            <option value="">All Lifecycle Statuses</option>
+            <option value="">All Upcoming Statuses</option>
             <option value="under construction">Under Construction</option>
             <option value="announced">Announced</option>
-            <option value="operational">Operational</option>
             <option value="planning">Planning</option>
-            <option value="active">Active</option>
           </select>
         </div>
       </div>

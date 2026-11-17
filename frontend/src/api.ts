@@ -37,12 +37,18 @@ apiClient.interceptors.response.use(
 // DURABLE PERSISTENCE LAYER (Saves data across code updates & redeploys)
 // ==============================================================================
 
-const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v3';
-const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v3';
+const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v4';
+const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v4';
 
 function hasNonLatin(str?: string): boolean {
   if (!str) return false;
   return /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff]/.test(str);
+}
+
+function isUpcomingStatus(status?: string): boolean {
+  if (!status) return true;
+  const s = status.toLowerCase();
+  return !s.includes('operational') && !s.includes('completed') && !s.includes('commissioned');
 }
 
 function getStoredProjects(): Project[] {
@@ -51,7 +57,7 @@ function getStoredProjects(): Project[] {
     if (!raw) return [];
     const list = JSON.parse(raw);
     return Array.isArray(list)
-      ? list.filter(p => p.canonical_name && !p.canonical_name.startsWith('Project from') && !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary))
+      ? list.filter(p => p.canonical_name && !p.canonical_name.startsWith('Project from') && !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary) && isUpcomingStatus(p.status))
       : [];
   } catch {
     return [];
@@ -60,7 +66,7 @@ function getStoredProjects(): Project[] {
 
 function saveStoredProjects(projects: Project[]) {
   try {
-    const cleanProjects = projects.filter(p => !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary));
+    const cleanProjects = projects.filter(p => !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary) && isUpcomingStatus(p.status));
     const existing = getStoredProjects();
     const map = new Map<string, Project>();
     for (const p of existing) map.set(p.id, p);
@@ -148,20 +154,24 @@ export const api = {
     const res = await apiClient.get(`/search/${id}/results`);
     if (res.data?.results) {
       const mapped: Project[] = res.data.results
-        .filter((r: any) => !hasNonLatin(r.canonical_name) && !hasNonLatin(r.title) && !hasNonLatin(r.summary))
-        .map((r: any) => ({
-          id: r.project_id || r.id,
-          canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',
-          company: r.company || r.developer || r.project?.company || r.project?.developer || 'Leading Developer',
-          developer: r.developer || r.company || r.project?.developer || r.project?.company || 'Leading Developer',
-          project_url: r.project_url || r.project?.project_url || (r.sources && r.sources[0]?.source_url) || '',
-          category: r.category || 'Capital Projects',
-          status: r.status || 'Active',
-          date: r.date || r.project?.date || 'Latest 2026',
-          http_status: r.http_status || 200,
-          summary: r.summary || '',
-          created_at: new Date().toISOString(),
-        }));
+        .filter((r: any) => !hasNonLatin(r.canonical_name) && !hasNonLatin(r.title) && !hasNonLatin(r.summary) && isUpcomingStatus(r.status))
+        .map((r: any) => {
+          let st = r.status || 'Planning';
+          if (st === 'Active') st = 'Planning';
+          return {
+            id: r.project_id || r.id,
+            canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',
+            company: r.company || r.developer || r.project?.company || r.project?.developer || 'Leading Developer',
+            developer: r.developer || r.company || r.project?.developer || r.project?.company || 'Leading Developer',
+            project_url: r.project_url || r.project?.project_url || (r.sources && r.sources[0]?.source_url) || '',
+            category: r.category || 'Capital Projects',
+            status: st,
+            date: r.date || r.project?.date || 'Latest 2026',
+            http_status: r.http_status || 200,
+            summary: r.summary || '',
+            created_at: new Date().toISOString(),
+          };
+        });
       saveStoredProjects(mapped);
       return {
         ...res.data,

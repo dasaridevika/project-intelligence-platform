@@ -173,7 +173,11 @@ export const SearchPage: React.FC = () => {
               setSearchProgress((p) => Math.min(p + 5, 85));
               setSearchStage(`Candidate Identified: ${ev.metadata?.canonical_name || (ev.metadata?.project as any)?.canonical_name || 'Capital Project'}`);
               const proj = ev.metadata?.project || (ev as any).project;
-              if (proj && !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(proj.canonical_name || proj.title || '')) {
+              const pStatus = (proj?.status || '').toLowerCase();
+              const isNotUpcoming = pStatus.includes('operational') || pStatus.includes('completed') || pStatus.includes('commissioned');
+              if (proj && !isNotUpcoming && !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(proj.canonical_name || proj.title || '')) {
+                let st = proj.status || 'Planning';
+                if (st === 'Active') st = 'Planning';
                 setDiscoveredResults((prev) => {
                   const exists = prev.some(item => (item.project_id && item.project_id === proj.id) || item.project_url === proj.project_url);
                   return exists ? prev : [...prev, {
@@ -184,7 +188,7 @@ export const SearchPage: React.FC = () => {
                     date: proj.date || 'Latest 2026',
                     project_url: proj.project_url,
                     category: proj.category || 'Capital Projects',
-                    status: proj.status || 'Active',
+                    status: st,
                     http_status: proj.http_status || 200,
                     summary: proj.summary || '',
                     relevance_score: 0.95
@@ -297,14 +301,14 @@ export const SearchPage: React.FC = () => {
 
             {/* Quick Sector Discovery Pills */}
             <div className="flex flex-wrap items-center gap-2 pt-2.5">
-              <span className="text-[11px] text-slate-400 font-medium">Quick Discovery (2026):</span>
+              <span className="text-[11px] text-slate-400 font-medium">Quick Discovery (2026 Upcoming):</span>
               {[
-                { label: 'Hyperscale AI Data Centers (2026)', q: 'Hyperscale AI data center facilities 2026 construction' },
-                { label: 'Semiconductor Megafabs (2026)', q: 'Semiconductor microchip megafab manufacturing plants 2026' },
-                { label: 'Battery Gigafactories (2026)', q: 'Lithium battery energy storage gigafactory projects 2026' },
-                { label: 'Utility-Scale Solar (2026)', q: 'Utility-scale solar photovoltaic power projects 2026' },
-                { label: 'Offshore Wind Farms (2026)', q: 'Offshore wind farm construction 2026' },
-                { label: 'Clean Hydrogen (2026)', q: 'Green hydrogen production facility announcements 2026' },
+                { label: 'Upcoming AI Data Centers (2026)', q: 'Upcoming hyperscale AI data center facilities 2026 construction planned' },
+                { label: 'Upcoming Semiconductor Megafabs (2026)', q: 'Upcoming semiconductor microchip megafab manufacturing plants 2026' },
+                { label: 'Upcoming Battery Gigafactories (2026)', q: 'Upcoming lithium battery energy storage gigafactory projects 2026' },
+                { label: 'Upcoming Utility-Scale Solar (2026)', q: 'Upcoming utility-scale solar photovoltaic power projects 2026' },
+                { label: 'Upcoming Offshore Wind Farms (2026)', q: 'Upcoming offshore wind farm construction 2026' },
+                { label: 'Upcoming Clean Hydrogen (2026)', q: 'Upcoming green hydrogen production facility announcements 2026' },
               ].map((chip) => (
                 <button
                   key={chip.label}

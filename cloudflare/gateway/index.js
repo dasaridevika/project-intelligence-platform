@@ -142,10 +142,10 @@ async function hydrateStore(env) {
       const savedProjects = await env.PROJECT_DATA.get("projects", "json");
       if (Array.isArray(savedProjects)) {
         for (const p of savedProjects) {
-          if (p?.id) {
+          if (p?.id && p.status && !["operational", "completed", "commissioned"].includes(p.status.toLowerCase())) {
             store.projects.set(p.id, p);
-            if (p.sources?.[0]?.source_url) {
-              store.urlCache.set(p.sources[0].source_url, p);
+            if (p.project_url) {
+              store.urlCache.set(p.project_url, p);
             }
           }
         }
@@ -459,11 +459,12 @@ function extractCompanyDynamically(text, title, url) {
 
 function extractStatusFromText(text) {
   const t = (text || "").toLowerCase();
+  // Strictly reject completed, operational, or already commissioned facilities
+  if (t.includes("operational") || t.includes("commissioned") || t.includes("online") || t.includes("inaugurated") || t.includes("opened its doors") || t.includes("completed")) {
+    return null;
+  }
   if (t.includes("under construction") || t.includes("breaks ground") || t.includes("groundbreaking") || t.includes("underway") || t.includes("construction has begun")) {
     return "Under Construction";
-  }
-  if (t.includes("operational") || t.includes("commissioned") || t.includes("online") || t.includes("inaugurated") || t.includes("opened its doors")) {
-    return "Operational";
   }
   if (t.includes("announced") || t.includes("announces") || t.includes("unveils") || t.includes("proposes")) {
     return "Announced";
@@ -585,13 +586,21 @@ function fallbackRegexExtract(text, url, titleHint, hintCategory) {
     };
   }
 
+  const projectStatus = extractStatusFromText(text);
+  if (!projectStatus) {
+    return {
+      is_project: false,
+      reason: "Facility is already completed or operational. Platform strictly requires upcoming capital projects only."
+    };
+  }
+
   return {
     is_project: true,
     canonical_name,
     company,
     developer: company,
     project_url: url,
-    status: extractStatusFromText(text),
+    status: projectStatus,
     category: hintCategory || "Capital Projects",
     date: extractDateFromTextOrUrl(text, url),
     summary: text.slice(0, 180) + "..."
@@ -607,13 +616,18 @@ async function extractProjectWithWorkersAI(ai, pageText, targetUrl, hintTitle, h
   const systemPrompt = `You are an expert industrial intelligence analyst evaluating web pages to identify genuine capital infrastructure and development projects.
 
 TASK:
-Determine if the provided webpage discusses a SPECIFIC, REAL-WORLD CAPITAL PROJECT.
+Determine if the provided webpage discusses a SPECIFIC, REAL-WORLD UPCOMING CAPITAL PROJECT.
 
-A VALID CAPITAL PROJECT MUST:
+A VALID UPCOMING CAPITAL PROJECT MUST:
 1. Cover a concrete physical facility, building, plant, megafab, hyperscale data center, power plant, solar/wind farm, transmission line, or manufacturing site.
 2. Have an identifiable company, developer, owner, or operator building, expanding, or financing it. NEVER return the news site or reporting publisher (e.g. Reuters, Bloomberg, ConstructConnect, DCN).
 3. Have a verifiable location (city, state, region, or country).
-4. Be in a real development lifecycle stage: Announced, Planning, Under Construction, or Operational.
+4. Strictly be in an UPCOMING, IN-DEVELOPMENT lifecycle stage: "Announced", "Planning", or "Under Construction" (with future target completion in 2026+).
+
+CRITICAL REQUIREMENT - ONLY UPCOMING PROJECTS:
+- You MUST REJECT (set "is_project": false) any project that is already Operational, Completed, Commissioned, Inaugurated, or Opened.
+- We strictly track UPCOMING, FUTURE, and IN-DEVELOPMENT capital projects only.
+- Valid status values are ONLY: "Announced", "Planning", or "Under Construction".
 
 CRITICAL REQUIREMENT - STRICT ENGLISH ONLY:
 - Every single field in your JSON output (canonical_name, company, location, category, date, summary, reason) MUST be written in fluent, standard English.
@@ -622,31 +636,32 @@ CRITICAL REQUIREMENT - STRICT ENGLISH ONLY:
 - NEVER output Chinese characters, Japanese kanji/kana, Korean hangul, Cyrillic, or non-English text. If you cannot provide English information, set "is_project": false with reason "Non-English source without verified English translation".
 
 YOU MUST REJECT (set "is_project": false) IF:
-1. The page is macroeconomic analysis, industry trends, or market growth forecasts (e.g. "Data center construction to peak in 2030").
-2. The page is selling or previewing a paid market research report, whitepaper, or industry outlook (e.g. GlobalData reports, consulting whitepapers).
-3. The page is an opinion article, stock recommendation, or general thought leadership without a specific physical project.
-4. The page is a corporate homepage, contact directory, hospital department list, or login portal.
-5. The page is in a non-English language and cannot be verified with high confidence into English.
+1. The facility is already finished, completed, operational, or commissioned.
+2. The page is macroeconomic analysis, industry trends, or market growth forecasts (e.g. "Data center construction to peak in 2030").
+3. The page is selling or previewing a paid market research report, whitepaper, or industry outlook (e.g. GlobalData reports, consulting whitepapers).
+4. The page is an opinion article, stock recommendation, or general thought leadership without a specific physical project.
+5. The page is a corporate homepage, contact directory, hospital department list, or login portal.
+6. The page is in a non-English language and cannot be verified with high confidence into English.
 
 RESPONSE FORMAT:
 Return ONLY a valid JSON object matching one of these two schemas:
 
-If VALID PROJECT:
+If VALID UPCOMING PROJECT:
 {
   "is_project": true,
   "canonical_name": "Official specific name of the project or facility in English",
   "company": "Specific company, developer, or operator building/investing in the project in English (NOT the media/news outlet)",
   "location": "City, State/Region, Country in English",
-  "status": "Announced | Planning | Under Construction | Operational",
+  "status": "Announced | Planning | Under Construction",
   "category": "Industrial category in English (e.g. Hyperscale Data Center, Semiconductor Megafab, Battery Gigafactory, Solar Farm)",
   "date": "Announcement, start, or publication date (e.g. November 2026, 2026-11, or 2026)",
   "summary": "1-2 complete factual sentences in fluent English describing the project, developer, and its development scope."
 }
 
-If NOT A PROJECT:
+If NOT A VALID UPCOMING PROJECT:
 {
   "is_project": false,
-  "reason": "Specific reason in English explaining why it is not a specific physical capital project"
+  "reason": "Specific reason in English explaining why it is not an upcoming physical capital project"
 }`;
 
   const userPrompt = `URL: ${targetUrl}
@@ -681,6 +696,29 @@ Evaluate whether this is a genuine capital project in JSON:`;
           is_project: false,
           reason: parsed.reason || "AI evaluation: Article does not discuss a specific physical capital project"
         };
+      }
+
+      // Reject any operational or completed projects
+      const rawStatus = (parsed.status || "").trim();
+      if (
+        /operational|completed|commissioned|opened|inaugurated/i.test(rawStatus) ||
+        parsed.summary?.toLowerCase().includes("has completed construction") ||
+        parsed.summary?.toLowerCase().includes("is now operational")
+      ) {
+        return {
+          is_project: false,
+          reason: `Facility is already operational or completed (${rawStatus}). Platform requires upcoming capital projects only.`
+        };
+      }
+
+      // Strictly map to valid upcoming lifecycle status
+      let finalStatus = "Planning";
+      if (/under construction|construction|breaks ground|underway/i.test(rawStatus)) {
+        finalStatus = "Under Construction";
+      } else if (/announced|announces|unveils|proposed/i.test(rawStatus)) {
+        finalStatus = "Announced";
+      } else {
+        finalStatus = "Planning";
       }
 
       // Strict English safety verification
@@ -723,7 +761,7 @@ Evaluate whether this is a genuine capital project in JSON:`;
         company: companyVal,
         developer: companyVal,
         project_url: targetUrl,
-        status: parsed.status || extractStatusFromText(pageText),
+        status: finalStatus,
         category: parsed.category || hintCategory || "Capital Projects",
         country: parsed.location || parsed.country || null,
         date: projectDate,
@@ -782,8 +820,8 @@ function extractLocation(queryStr) {
 // Resilient public web search fallback (activated if primary API providers return 0 results)
 async function searchWebFallback(query) {
   try {
-    const qStr = query.includes("2026") ? query : `${query} 2026`;
-    const fallbackUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(qStr + " capital project facility construction announcement")}&kl=us-en`;
+    const qStr = query.toLowerCase().includes("upcoming") ? query : `upcoming ${query}`;
+    const fallbackUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(qStr + " capital project planned facility construction announcement")}&kl=us-en`;
     const res = await fetch(fallbackUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -885,7 +923,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   addEvent("search_created", `Search accepted for: '${query}'. Dispatched to Cloudflare Workers AI edge pipeline.`);
   addEvent("query_analyzed", `NLP Analysis: Category '${targetCategory}' [${sectorInfo.group || 'Industrial'}], Location '${targetLocation}'`);
 
-  // 2. Query Cache Pre-check: Only use cache if results have verified project names and companies in English
+  // 2. Query Cache Pre-check: Only use cache if results have verified project names and companies in English and are UPCOMING
   if (store.queryCache.has(normalizedQuery)) {
     const priorRunId = store.queryCache.get(normalizedQuery);
     const cachedResults = store.searchResults.get(priorRunId) || [];
@@ -895,7 +933,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       !hasNonLatinScript(r.canonical_name) &&
       !hasNonLatinScript(r.summary) &&
       !hasNonLatinScript(r.company) &&
-      (r.company || r.developer)
+      (r.company || r.developer) &&
+      ["Announced", "Planning", "Under Construction"].includes(r.status)
     );
     if (isValidCache) {
       addEvent("query_cache_hit", `Cache Hit: Query '${query}' already executed with ${cachedResults.length} verified projects. Zero external calls or LLM inferences needed.`);
@@ -923,7 +962,9 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     providerFetches.push((async () => {
       const t0 = Date.now();
       try {
-        const exaQuery = query.includes("2026") ? `${query} English` : `${query} 2026 capital project facility investment in English`;
+        const exaQuery = query.toLowerCase().includes("upcoming")
+          ? (query.includes("2026") ? `${query} English` : `${query} 2026 capital project facility in English`)
+          : `upcoming ${query} 2026 capital project planned facility investment in English`;
         const exaRes = await fetch("https://api.exa.ai/search", {
           method: "POST",
           headers: {
@@ -974,7 +1015,9 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     providerFetches.push((async () => {
       const t0 = Date.now();
       try {
-        const gQuery = query.includes("2026") ? query : `${query} 2026 projects investments construction`;
+        const gQuery = query.toLowerCase().includes("upcoming")
+          ? (query.includes("2026") ? query : `${query} 2026 projects investments construction`)
+          : `upcoming ${query} 2026 projects planned announced under construction`;
         const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(gQuery)}&num=10&lr=lang_en&hl=en`;
         const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(6000) });
         const elapsed = Date.now() - t0;
@@ -1058,7 +1101,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         !hasNonLatinScript(cached.canonical_name) &&
         !hasNonLatinScript(cached.summary) &&
         !hasNonLatinScript(cached.company) &&
-        !isNewsPublisher(cached.company)
+        !isNewsPublisher(cached.company) &&
+        ["Announced", "Planning", "Under Construction"].includes(cached.status)
       ) {
         addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${cached.canonical_name}' (Source: ${cleanUrl})`, "ai_worker", { project: cached, canonical_name: cached.canonical_name });
         return cached;
@@ -1100,6 +1144,20 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     const aiExtracted = await extractProjectWithWorkersAI(env.AI, pageText, cleanUrl, item.title, targetCategory);
 
     if (aiExtracted && aiExtracted.is_project !== false) {
+      // Lifecycle check: strictly reject operational or completed facilities
+      if (
+        !aiExtracted.status ||
+        aiExtracted.status === "Operational" ||
+        aiExtracted.status === "Completed" ||
+        aiExtracted.status === "Commissioned"
+      ) {
+        addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Lifecycle Filter: Facility is already operational or completed (${aiExtracted.status || 'Unknown'}). Only upcoming projects permitted.`);
+        return null;
+      }
+
+      const validUpcomingStatuses = ["Announced", "Planning", "Under Construction"];
+      let projectStatus = validUpcomingStatuses.includes(aiExtracted.status) ? aiExtracted.status : "Planning";
+
       // Safety check: ensure project record has zero non-Latin foreign characters
       if (
         hasNonLatinScript(aiExtracted.canonical_name) ||
@@ -1131,7 +1189,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         company: companyName,
         developer: companyName,
         project_url: cleanUrl,
-        status: aiExtracted.status || "Active",
+        status: projectStatus,
         category: aiExtracted.category || targetCategory || "Capital Projects",
         country: aiExtracted.country || targetLocation,
         date: projectDate,
@@ -1230,9 +1288,12 @@ export default {
         if (Array.isArray(body?.projects)) {
           for (const p of body.projects) {
             if (p?.id && !store.projects.has(p.id)) {
-              store.projects.set(p.id, p);
-              if (p.sources?.[0]?.source_url) {
-                store.urlCache.set(p.sources[0].source_url, p);
+              const sLower = (p.status || "").toLowerCase();
+              if (!sLower.includes("operational") && !sLower.includes("completed") && !sLower.includes("commissioned")) {
+                store.projects.set(p.id, p);
+                if (p.project_url) {
+                  store.urlCache.set(p.project_url, p);
+                }
               }
             }
           }
@@ -1487,7 +1548,11 @@ export default {
       const status = url.searchParams.get("status");
       const search = url.searchParams.get("search")?.toLowerCase();
 
-      let list = Array.from(store.projects.values());
+      // Only include upcoming projects (exclude any operational/completed facilities)
+      let list = Array.from(store.projects.values()).filter(p => {
+        const s = (p.status || "").toLowerCase();
+        return !s.includes("operational") && !s.includes("completed") && !s.includes("commissioned");
+      });
       if (category && category !== "All Categories") {
         list = list.filter(p => p.category.toLowerCase().includes(category.toLowerCase()));
       }
@@ -1498,7 +1563,7 @@ export default {
           )
         );
       }
-      if (status && status !== "All Statuses") {
+      if (status && status !== "All Statuses" && status !== "All Upcoming Statuses") {
         list = list.filter(p => p.status.toLowerCase() === status.toLowerCase());
       }
       if (search) {
@@ -1525,7 +1590,10 @@ export default {
 
     // GET /api/v1/projects/export (CSV Export)
     if (url.pathname === "/api/v1/projects/export") {
-      const list = Array.from(store.projects.values());
+      const list = Array.from(store.projects.values()).filter(p => {
+        const s = (p.status || "").toLowerCase();
+        return !s.includes("operational") && !s.includes("completed") && !s.includes("commissioned");
+      });
       let csv = "ID,Project Name,Company,Date,Valid URL,Category,Status,HTTP Status,Discovery Date\n";
       for (const p of list) {
         const name = `"${(p.canonical_name || '').replace(/"/g, '""')}"`;
