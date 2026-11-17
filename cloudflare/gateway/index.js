@@ -375,6 +375,18 @@ function fallbackRegexExtract(text, url, hintCategory) {
     hostname = new URL(url).hostname;
   } catch (_) {}
 
+  // Strict check: must contain project infrastructure keywords
+  const isProjectRelated = /(?:capital\s*project|megafab|gigafactory|semiconductor\s*fab|data\s*center|solar\s*farm|wind\s*farm|battery\s*storage|power\s*plant|manufacturing\s*facility|refinery|pipeline|campus\s*expansion|breaks\s*ground|under\s*construction|commissioned|investment)\b/i.test(text);
+
+  const titleMatch = text.slice(0, 300).match(/([A-Z][a-zA-Z0-9\s,&-]{5,60}(?:Project|Plant|Facility|Campus|Center|Park|Fab|Corridor|Hub))/);
+
+  if (!isProjectRelated && !titleMatch) {
+    return {
+      is_project: false,
+      reason: "Page text does not contain capital project infrastructure or development indicators"
+    };
+  }
+
   // Determine status from text keywords
   let status = "Active";
   if (/under\s*construction|breaks\s*ground|underway|in\s*progress/i.test(text)) {
@@ -387,8 +399,7 @@ function fallbackRegexExtract(text, url, hintCategory) {
     status = "Planning";
   }
 
-  const titleMatch = text.slice(0, 300).match(/([A-Z][a-zA-Z0-9\s,&-]{5,60}(?:Project|Plant|Facility|Campus|Center|Park|Fab|Corridor|Hub))/);
-  const canonical_name = titleMatch ? titleMatch[1].trim() : `Project from ${hostname}`;
+  const canonical_name = titleMatch ? titleMatch[1].trim() : `Capital Project at ${hostname}`;
   const company = extractCompanyFromUrl(url);
 
   return {
