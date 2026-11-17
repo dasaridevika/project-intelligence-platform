@@ -356,7 +356,19 @@ async function fetchUrlContent(targetUrl) {
   }
 }
 
-// Fallback extractor: identifies project name and status
+function extractCompanyFromUrl(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    const parts = host.split(".");
+    if (parts.length >= 2) {
+      const name = parts[0];
+      return name.charAt(0).toUpperCase() + name.slice(1);
+    }
+  } catch (_) {}
+  return "Industrial Developer";
+}
+
+// Fallback extractor: identifies project name, company and status
 function fallbackRegexExtract(text, url, hintCategory) {
   let hostname = "Project Source";
   try {
@@ -377,10 +389,13 @@ function fallbackRegexExtract(text, url, hintCategory) {
 
   const titleMatch = text.slice(0, 300).match(/([A-Z][a-zA-Z0-9\s,&-]{5,60}(?:Project|Plant|Facility|Campus|Center|Park|Fab|Corridor|Hub))/);
   const canonical_name = titleMatch ? titleMatch[1].trim() : `Project from ${hostname}`;
+  const company = extractCompanyFromUrl(url);
 
   return {
     is_project: true,
     canonical_name,
+    company,
+    developer: company,
     project_url: url,
     status,
     category: hintCategory || "Capital Projects",
@@ -406,6 +421,7 @@ async function extractProjectWithWorkersAI(ai, pageText, targetUrl, hintCategory
   const systemPrompt = `You analyze web pages to identify capital projects and their current lifecycle status.
 Rules:
 - Identify if this page discusses a specific capital project, industrial facility, or infrastructure development.
+- Identify the specific company, developer, or owner leading/working on the project (e.g. TSMC, Microsoft, Intel, Amazon AWS, Samsung, NextEra Energy, TotalEnergies).
 - Reject pages that are general staff directories, company login pages, hospital department lists, generic store menus, or dead placeholders.
 - Never guess or infer a company or project country from the founder's personal name; only use explicit location mentions or official corporate suffixes.
 - Formulate complete sentences for summary and status reasons; do not truncate sentences.
@@ -413,6 +429,7 @@ Return ONLY a valid JSON object matching this schema:
 {
   "is_project": true,
   "canonical_name": "Official project or development name",
+  "company": "Company or developer building/operating the project (e.g. TSMC, Microsoft, Intel, Amazon)",
   "status": "Announced | Under Construction | Operational | Planning | Active",
   "category": "Industrial category (e.g. Data Center, Semiconductor, Solar, Energy, Infrastructure)",
   "country": "Country name if verified, or null",
@@ -427,7 +444,7 @@ Webpage Text:
 ${pageText.slice(0, 2500)}
 """
 
-Determine project name and status in JSON:`;
+Determine project name, company working on it, and status in JSON:`;
 
   const t0 = Date.now();
   try {
@@ -447,9 +464,12 @@ Determine project name and status in JSON:`;
     const jsonMatch = rawOutput.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
+      const companyVal = parsed.company || extractCompanyFromUrl(targetUrl);
       return {
         is_project: parsed.is_project !== false,
         canonical_name: parsed.canonical_name || "Capital Project",
+        company: companyVal,
+        developer: companyVal,
         project_url: targetUrl,
         status: parsed.status || "Active",
         category: parsed.category || hintCategory || "Capital Projects",
@@ -762,9 +782,12 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
 
     if (aiExtracted && aiExtracted.is_project !== false) {
       const projId = "proj-" + crypto.randomUUID().slice(0, 8);
+      const companyName = aiExtracted.company || aiExtracted.developer || extractCompanyFromUrl(cleanUrl);
       const projectRecord = {
         id: projId,
         canonical_name: aiExtracted.canonical_name || item.title || "Capital Project",
+        company: companyName,
+        developer: companyName,
         project_url: cleanUrl,
         status: aiExtracted.status || "Active",
         category: aiExtracted.category || targetCategory || "Capital Projects",
@@ -777,7 +800,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       store.projects.set(projId, projectRecord);
       store.urlCache.set(cleanUrl, projectRecord);
 
-      addEvent("candidate_accepted", `VALID PROJECT URL: ${cleanUrl} | Status: [${projectRecord.status}] | Name: '${projectRecord.canonical_name}'`);
+      addEvent("candidate_accepted", `VALID PROJECT URL: ${cleanUrl} | Company: [${companyName}] | Status: [${projectRecord.status}] | Name: '${projectRecord.canonical_name}'`);
       return projectRecord;
     } else {
       addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Reason: Non-project page filtered`);
@@ -789,7 +812,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   const extractedProjects = resolvedExtractions.filter(Boolean);
 
   // 5. Ranking & Deduplication
-  addEvent("deduplication_completed", `Verified ${extractedProjects.length} valid project URLs with status.`);
+  addEvent("deduplication_completed", `Verified ${extractedProjects.length} valid project URLs with companies & status.`);
 
   const searchResults = extractedProjects.map((p, index) => ({
     id: "sr-" + crypto.randomUUID().slice(0, 8),
@@ -797,6 +820,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     project_id: p.id,
     project: p,
     canonical_name: p.canonical_name,
+    company: p.company || p.developer || "Leading Developer",
+    developer: p.developer || p.company || "Leading Developer",
     project_url: p.project_url,
     category: p.category,
     status: p.status,

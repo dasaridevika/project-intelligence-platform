@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
+  Building2,
   Check,
   CheckCircle2,
   Copy,
@@ -55,6 +56,8 @@ export const ProjectsPage: React.FC = () => {
           const mapped: Project[] = (res.results || []).map((r: any) => ({
             id: r.project_id || r.id,
             canonical_name: r.canonical_name || 'Capital Project',
+            company: r.company || r.developer || r.project?.company || r.project?.developer,
+            developer: r.developer || r.company || r.project?.developer || r.project?.company,
             project_url: r.project_url || r.project?.project_url || '',
             category: r.category || 'Capital Projects',
             status: r.status || 'Active',
@@ -87,6 +90,8 @@ export const ProjectsPage: React.FC = () => {
     const q = searchQuery.toLowerCase();
     return (
       p.canonical_name.toLowerCase().includes(q) ||
+      (p.company && p.company.toLowerCase().includes(q)) ||
+      (p.developer && p.developer.toLowerCase().includes(q)) ||
       (p.project_url && p.project_url.toLowerCase().includes(q))
     );
   });
@@ -229,6 +234,13 @@ export const ProjectsPage: React.FC = () => {
                   <h3 className="text-base font-semibold text-white">
                     {p.canonical_name}
                   </h3>
+
+                  {(p.company || p.developer) && (
+                    <div className="flex items-center gap-1.5 text-xs text-sky-300 font-medium">
+                      <Building2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                      <span>{p.company || p.developer}</span>
+                    </div>
+                  )}
 
                   {p.summary && (
                     <p className="text-xs text-slate-400 line-clamp-1">

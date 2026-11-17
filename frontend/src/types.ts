@@ -26,6 +26,8 @@ export interface SearchRun {
 export interface Project {
   id: string;
   canonical_name: string;
+  company?: string;
+  developer?: string;
   project_url: string;
   status: string;
   category: string;
@@ -37,6 +39,8 @@ export interface Project {
 export interface SearchResultItem {
   project_id: string;
   canonical_name: string;
+  company?: string;
+  developer?: string;
   project_url: string;
   category: string;
   status: string;

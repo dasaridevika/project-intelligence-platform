@@ -4,6 +4,7 @@ import {
   Activity,
   AlertTriangle,
   ArrowRight,
+  Building2,
   CheckCircle2,
   Clock,
   Compass,
@@ -436,6 +437,13 @@ export const SearchPage: React.FC = () => {
                     </div>
 
                     <h3 className="text-base font-bold text-white line-clamp-1">{p.canonical_name}</h3>
+                    
+                    {(p.company || p.developer) && (
+                      <div className="flex items-center gap-1.5 text-xs text-sky-200/90 font-medium">
+                        <Building2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                        <span className="truncate">{p.company || p.developer}</span>
+                      </div>
+                    )}
                     
                     {p.project_url && (
                       <a
