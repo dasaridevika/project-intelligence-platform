@@ -343,16 +343,90 @@ async function fetchUrlContent(targetUrl) {
   }
 }
 
-function extractCompanyFromUrl(url) {
+// Check if a company name or domain is a news agency, publisher, or research firm (NOT a project developer)
+function isNewsPublisher(name) {
+  if (!name || typeof name !== "string") return false;
+  const n = name.toLowerCase().trim();
+  const newsIndicators = [
+    "reuters", "bloomberg", "constructconnect", "datacenterdynamics", "dcn",
+    "landgate", "oxford economics", "oxfordeconomics", "globaldata", "jpmorgan",
+    "pwc", "rba", "news", "times", "post", "journal", "herald", "tribune",
+    "cnbc", "forbes", "ft.com", "financial times", "press release", "marketwatch",
+    "associated press", "prnewswire", "businesswire", "globenewswire"
+  ];
+  return newsIndicators.some(ind => n.includes(ind));
+}
+
+// Extract company from text/headline dynamically (no hardcoded company array)
+function extractCompanyDynamically(text, title, url) {
+  const combined = ((title ? title + ". " : "") + (text ? text.slice(0, 500) : "")).trim();
+  
+  // Pattern 1: Developer action verbs ("<Company> plans to build / breaks ground / invests / announces / expands")
+  const actionMatch = combined.match(/([A-Z][a-zA-Z0-9\s,&.-]{2,40}?)\s+(?:plans?(?:\s+to)?|to\s+build|breaks?\s+ground|invests?|announces?|awarded|secures?|expands?|constructs?|develops?|opens?|completes?|raises?)\b/);
+  if (actionMatch && actionMatch[1]) {
+    const candidate = actionMatch[1].replace(/^(?:the|a|an|after|as|with|in|on|at|by|for)\s+/i, "").trim();
+    if (candidate.length >= 3 && candidate.length <= 40 && !isNewsPublisher(candidate)) {
+      return candidate;
+    }
+  }
+
+  // Pattern 2: Possessive project name ("<Company>'s $<Amount> facility / plant / data center")
+  const possessiveMatch = combined.match(/([A-Z][a-zA-Z0-9\s,&.-]{2,35})'s\s+(?:\$[\d.]+\s*(?:billion|million|bln|mln|b|m)?\s+)?(?:data\s*center|plant|facility|campus|megafab|gigafactory|project)/i);
+  if (possessiveMatch && possessiveMatch[1]) {
+    const candidate = possessiveMatch[1].replace(/^(?:the|a|an)\s+/i, "").trim();
+    if (candidate.length >= 3 && !isNewsPublisher(candidate)) {
+      return candidate;
+    }
+  }
+
+  // Pattern 3: URL host if it's the actual corporate domain (e.g. databank.com -> DataBank, hscaledc.com -> Hscale)
   try {
     const host = new URL(url).hostname.replace(/^www\./, "");
-    const parts = host.split(".");
-    if (parts.length >= 2) {
-      const org = parts[0];
-      return org.charAt(0).toUpperCase() + org.slice(1);
+    if (!isNewsPublisher(host)) {
+      const parts = host.split(".");
+      if (parts.length >= 2) {
+        const org = parts[0];
+        return org.charAt(0).toUpperCase() + org.slice(1);
+      }
     }
   } catch (_) {}
+
   return "Project Developer";
+}
+
+function extractStatusFromText(text) {
+  const t = (text || "").toLowerCase();
+  if (t.includes("under construction") || t.includes("breaks ground") || t.includes("groundbreaking") || t.includes("underway") || t.includes("construction has begun")) {
+    return "Under Construction";
+  }
+  if (t.includes("operational") || t.includes("commissioned") || t.includes("online") || t.includes("inaugurated") || t.includes("opened its doors")) {
+    return "Operational";
+  }
+  if (t.includes("announced") || t.includes("announces") || t.includes("unveils") || t.includes("proposes")) {
+    return "Announced";
+  }
+  return "Planning";
+}
+
+function parseLlmJson(rawOutput) {
+  if (!rawOutput || typeof rawOutput !== "string") return null;
+  let clean = rawOutput.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+  const firstBrace = clean.indexOf("{");
+  const lastBrace = clean.lastIndexOf("}");
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    return null;
+  }
+  clean = clean.slice(firstBrace, lastBrace + 1);
+  clean = clean.replace(/,\s*([}\]])/g, "$1");
+  try {
+    return JSON.parse(clean);
+  } catch (_) {
+    try {
+      const sanitized = clean.replace(/[\u0000-\u001F]+/g, " ");
+      return JSON.parse(sanitized);
+    } catch (_) {}
+  }
+  return null;
 }
 
 function extractProjectNameFromUrl(url) {
@@ -373,10 +447,30 @@ function extractProjectNameFromUrl(url) {
 }
 
 // Fallback extractor: structural fallback if AI model is unreachable
-function fallbackRegexExtract(text, url, hintCategory) {
-  const titleMatch = text.slice(0, 300).match(/([A-Z][a-zA-Z0-9\s,&-]{5,60}(?:Project|Plant|Facility|Campus|Center|Centre|Park|Fab|Corridor|Hub))/);
-  const canonical_name = titleMatch ? titleMatch[1].trim() : extractProjectNameFromUrl(url);
-  const company = extractCompanyFromUrl(url);
+function fallbackRegexExtract(text, url, titleHint, hintCategory) {
+  const combined = ((titleHint ? titleHint + " " : "") + text.slice(0, 500) + " " + url).toLowerCase();
+  
+  // If this page is a general market forecast, outlook, or paywalled study rather than a project, reject it
+  const isMarketStudy = /\b(market\s*(?:analysis|size|report|outlook)|growth\s*forecast|forecast(?:ed)?\s*to|cagr|industry\s*overview|global\s*outlook|store\/report|insights?\/|whitepaper)\b/i.test(combined);
+  if (isMarketStudy) {
+    return {
+      is_project: false,
+      reason: "General macroeconomic analysis or market outlook report without a confirmed physical capital asset"
+    };
+  }
+
+  // Check for facility / plant / project indicators
+  const facilityMatch = (titleHint || text.slice(0, 400)).match(/([A-Z][a-zA-Z0-9\s,&-]{3,50}(?:Project|Plant|Facility|Campus|Center|Centre|Park|Fab|Corridor|Hub|Farm|Station))/);
+  const canonical_name = facilityMatch ? facilityMatch[1].trim() : (titleHint || extractProjectNameFromUrl(url));
+
+  if (!canonical_name || canonical_name.length < 5 || canonical_name === "Capital Project") {
+    return {
+      is_project: false,
+      reason: "Unable to verify a specific named physical development project"
+    };
+  }
+
+  const company = extractCompanyDynamically(text, titleHint, url);
 
   return {
     is_project: true,
@@ -384,16 +478,16 @@ function fallbackRegexExtract(text, url, hintCategory) {
     company,
     developer: company,
     project_url: url,
-    status: "Active",
+    status: extractStatusFromText(text),
     category: hintCategory || "Capital Projects",
-    summary: text.slice(0, 160) + "..."
+    summary: text.slice(0, 180) + "..."
   };
 }
 
 // Executes deep intelligent project evaluation via Cloudflare Workers AI (Zero Hardcoding)
-async function extractProjectWithWorkersAI(ai, pageText, targetUrl, hintCategory) {
+async function extractProjectWithWorkersAI(ai, pageText, targetUrl, hintTitle, hintCategory) {
   if (!ai || typeof ai.run !== "function") {
-    return fallbackRegexExtract(pageText, targetUrl, hintCategory);
+    return fallbackRegexExtract(pageText, targetUrl, hintTitle, hintCategory);
   }
 
   const systemPrompt = `You are an expert industrial intelligence analyst evaluating web pages to identify genuine capital infrastructure and development projects.
@@ -403,13 +497,13 @@ Determine if the provided webpage discusses a SPECIFIC, REAL-WORLD CAPITAL PROJE
 
 A VALID CAPITAL PROJECT MUST:
 1. Cover a concrete physical facility, building, plant, megafab, hyperscale data center, power plant, solar/wind farm, transmission line, or manufacturing site.
-2. Have an identifiable company, developer, or operator building or financing it.
+2. Have an identifiable company, developer, owner, or operator building, expanding, or financing it. NEVER return the news site or reporting publisher (e.g. Reuters, Bloomberg, ConstructConnect, DCN).
 3. Have a verifiable location (city, state, region, or country).
 4. Be in a real development lifecycle stage: Announced, Planning, Under Construction, or Operational.
 
 YOU MUST REJECT (set "is_project": false) IF:
-1. The page is macroeconomic analysis, industry trends, or market growth forecasts.
-2. The page is selling a paid market research report or whitepaper.
+1. The page is macroeconomic analysis, industry trends, or market growth forecasts (e.g. "Data center construction to peak in 2030").
+2. The page is selling or previewing a paid market research report, whitepaper, or industry outlook (e.g. GlobalData reports, consulting whitepapers).
 3. The page is an opinion article, stock recommendation, or general thought leadership without a specific physical project.
 4. The page is a corporate homepage, contact directory, hospital department list, or login portal.
 
@@ -420,11 +514,11 @@ If VALID PROJECT:
 {
   "is_project": true,
   "canonical_name": "Official specific name of the project or facility",
-  "company": "Company or developer building/operating the project",
+  "company": "Specific company, developer, or operator building/investing in the project (NOT the media/news outlet)",
   "location": "City, State/Region, Country",
-  "status": "Announced | Under Construction | Operational | Planning | Active",
-  "category": "Industrial category (e.g. Data Center, Semiconductor Plant, Solar Farm, Infrastructure)",
-  "summary": "1-2 complete factual sentences describing the project and its development scope."
+  "status": "Announced | Planning | Under Construction | Operational",
+  "category": "Industrial category (e.g. Hyperscale Data Center, Semiconductor Fab, Battery Gigafactory, Solar Farm)",
+  "summary": "1-2 complete factual sentences describing the project, developer, and its development scope."
 }
 
 If NOT A PROJECT:
@@ -434,13 +528,14 @@ If NOT A PROJECT:
 }`;
 
   const userPrompt = `URL: ${targetUrl}
+${hintTitle ? `Title: ${hintTitle}` : ""}
 ${hintCategory ? `Category Hint: ${hintCategory}` : ""}
 Webpage Text:
 """
-${pageText.slice(0, 2500)}
+${pageText.slice(0, 3000)}
 """
 
-Evaluate if this is a genuine capital project in JSON:`;
+Evaluate whether this is a genuine capital project in JSON:`;
 
   const t0 = Date.now();
   try {
@@ -457,9 +552,8 @@ Evaluate if this is a genuine capital project in JSON:`;
     recordApiUsage("Cloudflare Workers AI", elapsed, true);
 
     const rawOutput = aiResponse?.response || "";
-    const jsonMatch = rawOutput.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = parseLlmJson(rawOutput);
+    if (parsed) {
       if (parsed.is_project === false) {
         return {
           is_project: false,
@@ -467,17 +561,26 @@ Evaluate if this is a genuine capital project in JSON:`;
         };
       }
 
-      const companyVal = parsed.company || extractCompanyFromUrl(targetUrl);
+      let companyVal = parsed.company;
+      if (!companyVal || isNewsPublisher(companyVal)) {
+        companyVal = extractCompanyDynamically(pageText, hintTitle, targetUrl);
+      }
+
+      let projectName = parsed.canonical_name;
+      if (!projectName || projectName.startsWith("Project from") || projectName.length < 5) {
+        projectName = hintTitle || extractProjectNameFromUrl(targetUrl);
+      }
+
       return {
         is_project: true,
-        canonical_name: parsed.canonical_name || extractProjectNameFromUrl(targetUrl),
+        canonical_name: projectName,
         company: companyVal,
         developer: companyVal,
         project_url: targetUrl,
-        status: parsed.status || "Active",
+        status: parsed.status || extractStatusFromText(pageText),
         category: parsed.category || hintCategory || "Capital Projects",
         country: parsed.location || parsed.country || null,
-        summary: parsed.summary || ""
+        summary: parsed.summary || (pageText.slice(0, 180) + "...")
       };
     }
   } catch (err) {
@@ -486,7 +589,7 @@ Evaluate if this is a genuine capital project in JSON:`;
     console.warn("Workers AI execution notice:", err?.message || err);
   }
 
-  return fallbackRegexExtract(pageText, targetUrl, hintCategory);
+  return fallbackRegexExtract(pageText, targetUrl, hintTitle, hintCategory);
 }
 
 // Dynamic NLP Query Classifier against 462 Primary Sectors (No hardcoded keyword branches)
@@ -571,6 +674,26 @@ async function searchWebFallback(query) {
   } catch (_) {
     return [];
   }
+}
+
+// Managed concurrency pool to maximize edge throughput without hitting Workers AI limits
+async function mapConcurrent(items, concurrency, fn) {
+  const results = new Array(items.length);
+  let index = 0;
+  async function worker() {
+    while (index < items.length) {
+      const i = index++;
+      try {
+        results[i] = await fn(items[i], i);
+      } catch (err) {
+        console.warn("Worker candidate execution notice:", err?.message || err);
+        results[i] = null;
+      }
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.allSettled(workers);
+  return results;
 }
 
 // ==============================================================================
@@ -739,15 +862,25 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     validCandidates.push({ ...item, cleanUrl: val.cleanUrl });
   }
 
-  // Process valid candidate URLs in parallel (up to 15 concurrent extractions)
-  const extractionPromises = validCandidates.slice(0, 15).map(async (item) => {
+  // Process valid candidate URLs with managed concurrency of 3 (prevents edge AI rate limits)
+  const extractionResults = await mapConcurrent(validCandidates.slice(0, 15), 3, async (item) => {
     const cleanUrl = item.cleanUrl;
 
     // Cache Check: Has this URL already been extracted?
     if (store.urlCache.has(cleanUrl)) {
       const cached = store.urlCache.get(cleanUrl);
-      addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${cached.canonical_name}' (Source: ${cleanUrl})`);
-      return cached;
+      if (
+        cached &&
+        cached.canonical_name &&
+        !cached.canonical_name.startsWith("Project from") &&
+        !cached.canonical_name.startsWith("Capital Project at") &&
+        !isNewsPublisher(cached.company)
+      ) {
+        addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${cached.canonical_name}' (Source: ${cleanUrl})`, "ai_worker", { project: cached, canonical_name: cached.canonical_name });
+        return cached;
+      } else {
+        store.urlCache.delete(cleanUrl);
+      }
     }
 
     addEvent("url_fetched", `Analyzing candidate URL: ${cleanUrl}`);
@@ -774,11 +907,14 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     }
 
     // AI Extraction via Workers AI (Llama 3.1)
-    const aiExtracted = await extractProjectWithWorkersAI(env.AI, pageText, cleanUrl, targetCategory);
+    const aiExtracted = await extractProjectWithWorkersAI(env.AI, pageText, cleanUrl, item.title, targetCategory);
 
     if (aiExtracted && aiExtracted.is_project !== false) {
       const projId = "proj-" + crypto.randomUUID().slice(0, 8);
-      const companyName = aiExtracted.company || aiExtracted.developer || extractCompanyFromUrl(cleanUrl);
+      let companyName = aiExtracted.company;
+      if (!companyName || isNewsPublisher(companyName)) {
+        companyName = extractCompanyDynamically(pageText, item.title, cleanUrl);
+      }
       const projectRecord = {
         id: projId,
         canonical_name: aiExtracted.canonical_name || item.title || "Capital Project",
@@ -796,7 +932,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       store.projects.set(projId, projectRecord);
       store.urlCache.set(cleanUrl, projectRecord);
 
-      addEvent("candidate_accepted", `VALID PROJECT URL: ${cleanUrl} | Company: [${companyName}] | Status: [${projectRecord.status}] | Name: '${projectRecord.canonical_name}'`);
+      addEvent("candidate_accepted", `VALID PROJECT URL: ${cleanUrl} | Company: [${companyName}] | Status: [${projectRecord.status}] | Name: '${projectRecord.canonical_name}'`, "ai_worker", { project: projectRecord, canonical_name: projectRecord.canonical_name });
       return projectRecord;
     } else {
       addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> AI Determination: ${aiExtracted?.reason || 'Non-project page filtered'}`);
@@ -804,8 +940,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     }
   });
 
-  const resolvedExtractions = await Promise.all(extractionPromises);
-  const extractedProjects = resolvedExtractions.filter(Boolean);
+  const extractedProjects = (extractionResults || []).filter(Boolean);
 
   // 5. Ranking & Deduplication
   addEvent("deduplication_completed", `Verified ${extractedProjects.length} valid project URLs with companies & status.`);
@@ -1104,13 +1239,16 @@ export default {
     if (searchEventsMatch && request.method === "GET") {
       const sId = searchEventsMatch[1];
       const events = store.activityEvents.get(sId) || [];
+      const run = store.searches.get(sId);
 
       // Format events into standard text/event-stream format
       let sseBody = "";
       for (const ev of events) {
         sseBody += `event: message\ndata: ${JSON.stringify(ev)}\n\n`;
       }
-      sseBody += `event: message\ndata: ${JSON.stringify({ event_type: "search_completed", message: "Stream closed." })}\n\n`;
+      if (run && (run.status === "completed" || run.status === "failed")) {
+        sseBody += `event: message\ndata: ${JSON.stringify({ event_type: "search_completed", message: "Discovery execution complete." })}\n\n`;
+      }
 
       return new Response(sseBody, {
         headers: {
@@ -1168,14 +1306,15 @@ export default {
     // GET /api/v1/projects/export (CSV Export)
     if (url.pathname === "/api/v1/projects/export") {
       const list = Array.from(store.projects.values());
-      let csv = "ID,Project Name,Valid URL,Category,Status,HTTP Status,Discovery Date\n";
+      let csv = "ID,Project Name,Company,Valid URL,Category,Status,HTTP Status,Discovery Date\n";
       for (const p of list) {
         const name = `"${(p.canonical_name || '').replace(/"/g, '""')}"`;
+        const comp = `"${(p.company || p.developer || '').replace(/"/g, '""')}"`;
         const pUrl = `"${(p.project_url || '').replace(/"/g, '""')}"`;
         const cat = `"${p.category || ''}"`;
         const stat = `"${p.status || ''}"`;
         const http = p.http_status || 200;
-        csv += `${p.id},${name},${pUrl},${cat},${stat},${http},${p.created_at}\n`;
+        csv += `${p.id},${name},${comp},${pUrl},${cat},${stat},${http},${p.created_at}\n`;
       }
       return new Response(csv, {
         headers: {

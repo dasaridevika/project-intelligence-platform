@@ -9,6 +9,7 @@ import {
   Clock,
   Compass,
   Database,
+  Download,
   ExternalLink,
   Globe,
   History,
@@ -167,9 +168,27 @@ export const SearchPage: React.FC = () => {
             } else if (msg.event === 'url_fetched') {
               setSearchProgress((p) => Math.min(p + 5, 75));
               setSearchStage(`Fetching & Sanitizing: ${msg.data.url?.slice(0, 45) || 'webpage'}...`);
-            } else if (msg.event === 'candidate_accepted') {
+            } else if (msg.event === 'candidate_accepted' || ev.event_type === 'candidate_accepted') {
               setSearchProgress((p) => Math.min(p + 5, 85));
-              setSearchStage(`Candidate Identified: ${msg.data.title || 'Capital Project'}`);
+              setSearchStage(`Candidate Identified: ${ev.metadata?.canonical_name || 'Capital Project'}`);
+              if (ev.metadata?.project) {
+                const proj = ev.metadata.project;
+                setDiscoveredResults((prev) => {
+                  const exists = prev.some(item => (item.project_id && item.project_id === proj.id) || item.project_url === proj.project_url);
+                  return exists ? prev : [...prev, {
+                    project_id: proj.id,
+                    canonical_name: proj.canonical_name,
+                    company: proj.company || proj.developer,
+                    developer: proj.developer || proj.company,
+                    project_url: proj.project_url,
+                    category: proj.category,
+                    status: proj.status,
+                    http_status: proj.http_status,
+                    summary: proj.summary,
+                    relevance_score: 0.95
+                  }];
+                });
+              }
             } else if (msg.event === 'extraction_completed') {
               setSearchProgress(90);
               setSearchStage('Workers AI Extraction Complete');
@@ -177,7 +196,11 @@ export const SearchPage: React.FC = () => {
               setSearchProgress(100);
               setSearchStage('Discovery Complete!');
               setSearchCompleted(true);
-              api.getSearchResults(searchId).then((r) => setDiscoveredResults(r.results || []));
+              api.getSearchResults(searchId).then((r) => {
+                if (r.results && r.results.length > 0) {
+                  setDiscoveredResults(r.results);
+                }
+              });
             }
           }
         },
@@ -194,6 +217,29 @@ export const SearchPage: React.FC = () => {
       setIsSubmitting(false);
       setErrorMsg(err?.message || 'Failed to dispatch search execution.');
     }
+  };
+
+  const downloadDiscoveredCsv = () => {
+    if (discoveredResults.length === 0) return;
+    let csv = "ID,Project Name,Company,Valid URL,Category,Status,HTTP Status,Summary\n";
+    for (const p of discoveredResults) {
+      const name = `"${(p.canonical_name || '').replace(/"/g, '""')}"`;
+      const comp = `"${(p.company || p.developer || '').replace(/"/g, '""')}"`;
+      const u = `"${(p.project_url || '').replace(/"/g, '""')}"`;
+      const cat = `"${(p.category || '').replace(/"/g, '""')}"`;
+      const st = `"${(p.status || '').replace(/"/g, '""')}"`;
+      const http = p.http_status || 200;
+      const sum = `"${(p.summary || '').replace(/"/g, '""')}"`;
+      csv += `${p.project_id},${name},${comp},${u},${cat},${st},${http},${sum}\n`;
+    }
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `discovered_projects_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (
@@ -244,6 +290,28 @@ export const SearchPage: React.FC = () => {
                 className="w-full pl-11 pr-4 py-3.5 rounded-xl bg-slate-950 border border-slate-700/80 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 text-sm sm:text-base shadow-inner"
               />
               <Search className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
+            </div>
+
+            {/* Quick Sector Discovery Pills */}
+            <div className="flex flex-wrap items-center gap-2 pt-2.5">
+              <span className="text-[11px] text-slate-400 font-medium">Quick Discovery:</span>
+              {[
+                { label: 'Hyperscale AI Data Centers', q: 'Hyperscale AI data center facilities under construction' },
+                { label: 'Semiconductor Megafabs', q: 'Semiconductor microchip megafab manufacturing plants' },
+                { label: 'Battery Gigafactories', q: 'Lithium battery energy storage gigafactory projects' },
+                { label: 'Utility-Scale Solar Energy', q: 'Utility-scale solar photovoltaic power projects' },
+                { label: 'Offshore Wind Farms', q: 'Offshore wind farm construction and expansion' },
+                { label: 'Clean Hydrogen Facilities', q: 'Green hydrogen production facility announcements' },
+              ].map((chip) => (
+                <button
+                  key={chip.label}
+                  type="button"
+                  onClick={() => setQuery(chip.q)}
+                  className="text-xs px-2.5 py-1 rounded-full bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 transition-colors"
+                >
+                  {chip.label}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -406,15 +474,29 @@ export const SearchPage: React.FC = () => {
               <span>Discovered Capital Projects ({discoveredResults.length})</span>
             </h2>
 
-            {activeSearchId && (
-              <button
-                onClick={() => navigate(`/projects?search_id=${activeSearchId}`)}
-                className="text-xs text-sky-400 hover:text-sky-300 font-semibold flex items-center gap-1"
-              >
-                <span>Open in Repository</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {discoveredResults.length > 0 && (
+                <button
+                  type="button"
+                  onClick={downloadDiscoveredCsv}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition-colors"
+                  title="Export verified projects to CSV"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Export CSV</span>
+                </button>
+              )}
+
+              {activeSearchId && (
+                <button
+                  onClick={() => navigate(`/projects?search_id=${activeSearchId}`)}
+                  className="text-xs text-sky-400 hover:text-sky-300 font-semibold flex items-center gap-1 px-3 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/20 transition-colors"
+                >
+                  <span>Open in Repository</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           </div>
 
           {discoveredResults.length === 0 ? (
