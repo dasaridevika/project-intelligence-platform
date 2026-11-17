@@ -34,6 +34,8 @@ const BLOCKED_DOMAINS = [
   "wikipedia.org", "wiktionary.org", "dictionary.cambridge.org", "merriam-webster.com",
   "dictionary.com", "investopedia.com", "britannica.com", "techtarget.com",
   "computerhope.com", "coursera.org", "wordreference.com",
+  // Aggregator portals, marketing blogs, educational explainers, marketplaces
+  "datacenters.com", "chipsupplychain.org", "patentpc.com", "poynter.org",
   // Social media, video, and community forums
   "youtube.com", "youtu.be", "vimeo.com", "facebook.com", "fb.com", "twitter.com",
   "x.com", "instagram.com", "tiktok.com", "pinterest.com", "reddit.com", "quora.com",
@@ -55,7 +57,17 @@ const JUNK_PATH_PATTERNS = [
   /\/terminos-y-condiciones/i, /\/aviso-legal/i,
   /\/staff\b/i, /\/staff-directory\b/i, /\/directory\b/i, /\/phonebook\b/i,
   /\/contact-us\b/i, /\/clinical-departments\b/i, /\/departments?\b/i,
-  /\/cart\b/i, /\/checkout\b/i, /\/pdf\//i
+  /\/cart\b/i, /\/checkout\b/i, /\/pdf\//i,
+  // Educational guides, explainers, tutorials, glossaries, FAQs
+  /\/what-is\b/i, /\/what-are\b/i, /\/how-to\b/i, /\/how-do\b/i, /\/how-data-centers\b/i,
+  /\/guides?\b/i, /\/glossary\b/i, /\/faq\b/i, /\/fact-check/i, /\/fact-checking/i,
+  /\/resources\/blog\b/i, /\/top-10\b/i, /\/top-5\b/i, /\/rankings?\b/i,
+  // Commercial store / market research reports
+  /\/store\/report\b/i, /\/market-analysis\b/i, /\/market-reports?\b/i,
+  // Search engines / directories
+  /\/search-6/i, /\/find-a-/i,
+  // Academic field reports
+  /\/publications\/[A-Z0-9_-]+\/how-/i
 ];
 
 // ==============================================================================
@@ -74,7 +86,7 @@ const store = {
   apiUsage: [
     {
       provider: "Cloudflare Workers AI",
-      endpoint: "@cf/meta/llama-3.1-8b-instruct",
+      endpoint: "@cf/meta/llama-3.2-3b-instruct",
       requests_sent: 0,
       success_count: 0,
       failed_count: 0,
@@ -199,13 +211,13 @@ function isForeignLanguageUrl(parsed) {
     }
     
     // Non-English ccTLDs that primarily publish in non-English
-    const nonEnglishTlds = [".cn", ".tw", ".ru", ".jp", ".kr", ".vn", ".th", ".ir", ".pl", ".cz"];
+    const nonEnglishTlds = [".cn", ".tw", ".ru", ".jp", ".kr", ".vn", ".th", ".ir", ".pl", ".cz", ".fr", ".de", ".it", ".es", ".br", ".nl"];
     for (const tld of nonEnglishTlds) {
       if (host.endsWith(tld)) return true;
     }
     
-    // Non-English language subpath prefixes: /zh/, /zh-tw/, /zh-cn/, /ja/, /ko/, /ru/
-    const foreignPathPrefixes = [/^\/zh\b/i, /^\/zh-[a-z]+\b/i, /^\/ja\b/i, /^\/ko\b/i, /^\/ru\b/i];
+    // Non-English language subpath prefixes: /zh/, /zh-tw/, /zh-cn/, /ja/, /ko/, /ru/, /fr/, /de/, /es/, /it/
+    const foreignPathPrefixes = [/^\/zh\b/i, /^\/zh-[a-z]+\b/i, /^\/ja\b/i, /^\/ko\b/i, /^\/ru\b/i, /^\/fr\b/i, /^\/de\b/i, /^\/es\b/i, /^\/it\b/i];
     for (const p of foreignPathPrefixes) {
       if (p.test(path)) return true;
     }
@@ -216,7 +228,8 @@ function isForeignLanguageUrl(parsed) {
       "sina.com", "sohu.com", "163.com", "xinhuanet.com", "people.com.cn", "huanqiu.com",
       "nikkei.com", "asahi.com", "yomiuri.co.jp", "mainichi.jp",
       "chosun.com", "donga.com", "joins.com", "yna.co.kr",
-      "tass.ru", "ria.ru", "rbc.ru", "lenta.ru", "kommersant.ru"
+      "tass.ru", "ria.ru", "rbc.ru", "lenta.ru", "kommersant.ru",
+      "latribune.fr", "lemonde.fr", "lefigaro.fr", "lesechos.fr", "elpais.com", "elmundo.es"
     ];
     for (const d of nonEnglishDomains) {
       if (host === d || host.endsWith("." + d)) return true;
@@ -231,10 +244,34 @@ function hasNonLatinScript(str) {
   return /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0e00-\u0e7f\u0900-\u097f\u0590-\u05ff]/.test(str);
 }
 
+function isForeignLanguageText(str) {
+  if (!str || typeof str !== "string") return false;
+  if (hasNonLatinScript(str)) return true;
+  // Detect French / Spanish / German / Italian in Latin script
+  const words = str.toLowerCase().split(/\s+/);
+  let foreignHits = 0;
+  const foreignMarkers = new Set([
+    "dans", "avec", "pour", "cette", "sont", "leur", "leurs", "été", "aussi", "engagé", "ses",
+    "investissements", "projet", "doubler", "capacités", "production", "puces", "horizon", "isère",
+    "para", "este", "esta", "estos", "estas", "como", "pero", "sobre", "entre", "cuando", "según",
+    "und", "oder", "für", "fuer", "über", "ueber", "nach", "dieser", "diese", "dieses", "nicht", "eine"
+  ]);
+  for (const w of words) {
+    const cleanWord = w.replace(/[.,;:'"()]/g, "");
+    if (foreignMarkers.has(cleanWord)) {
+      foreignHits++;
+    }
+  }
+  return foreignHits >= 3;
+}
+
 function isPredominantlyNonEnglish(text) {
   if (!text || text.length < 40) return false;
-  const nonLatin = text.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0e00-\u0e7f\u0900-\u097f\u0590-\u05ff]/g);
-  return !!(nonLatin && nonLatin.length > 15);
+  if (hasNonLatinScript(text)) {
+    const nonLatin = text.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0e00-\u0e7f\u0900-\u097f\u0590-\u05ff]/g);
+    if (nonLatin && nonLatin.length > 15) return true;
+  }
+  return isForeignLanguageText(text);
 }
 
 function validateAndNormalizeUrl(rawUrl) {
@@ -285,6 +322,15 @@ function validateAndNormalizeUrl(rawUrl) {
       cleanPath = cleanPath.slice(0, -1);
     }
     parsed.pathname = cleanPath;
+
+    // Reject root domains, homepages, and broad index pages without a deep project article slug
+    const pathSegments = cleanPath.split("/").filter(Boolean);
+    if (
+      pathSegments.length === 0 ||
+      (pathSegments.length === 1 && /^(?:en|es|fr|de|home|index\.html|search|browse|category|directory|feed|news|articles|blog|resources)$/i.test(pathSegments[0]))
+    ) {
+      return { valid: false, reason: "Homepage or broad section index, not a specific project article or filing." };
+    }
 
     // 3. File extension check (only HTML/text pages allowed, no PDFs or binaries)
     const lowerPath = cleanPath.toLowerCase();
@@ -419,6 +465,53 @@ function isNewsPublisher(name) {
   return newsIndicators.some(ind => n === ind || n.includes(ind));
 }
 
+function isValidCompanyEntity(name) {
+  if (!name || typeof name !== "string") return false;
+  const n = name.trim();
+  if (n.length < 2 || n.length > 50) return false;
+  const lower = n.toLowerCase();
+
+  // Reject placeholder or generic fallback words
+  if (
+    lower === "project developer" ||
+    lower === "leading developer" ||
+    lower === "unknown" ||
+    lower === "understanding" ||
+    lower === "fabs the newest chips need the know-how" ||
+    lower === "clay, ny campus by 2-3 years. - the" ||
+    lower.includes("public service commission") ||
+    lower.includes("by 2-3 years") ||
+    lower.includes("the newest chips") ||
+    lower.includes("residents vote") ||
+    lower.includes("approved a") ||
+    lower.includes("court approves")
+  ) {
+    return false;
+  }
+
+  // Reject author bylines
+  if (/\b(?:written by|reported by|author|editor|contributor|photo by)\b/i.test(lower)) {
+    return false;
+  }
+
+  // Reject publishers & consulting firms
+  if (isNewsPublisher(lower)) {
+    return false;
+  }
+
+  // Reject sentences ending with dangling conjunctions or prepositions
+  if (/\b(?:a|an|the|of|for|in|on|at|by|with|and|or|to)\s*$/i.test(lower)) {
+    return false;
+  }
+
+  // Reject if contains repeated punctuation
+  if (/[-.]{2,}/.test(lower)) {
+    return false;
+  }
+
+  return true;
+}
+
 // Extract company from text/headline dynamically (no hardcoded company array)
 function extractCompanyDynamically(text, title, url) {
   const combined = ((title ? title + ". " : "") + (text ? text.slice(0, 500) : "")).trim();
@@ -426,8 +519,10 @@ function extractCompanyDynamically(text, title, url) {
   // Pattern 1: Developer action verbs ("<Company> plans to build / breaks ground / invests / announces / expands")
   const actionMatch = combined.match(/([A-Z][a-zA-Z0-9\s,&.-]{2,40}?)\s+(?:plans?(?:\s+to)?|to\s+build|breaks?\s+ground|invests?|announces?|awarded|secures?|expands?|constructs?|develops?|opens?|completes?|raises?|appoints?|selects?|picks?|pushes?|targets?|builds?|begins?)\b/);
   if (actionMatch && actionMatch[1]) {
-    const candidate = actionMatch[1].replace(/^(?:the|a|an|after|as|with|in|on|at|by|for)\s+/i, "").trim();
-    if (candidate.length >= 3 && candidate.length <= 40 && !isNewsPublisher(candidate) && !hasNonLatinScript(candidate)) {
+    let candidate = actionMatch[1].replace(/^(?:the|a|an|after|as|with|in|on|at|by|for)\s+/i, "").trim();
+    // Strip bylines like "Written by John Doe "
+    candidate = candidate.replace(/^(?:written by|reported by|by)\s+[a-zA-Z\s.-]+?\s+([A-Z])/i, "$1").trim();
+    if (isValidCompanyEntity(candidate) && !hasNonLatinScript(candidate)) {
       return candidate;
     }
   }
@@ -435,8 +530,8 @@ function extractCompanyDynamically(text, title, url) {
   // Pattern 2: Possessive project name ("<Company>'s $<Amount> facility / plant / data center / megafab")
   const possessiveMatch = combined.match(/(?:for|on|in|at|by)?\s*([A-Z][a-zA-Z0-9\s,&.-]{2,35})'s\s+(?:\$[\d.]+\s*(?:billion|million|bln|mln|b|m)?\s+)?(?:data\s*center|plant|facility|campus|megafab|gigafactory|project|semiconductor|complex)/i);
   if (possessiveMatch && possessiveMatch[1]) {
-    const candidate = possessiveMatch[1].replace(/^(?:the|a|an|for|on|in|at|by)\s+/i, "").trim();
-    if (candidate.length >= 3 && !isNewsPublisher(candidate) && !hasNonLatinScript(candidate)) {
+    let candidate = possessiveMatch[1].replace(/^(?:the|a|an|for|on|in|at|by)\s+/i, "").trim();
+    if (isValidCompanyEntity(candidate) && !hasNonLatinScript(candidate)) {
       return candidate;
     }
   }
@@ -448,7 +543,8 @@ function extractCompanyDynamically(text, title, url) {
       if (host.startsWith("investors.") || host.startsWith("newsroom.") || host.startsWith("press.")) {
         const parts = host.split(".");
         if (parts.length >= 3 && !isNewsPublisher(parts[1])) {
-          return parts[1].charAt(0).toUpperCase() + parts[1].slice(1);
+          const c = parts[1].charAt(0).toUpperCase() + parts[1].slice(1);
+          if (isValidCompanyEntity(c)) return c;
         }
       }
     }
@@ -457,7 +553,7 @@ function extractCompanyDynamically(text, title, url) {
   // Pattern 4: Leading brand in facility title ("Micron New York Megafab", "Intel Silicon Junction Fab", etc.)
   if (title) {
     const brandMatch = title.match(/^([A-Z][a-zA-Z0-9&.-]{2,25})\s+(?:[A-Z][a-zA-Z0-9&.-]+\s+)?(?:Megafab|Gigafactory|Data Center|Semiconductor|Campus|Fabrication|Plant|Facility)\b/i);
-    if (brandMatch && brandMatch[1] && !isNewsPublisher(brandMatch[1])) {
+    if (brandMatch && brandMatch[1] && isValidCompanyEntity(brandMatch[1])) {
       return brandMatch[1];
     }
   }
@@ -465,11 +561,12 @@ function extractCompanyDynamically(text, title, url) {
   return "Project Developer";
 }
 
-function isGenericReportOrDirectory(url, name, company) {
+function isGenericReportOrDirectory(url, name, company, summary) {
   if (!name && !url) return false;
   const n = (name || "").toLowerCase().trim();
   const u = (url || "").toLowerCase();
   const c = (company || "").toLowerCase().trim();
+  const s = (summary || "").toLowerCase();
 
   // Paid store reports, general market research, macro economic outlooks, guides, blogs, and listicles
   if (
@@ -483,31 +580,80 @@ function isGenericReportOrDirectory(url, name, company) {
     u.includes("pwc.com/gx/en/1/services/consulting/technology/data-centre-outlook") ||
     u.includes("jpmorgan.com/insights") ||
     u.includes("/what-is-") ||
-    u.includes("/guides/what-is") ||
+    u.includes("/what-are-") ||
+    u.includes("/how-to-") ||
+    u.includes("/how-do-") ||
+    u.includes("/how-data-centers-") ||
+    u.includes("/guides/") ||
     u.includes("/glossary/") ||
-    u.includes("digitalpower.huawei.com/en/blogs/what-is-hyperscale-data-center") ||
-    u.includes("megawattlas.com/guides/what-is-a-hyperscaler")
+    u.includes("/fact-checking/") ||
+    u.includes("/publications/b1600/") ||
+    u.includes("digitalpower.huawei.com/en/blogs/") ||
+    u.includes("megawattlas.com/guides/") ||
+    u.includes("chipsupplychain.org/") ||
+    u.includes("patentpc.com/blog/") ||
+    u.includes("ciriontechnologies.com/en/data-center/resources/") ||
+    u.includes("hsc.com/resources/blog/")
   ) {
     return true;
   }
-  if (n.startsWith("project from") || n.startsWith("capital project at")) {
+  if (n.startsWith("project from") || n.startsWith("capital project at") || n === "capital project") {
     return true;
   }
-  if (/^(?:what is\b|how to\b|top \d+\b|definition of\b|explaining\b|overview of\b)/i.test(n)) {
+  if (/^(?:what is\b|what are\b|how to\b|how do\b|understanding\b|definitive guide\b|guide to\b|top \d+\b|definition of\b|explaining\b|overview of\b|find a data center)/i.test(n)) {
     return true;
   }
-  if (/\b(?:activity report|market report|construction report|industry outlook|market analysis|capex report|data center report)\b/i.test(n)) {
+  if (/\b(?:activity report|market report|construction report|industry outlook|market analysis|capex report|data center report|fabs and facilities report)\b/i.test(n)) {
     return true;
   }
-  if (/^(?:all\s+.*projects?|global data center construction project|november \d{4} data center|q[1-4]\s+\d{4}\s+data center)$/i.test(n)) {
+  if (/^(?:all\s+.*projects?|global data center construction project|annual global ic fab|global ic fab|november \d{4} data center|q[1-4]\s+\d{4}\s+data center)$/i.test(n)) {
     return true;
   }
   // Generic noun without named facility or valid developer
-  if ((!c || c === "project developer" || c === "leading developer") &&
-      /^(?:data center|hyperscale data center|data centre|power plant|solar farm|wind farm|battery gigafactory|semiconductor fab)$/i.test(n)) {
+  if ((!c || c === "project developer" || c === "leading developer" || c === "unknown") &&
+      /^(?:data center|hyperscale data center|data centre|power plant|solar farm|wind farm|battery gigafactory|semiconductor fab|semiconductor chemicals plant|aircraft manufacturing plant|industrial category)$/i.test(n)) {
+    return true;
+  }
+  // Lawsuits, disputes, or political fights without a physical facility
+  if (/\b(?:sues\b|lawsuit\b|residents vote against|controversy|hearing)\b/i.test(n)) {
+    return true;
+  }
+  // Explanatory guides or operational summaries
+  if (
+    s.includes("understanding how data centers impact") ||
+    s.includes("what are data centers?") ||
+    s.includes("exploring the core components, evolving architecture") ||
+    s.includes("how tsmc and other foundries make chips") ||
+    s.includes("find a data center") ||
+    s.includes("guide to understanding its importance") ||
+    /\b(?:currently operates|already operates|primary research and development fab for its advanced nodes)\b/i.test(s)
+  ) {
     return true;
   }
   return false;
+}
+
+function inferCategory(projectName, summary, hintCategory) {
+  const combined = `${projectName || ""} ${summary || ""}`.toLowerCase();
+  if (/\b(?:semiconductor|fab|fabs|wafer|dram|cleanroom|microchip|foundry|tsmc|asml|micron|infineon|intel)\b/i.test(combined)) {
+    return "Semiconductor Manufacturing";
+  }
+  if (/\b(?:data center|data centre|hyperscale|colocation|cloud campus|stargate)\b/i.test(combined)) {
+    return "Hyperscale Data Center";
+  }
+  if (/\b(?:battery|gigafactory|lithium|energy storage|bess)\b/i.test(combined)) {
+    return "Battery Gigafactory";
+  }
+  if (/\b(?:solar|photovoltaic|pv farm)\b/i.test(combined)) {
+    return "Utility Solar";
+  }
+  if (/\b(?:wind farm|offshore wind|turbine)\b/i.test(combined)) {
+    return "Wind Energy";
+  }
+  if (/\b(?:hydrogen|electrolyzer|clean ammonia)\b/i.test(combined)) {
+    return "Clean Hydrogen";
+  }
+  return hintCategory || "Capital Infrastructure";
 }
 
 function extractStatusFromText(text) {
@@ -683,10 +829,22 @@ A VALID CAPITAL PROJECT MUST:
 DO NOT REJECT active construction, site buildouts, or facility expansions!
 
 ONLY REJECT (set "is_project": false) IF:
-1. The facility is completely finished, already opened in past years, and fully operational with no ongoing construction or expansion.
-2. The page is purely macroeconomic analysis, market forecasts, or broad industry trends without any specific physical facility.
-3. The page is selling or previewing a paid market research report, whitepaper, or consulting study.
-4. The page is an opinion article, stock recommendation, company directory, or login portal.
+1. The facility is already completed, commissioned in past years, or existing operational facilities (e.g. listicles of 'Top 10 Most Advanced Fabs in the World' describing already running plants).
+2. The page is an educational article, academic study, field report, technology explainer, or how-to guide (e.g. "Understanding How Data Centers Impact Water", "What is a Data Center", "How Chips Are Made").
+3. The page is a directory of colocation spaces, search engine for capacity, or vendor marketplace (e.g. datacenters.com).
+4. The page is discussing a political protest, zoning dispute, or lawsuit without an actively funded physical development project.
+5. The page is purely macroeconomic analysis, market forecast, or paid market research report.
+
+CRITICAL REQUIREMENT - COMPANY ENTITY:
+- The "company" field MUST be the actual corporate developer, operator, or owner entity (e.g. Micron Technology, TSMC, Core Scientific, Equinix, Intel).
+- NEVER use sentence fragments, regulatory commissions (e.g. "Public Service Commission"), author bylines ("Written by..."), or generic terms ("Project Developer", "Understanding").
+
+CRITICAL REQUIREMENT - ACCURATE CATEGORY:
+- The "category" field MUST match the project's actual industrial type:
+  - If it is microchip, wafer, or DRAM manufacturing: "Semiconductor Manufacturing"
+  - If it is computing/cloud infrastructure: "Hyperscale Data Center"
+  - If it is battery/cell production: "Battery Gigafactory"
+  - If it is solar power generation: "Utility Solar"
 
 CRITICAL REQUIREMENT - STRICT ENGLISH ONLY:
 - Every single field in your JSON output (canonical_name, company, location, category, date, summary, reason) MUST be written in fluent, standard English.
@@ -793,7 +951,9 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
         if (
           hasNonLatinScript(item.canonical_name) ||
           hasNonLatinScript(item.company) ||
-          hasNonLatinScript(item.summary)
+          hasNonLatinScript(item.summary) ||
+          isForeignLanguageText(item.summary) ||
+          isForeignLanguageText(item.canonical_name)
         ) {
           continue;
         }
@@ -816,7 +976,8 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
         }
 
         if (hasNonLatinScript(projectName) || hasNonLatinScript(companyVal)) continue;
-        if (isGenericReportOrDirectory(targetUrl, projectName, companyVal)) continue;
+        if (isGenericReportOrDirectory(targetUrl, projectName, companyVal, item.summary)) continue;
+        if (!isValidCompanyEntity(companyVal)) continue;
 
         let projectDate = item.date;
         if (!projectDate || projectDate.length < 4) {
@@ -830,7 +991,7 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
           developer: companyVal,
           project_url: targetUrl,
           status: finalStatus,
-          category: item.category || hintCategory || "Capital Projects",
+          category: inferCategory(projectName, item.summary, item.category || hintCategory),
           country: item.location || item.country || null,
           date: projectDate,
           summary: item.summary || (pageText.slice(0, 180) + "...")
@@ -841,6 +1002,13 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
         return validProjects;
       }
     }
+  }
+
+  if (aiSuccess) {
+    return [{
+      is_project: false,
+      reason: "Page analyzed by Workers AI: No valid upcoming physical capital development projects found."
+    }];
   }
 
   const fb = fallbackRegexExtract(pageText, targetUrl, hintTitle, hintCategory);
@@ -1001,10 +1169,10 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       !r.canonical_name.startsWith("Project from") && 
       !hasNonLatinScript(r.canonical_name) &&
       !hasNonLatinScript(r.summary) &&
-      !hasNonLatinScript(r.company) &&
-      (r.company || r.developer) &&
-      r.company !== "Project Developer" &&
-      r.developer !== "Project Developer" &&
+      !isForeignLanguageText(r.summary) &&
+      !isForeignLanguageText(r.canonical_name) &&
+      isValidCompanyEntity(r.company || r.developer) &&
+      !isGenericReportOrDirectory(r.project_url, r.canonical_name, r.company || r.developer, r.summary) &&
       ["Announced", "Planning", "Under Construction"].includes(r.status)
     );
     if (isValidCache) {
@@ -1158,21 +1326,23 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     // Cache Check: Has this URL already been extracted?
     if (store.urlCache.has(cleanUrl)) {
       const cached = store.urlCache.get(cleanUrl);
-      if (
-        cached &&
-        cached.canonical_name &&
-        !cached.canonical_name.startsWith("Project from") &&
-        !cached.canonical_name.startsWith("Capital Project at") &&
-        !hasNonLatinScript(cached.canonical_name) &&
-        !hasNonLatinScript(cached.summary) &&
-        !hasNonLatinScript(cached.company) &&
-        !isNewsPublisher(cached.company) &&
-        cached.company !== "Project Developer" &&
-        cached.company !== "Leading Developer" &&
-        ["Announced", "Planning", "Under Construction"].includes(cached.status)
-      ) {
-        addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${cached.canonical_name}' (Source: ${cleanUrl})`, "ai_worker", { project: cached, canonical_name: cached.canonical_name });
-        return [cached];
+      const cachedArr = Array.isArray(cached) ? cached : [cached];
+      const validCached = cachedArr.filter(c =>
+        c &&
+        c.canonical_name &&
+        !c.canonical_name.startsWith("Project from") &&
+        !c.canonical_name.startsWith("Capital Project at") &&
+        !hasNonLatinScript(c.canonical_name) &&
+        !hasNonLatinScript(c.summary) &&
+        !isForeignLanguageText(c.summary) &&
+        isValidCompanyEntity(c.company || c.developer) &&
+        ["Announced", "Planning", "Under Construction"].includes(c.status)
+      );
+      if (validCached.length > 0) {
+        validCached.forEach(p => {
+          addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${p.canonical_name}' (Source: ${cleanUrl})`, "ai_worker", { project: p, canonical_name: p.canonical_name });
+        });
+        return validCached;
       } else {
         store.urlCache.delete(cleanUrl);
       }
@@ -1234,7 +1404,9 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       if (
         hasNonLatinScript(aiExtracted.canonical_name) ||
         hasNonLatinScript(aiExtracted.company) ||
-        hasNonLatinScript(aiExtracted.summary)
+        hasNonLatinScript(aiExtracted.summary) ||
+        isForeignLanguageText(aiExtracted.summary) ||
+        isForeignLanguageText(aiExtracted.canonical_name)
       ) {
         continue;
       }
@@ -1253,8 +1425,12 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       if (hasNonLatinScript(projectName) || hasNonLatinScript(companyName)) {
         continue;
       }
-      if (isGenericReportOrDirectory(cleanUrl, projectName, companyName)) {
-        addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Filter: Industry market report / directory listing, not a specific physical project facility.`);
+      if (isGenericReportOrDirectory(cleanUrl, projectName, companyName, aiExtracted.summary)) {
+        addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Filter: Industry market report / explainer guide / directory listing, not a specific physical project facility.`);
+        continue;
+      }
+      if (!isValidCompanyEntity(companyName)) {
+        addEvent("candidate_rejected", `REJECTED: ${cleanUrl} -> Entity Filter: Invalid developer entity ('${companyName}')`);
         continue;
       }
 
@@ -1270,7 +1446,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         developer: companyName,
         project_url: cleanUrl,
         status: projectStatus,
-        category: aiExtracted.category || targetCategory || "Capital Projects",
+        category: inferCategory(projectName, aiExtracted.summary, aiExtracted.category || targetCategory),
         country: aiExtracted.country || targetLocation,
         date: projectDate,
         http_status: pageStatus || 200,
@@ -1279,13 +1455,16 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       };
 
       store.projects.set(projId, projectRecord);
-      store.urlCache.set(cleanUrl, projectRecord);
       resultsForUrl.push(projectRecord);
 
       addEvent("candidate_accepted", `VALID PROJECT URL: ${cleanUrl} | Company: [${companyName}] | Date: [${projectDate}] | Status: [${projectRecord.status}] | Name: '${projectRecord.canonical_name}'`, "ai_worker", { project: projectRecord, canonical_name: projectRecord.canonical_name });
     }
 
-    return resultsForUrl.length > 0 ? resultsForUrl : null;
+    if (resultsForUrl.length > 0) {
+      store.urlCache.set(cleanUrl, resultsForUrl);
+      return resultsForUrl;
+    }
+    return null;
   });
 
   const extractedProjects = (extractionResults || []).flat().filter(Boolean);
