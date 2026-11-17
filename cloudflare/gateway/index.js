@@ -58,19 +58,6 @@ const JUNK_PATH_PATTERNS = [
   /\/cart\b/i, /\/checkout\b/i, /\/pdf\//i
 ];
 
-// Corporate suffix heuristics for verified country origin (never guess from founder name)
-const CORPORATE_SUFFIX_COUNTRIES = [
-  { regex: /\b(?:S\.p\.A\.|SpA)\b/i, country: "Italy" },
-  { regex: /\b(?:GmbH|A\.G\.|AG)\b/i, country: "Germany" },
-  { regex: /\b(?:S\.A\.|SAS|SARL)\b/i, country: "France" },
-  { regex: /\b(?:B\.V\.|N\.V\.)\b/i, country: "Netherlands" },
-  { regex: /\b(?:Pty\s*Ltd)\b/i, country: "Australia" },
-  { regex: /\b(?:Pte\s*Ltd)\b/i, country: "Singapore" },
-  { regex: /\b(?:K\.K\.|Kabushiki\s*Kaisha)\b/i, country: "Japan" },
-  { regex: /\b(?:Ltd\.|Limited)\b/i, country: "United Kingdom" },
-  { regex: /\b(?:Inc\.|LLC|Corp\.|Corporation)\b/i, country: "United States" }
-];
-
 // ==============================================================================
 // 2. EDGE MEMORY STORE & DYNAMIC TELEMETRY TRACKER
 // ==============================================================================
@@ -356,23 +343,16 @@ async function fetchUrlContent(targetUrl) {
   }
 }
 
-function extractCompanyFromUrl(url, text = "") {
-  // Check known major industrial developers if mentioned
-  const known = ["Blackstone", "Prologis", "Skybox", "DataBank", "HScale", "TSMC", "Intel", "Microsoft", "Amazon", "AWS", "Google", "Meta", "Samsung", "NextEra", "Shell", "Chevron", "TotalEnergies"];
-  for (const k of known) {
-    if (new RegExp(`\\b${k}\\b`, "i").test(url) || (text && new RegExp(`\\b${k}\\b`, "i").test(text.slice(0, 500)))) {
-      return k;
-    }
-  }
+function extractCompanyFromUrl(url) {
   try {
     const host = new URL(url).hostname.replace(/^www\./, "");
     const parts = host.split(".");
     if (parts.length >= 2) {
-      const name = parts[0];
-      return name.charAt(0).toUpperCase() + name.slice(1);
+      const org = parts[0];
+      return org.charAt(0).toUpperCase() + org.slice(1);
     }
   } catch (_) {}
-  return "Infrastructure Developer";
+  return "Project Developer";
 }
 
 function extractProjectNameFromUrl(url) {
@@ -380,51 +360,23 @@ function extractProjectNameFromUrl(url) {
     const pathname = new URL(url).pathname;
     const segments = pathname.split("/").filter(Boolean);
     const last = segments[segments.length - 1] || "";
-    // Remove date suffix like -2025-08-27 or IDs, and clean hyphens
     const clean = last
       .replace(/-\d{4}-\d{2}-\d{2}$/, "")
       .replace(/\.(html|htm|php|aspx)$/i, "")
       .replace(/[-_]+/g, " ")
       .trim();
-    if (clean.length > 8) {
+    if (clean.length > 5) {
       return clean.replace(/\b[a-z]/g, c => c.toUpperCase());
     }
   } catch (_) {}
-  return "Capital Infrastructure Project";
+  return "Capital Project";
 }
 
-// Fallback extractor: semantic evaluation if AI is momentarily unreachable
+// Fallback extractor: structural fallback if AI model is unreachable
 function fallbackRegexExtract(text, url, hintCategory) {
-  // Check if text is general macroeconomic commentary without physical project announcements
-  const hasPhysicalAsset = /(?:data\s*cent(?:er|re)|semiconductor|wafer\s*fab|megafab|gigafactory|solar\s*farm|wind\s*farm|battery\s*storage|power\s*plant|manufacturing\s*facility|refinery|pipeline|transmission\s*line|campus\s*expansion|facility)/i.test(text);
-  const hasProjectVerb = /(?:breaks\s*ground|under\s*construction|building\s*a\s*\$|announced\s*plans\s*to\s*build|awarded\s*contract|investing\s*\$|facility\s*expansion|groundbreaking|plans\s*\$|million\s*expansion)/i.test(text);
-
-  if (!hasPhysicalAsset || !hasProjectVerb) {
-    return {
-      is_project: false,
-      reason: "Page text lacks concrete physical capital facility and construction lifecycle indicators"
-    };
-  }
-
-  // Determine status from text keywords
-  let status = "Active";
-  if (/under\s*construction|breaks\s*ground|underway|in\s*progress/i.test(text)) {
-    status = "Under Construction";
-  } else if (/announced|unveiled|plans\s*to|proposed/i.test(text)) {
-    status = "Announced";
-  } else if (/operational|commissioned|completed|online/i.test(text)) {
-    status = "Operational";
-  } else if (/planning|permit|approved|review/i.test(text)) {
-    status = "Planning";
-  }
-
   const titleMatch = text.slice(0, 300).match(/([A-Z][a-zA-Z0-9\s,&-]{5,60}(?:Project|Plant|Facility|Campus|Center|Centre|Park|Fab|Corridor|Hub))/);
-  let canonical_name = titleMatch ? titleMatch[1].trim() : "";
-  if (!canonical_name || canonical_name.length < 5) {
-    canonical_name = extractProjectNameFromUrl(url);
-  }
-
-  const company = extractCompanyFromUrl(url, text);
+  const canonical_name = titleMatch ? titleMatch[1].trim() : extractProjectNameFromUrl(url);
+  const company = extractCompanyFromUrl(url);
 
   return {
     is_project: true,
@@ -432,25 +384,16 @@ function fallbackRegexExtract(text, url, hintCategory) {
     company,
     developer: company,
     project_url: url,
-    status,
+    status: "Active",
     category: hintCategory || "Capital Projects",
     summary: text.slice(0, 160) + "..."
   };
 }
 
-// Executes deep intelligent project evaluation via Cloudflare Workers AI
+// Executes deep intelligent project evaluation via Cloudflare Workers AI (Zero Hardcoding)
 async function extractProjectWithWorkersAI(ai, pageText, targetUrl, hintCategory) {
   if (!ai || typeof ai.run !== "function") {
     return fallbackRegexExtract(pageText, targetUrl, hintCategory);
-  }
-
-  // Detect corporate suffix for verified country origin (never guess from founder name)
-  let countryHint = "";
-  for (const item of CORPORATE_SUFFIX_COUNTRIES) {
-    if (item.regex.test(pageText)) {
-      countryHint = item.country;
-      break;
-    }
   }
 
   const systemPrompt = `You are an expert industrial intelligence analyst evaluating web pages to identify genuine capital infrastructure and development projects.
@@ -460,12 +403,12 @@ Determine if the provided webpage discusses a SPECIFIC, REAL-WORLD CAPITAL PROJE
 
 A VALID CAPITAL PROJECT MUST:
 1. Cover a concrete physical facility, building, plant, megafab, hyperscale data center, power plant, solar/wind farm, transmission line, or manufacturing site.
-2. Have an identifiable company, developer, or operator building or financing it (e.g. Blackstone, TSMC, Prologis, Microsoft, Intel).
+2. Have an identifiable company, developer, or operator building or financing it.
 3. Have a verifiable location (city, state, region, or country).
 4. Be in a real development lifecycle stage: Announced, Planning, Under Construction, or Operational.
 
 YOU MUST REJECT (set "is_project": false) IF:
-1. The page is macroeconomic analysis, industry trends, or market growth forecasts (e.g. "Data center growth outpaces economy", "Global construction outlook 2030", "AI capex analysis").
+1. The page is macroeconomic analysis, industry trends, or market growth forecasts.
 2. The page is selling a paid market research report or whitepaper.
 3. The page is an opinion article, stock recommendation, or general thought leadership without a specific physical project.
 4. The page is a corporate homepage, contact directory, hospital department list, or login portal.
@@ -476,8 +419,8 @@ Return ONLY a valid JSON object matching one of these two schemas:
 If VALID PROJECT:
 {
   "is_project": true,
-  "canonical_name": "Official specific name of the project or facility (e.g. Blackstone Aragon Hyperscale Campus, TSMC Fab 21)",
-  "company": "Company or developer building/operating the project (e.g. Blackstone, TSMC, Prologis)",
+  "canonical_name": "Official specific name of the project or facility",
+  "company": "Company or developer building/operating the project",
   "location": "City, State/Region, Country",
   "status": "Announced | Under Construction | Operational | Planning | Active",
   "category": "Industrial category (e.g. Data Center, Semiconductor Plant, Solar Farm, Infrastructure)",
@@ -487,12 +430,11 @@ If VALID PROJECT:
 If NOT A PROJECT:
 {
   "is_project": false,
-  "reason": "Specific reason (e.g. 'Macroeconomic research commentary on AI spending rather than a physical project announcement')"
+  "reason": "Specific reason explaining why it is not a specific physical capital project"
 }`;
 
   const userPrompt = `URL: ${targetUrl}
 ${hintCategory ? `Category Hint: ${hintCategory}` : ""}
-${countryHint ? `Corporate Registry Location: ${countryHint}` : ""}
 Webpage Text:
 """
 ${pageText.slice(0, 2500)}
@@ -525,7 +467,7 @@ Evaluate if this is a genuine capital project in JSON:`;
         };
       }
 
-      const companyVal = parsed.company || extractCompanyFromUrl(targetUrl, pageText);
+      const companyVal = parsed.company || extractCompanyFromUrl(targetUrl);
       return {
         is_project: true,
         canonical_name: parsed.canonical_name || extractProjectNameFromUrl(targetUrl),
@@ -534,7 +476,7 @@ Evaluate if this is a genuine capital project in JSON:`;
         project_url: targetUrl,
         status: parsed.status || "Active",
         category: parsed.category || hintCategory || "Capital Projects",
-        country: parsed.location || parsed.country || countryHint || null,
+        country: parsed.location || parsed.country || null,
         summary: parsed.summary || ""
       };
     }
@@ -547,49 +489,42 @@ Evaluate if this is a genuine capital project in JSON:`;
   return fallbackRegexExtract(pageText, targetUrl, hintCategory);
 }
 
-// NLP Query Classifier against 462 Primary Sectors
+// Dynamic NLP Query Classifier against 462 Primary Sectors (No hardcoded keyword branches)
 function classifyQuery(queryStr) {
   const qLower = queryStr.toLowerCase().trim();
+  const qWords = qLower.split(/\s+/).filter(w => w.length > 2);
 
-  // Check direct matches in primarySectors
+  let bestSector = null;
+  let maxScore = 0;
+
   for (const s of primarySectors) {
     const sLower = s.sector.toLowerCase();
     if (qLower.includes(sLower) || sLower.includes(qLower)) {
       return { category: s.sector, group: s.group, definition: s.definition };
     }
+
+    let score = 0;
+    for (const w of qWords) {
+      if (sLower.includes(w)) score++;
+    }
+    if (score > maxScore) {
+      maxScore = score;
+      bestSector = s;
+    }
   }
 
-  // Common industrial synonyms
-  if (/data\s*cent|hyperscale|cloud\s*campus|ai\s*cluster|server\s*farm/i.test(qLower)) {
-    return { category: "Data Center", group: "Technology & Data Infrastructure" };
-  }
-  if (/semicondu|chip|wafer\s*fab|microelectronics/i.test(qLower)) {
-    return { category: "Semiconductor Plant", group: "Electronics & High Technology" };
-  }
-  if (/solar|photovoltaic|pv\s*farm/i.test(qLower)) {
-    return { category: "Solar Photovoltaic Power Plant (PV)", group: "Power Generation & Clean Energy" };
-  }
-  if (/hydrogen|electrolyz/i.test(qLower)) {
-    return { category: "Hydrogen Production Plants", group: "Chemicals & Petrochemicals" };
-  }
-  if (/battery|gigafactory|bess|cathode/i.test(qLower)) {
-    return { category: "Battery Energy Storage", group: "Power Generation & Clean Energy" };
+  if (bestSector && maxScore > 0) {
+    return { category: bestSector.sector, group: bestSector.group, definition: bestSector.definition };
   }
 
   return { category: "Capital Projects", group: "General Industrial" };
 }
 
-// Location Extractor
+// Dynamic Location Extractor from Query (No hardcoded location list)
 function extractLocation(queryStr) {
-  const locations = [
-    "Northern Virginia", "Texas", "Arizona", "California", "Ohio", "Germany",
-    "United Kingdom", "Saudi Arabia", "United Arab Emirates", "India", "Malaysia",
-    "Singapore", "Japan", "United States", "Europe"
-  ];
-  for (const loc of locations) {
-    if (new RegExp(`\\b${loc}\\b`, "i").test(queryStr)) {
-      return loc;
-    }
+  const match = queryStr.match(/\b(?:in|across|near|around|for)\s+([A-Z][a-zA-Z\s,]{2,30})\b/i);
+  if (match && match[1]) {
+    return match[1].trim();
   }
   return "Global";
 }
