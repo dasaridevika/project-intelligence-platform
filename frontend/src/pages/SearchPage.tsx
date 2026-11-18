@@ -23,7 +23,7 @@ import {
   BarChart3,
   Cpu
 } from 'lucide-react';
-import { api, subscribeToSearchEvents } from '../api';
+import { api, subscribeToSearchEvents, isProductOrEquipment, getProjectDedupKey } from '../api';
 import { ActivityEvent, PrimarySector, QueryTelemetry, SearchResultItem, SearchRun } from '../types';
 import { SectorBadge, SectorSelector } from '../components/Sector';
 
@@ -196,16 +196,20 @@ export const SearchPage: React.FC = () => {
               const proj = ev.metadata?.project || (ev as any).project;
               const pStatus = (proj?.status || '').toLowerCase();
               const isNotUpcoming = pStatus.includes('operational') || pStatus.includes('completed') || pStatus.includes('commissioned');
-              if (proj && !isNotUpcoming && !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(proj.canonical_name || proj.title || '')) {
+              const isProduct = isProductOrEquipment(proj?.canonical_name || proj?.title, proj?.summary);
+              if (proj && !isNotUpcoming && !isProduct && !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(proj.canonical_name || proj.title || '')) {
                 let st = proj.status || 'Planning';
                 if (st === 'Active') st = 'Planning';
                 setDiscoveredResults((prev) => {
-                  const exists = prev.some(item => (item.project_id && item.project_id === proj.id) || item.project_url === proj.project_url);
+                  const pName = proj.canonical_name || proj.name || proj.title || 'Capital Project';
+                  const pDev = proj.company || proj.developer || 'Leading Developer';
+                  const dedupKey = getProjectDedupKey(pName, pDev);
+                  const exists = prev.some(item => getProjectDedupKey(item.canonical_name, item.company || item.developer) === dedupKey || item.project_url === proj.project_url);
                   return exists ? prev : [...prev, {
                     project_id: proj.id,
-                    canonical_name: proj.canonical_name || proj.name || proj.title || 'Capital Project',
-                    company: proj.company || proj.developer || 'Leading Developer',
-                    developer: proj.developer || proj.company || 'Leading Developer',
+                    canonical_name: pName,
+                    company: pDev,
+                    developer: pDev,
                     date: proj.date || 'Latest 2026',
                     project_url: proj.project_url,
                     category: proj.category || 'Capital Projects',

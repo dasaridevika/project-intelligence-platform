@@ -578,11 +578,47 @@ function extractCompanyDynamically(text, title, url) {
   if (title) {
     const brandMatch = title.match(/^([A-Z][a-zA-Z0-9&.-]{2,25})\s+(?:[A-Z][a-zA-Z0-9&.-]+\s+)?(?:Megafab|Gigafactory|Data Center|Semiconductor|Campus|Fabrication|Plant|Facility)\b/i);
     if (brandMatch && brandMatch[1] && isValidCompanyEntity(brandMatch[1])) {
-      return brandMatch[1];
+      return normalizeDeveloperName(brandMatch[1], url);
     }
   }
 
   return "Project Developer";
+}
+
+function normalizeDeveloperName(name, url) {
+  if (!name) return "Leading Developer";
+  let clean = name.trim();
+  const lower = clean.toLowerCase();
+  if (lower === "gf" || (url && url.includes(".gf.com"))) return "GlobalFoundries";
+  if (lower === "tsmc") return "TSMC";
+  if (lower === "asml") return "ASML";
+  if (lower === "amec") return "AMEC";
+  if (lower === "catl") return "CATL";
+  if (lower === "amd") return "AMD";
+  if (lower === "srp") return "SRP";
+  if (lower === "aws") return "AWS (Amazon Web Services)";
+  if (lower === "meta") return "Meta";
+  if (lower === "softbank") return "SoftBank";
+  if (clean.length < 3 && !["bp", "ge", "hp", "3m"].includes(lower)) {
+    return "Leading Developer";
+  }
+  return clean;
+}
+
+function getProjectDedupKey(name, developer) {
+  const normName = (name || "")
+    .toLowerCase()
+    .replace(/^(?:the|a|an)\s+/i, "")
+    .replace(/['’]s\b/gi, "")
+    .replace(/\b(?:project|campus|facility|plant|center|centre|park|farm|bess|phase\s*\d+|expansion|site)\b/gi, "")
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
+  const normDev = (developer || "")
+    .toLowerCase()
+    .replace(/\b(?:inc|corp|corporation|ltd|llc|limited|company|co|group|energy|technologies)\b/gi, "")
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
+  return `${normDev}_${normName}`;
 }
 
 function isGenericReportOrDirectory(url, name, company, summary) {
@@ -617,7 +653,12 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     u.includes("chipsupplychain.org/") ||
     u.includes("patentpc.com/blog/") ||
     u.includes("ciriontechnologies.com/en/data-center/resources/") ||
-    u.includes("hsc.com/resources/blog/")
+    u.includes("hsc.com/resources/blog/") ||
+    u.includes("/learn/") ||
+    u.includes("/academy/") ||
+    u.includes("/education/") ||
+    u.includes("mexc.co") ||
+    u.includes("binance.com")
   ) {
     return true;
   }
@@ -633,6 +674,39 @@ function isGenericReportOrDirectory(url, name, company, summary) {
   if (/^(?:all\s+.*projects?|global data center construction project|annual global ic fab|global ic fab|november \d{4} data center|q[1-4]\s+\d{4}\s+data center)$/i.test(n)) {
     return true;
   }
+
+  // 1. Tool, equipment, or machinery product launches (NOT a physical facility!)
+  if (
+    /\b(?:dicing system|wafer dicing|plasma system|inspection tool|lithography tool|stepper tool|etching tool|metrology tool|dual-station)\b/i.test(n) ||
+    /\b(?:launched its new product|first tool shipped|shipped to a key|commercial availability of.*system|new product, the|packaging customer)\b/i.test(s)
+  ) {
+    return true;
+  }
+
+  // 2. Wafer / Material / Substrate product announcements (NOT a physical plant!)
+  if (
+    /\b(?:single-crystal diamond|diamond wafer|silicon wafer product|wafer substrate|silicon carbide substrate)\b/i.test(n) ||
+    /\b(?:successful fabrication of the world's first.*diamond|fabrication of the world's first.*wafer)\b/i.test(s)
+  ) {
+    return true;
+  }
+
+  // 3. R&D initiatives, joint working groups, or technology roadmaps without a physical facility
+  if (
+    /\b(?:industry initiative|collaborative initiative|semiconductor industry initiative|technology initiative|consortium)\b/i.test(n) ||
+    /\b(?:launch of a collaborative initiative|collaborative initiative to transition)\b/i.test(s)
+  ) {
+    return true;
+  }
+
+  // 4. Macroeconomic equipment spending / forecast reports (e.g. SEMI $374B report)
+  if (
+    /\b(?:equipment spending|fab equipment spending|capex spending expected|fab spending expected|global.*spending)\b/i.test(n) ||
+    /\b(?:reports global.*spending|fab equipment spending expected|spending expected to total \$)\b/i.test(s)
+  ) {
+    return true;
+  }
+
   // Generic noun without named facility or valid developer
   if ((!c || c === "project developer" || c === "leading developer" || c === "unknown") &&
       /^(?:data center|hyperscale data center|data centre|power plant|solar farm|wind farm|battery gigafactory|semiconductor fab|semiconductor chemicals plant|aircraft manufacturing plant|industrial category)$/i.test(n)) {
@@ -659,24 +733,51 @@ function isGenericReportOrDirectory(url, name, company, summary) {
 
 function inferCategory(projectName, summary, hintCategory) {
   const combined = `${projectName || ""} ${summary || ""}`.toLowerCase();
-  if (/\b(?:semiconductor|fab|fabs|wafer|dram|cleanroom|microchip|foundry|tsmc|asml|micron|infineon|intel)\b/i.test(combined)) {
-    return "Semiconductor Manufacturing";
-  }
-  if (/\b(?:data center|data centre|hyperscale|colocation|cloud campus|stargate)\b/i.test(combined)) {
-    return "Hyperscale Data Center";
-  }
-  if (/\b(?:battery|gigafactory|lithium|energy storage|bess)\b/i.test(combined)) {
+
+  // 1. Battery Gigafactories & Cell Production (highest priority so "battery fab" or CATL/Gotion cell plant is Battery)
+  if (
+    /\b(?:gigafactory|giga-factory|battery plant|battery manufacturing|cell manufacturing|cell capacity|lfp battery|lithium-ion battery|battery cell|battery fab|catl|gotion|northvolt|forge nano)\b/i.test(combined) ||
+    (/\b(?:battery|lithium)\b/i.test(combined) && /\b(?:fab|factory|production|plant|gwh|cells?)\b/i.test(combined))
+  ) {
     return "Battery Gigafactory";
   }
-  if (/\b(?:solar|photovoltaic|pv farm)\b/i.test(combined)) {
+
+  // 2. Battery Energy Storage Systems (BESS)
+  if (/\b(?:bess|battery storage|energy storage site|storage facility|battery energy storage|mwh storage)\b/i.test(combined)) {
+    return "Battery Energy Storage";
+  }
+
+  // 3. Solar & Storage / Utility Solar
+  if (/\b(?:solar-plus-storage|solar and battery|solar & storage|solar\s*\+\s*battery)\b/i.test(combined)) {
+    return "Utility Solar & Storage";
+  }
+  if (/\b(?:solar park|solar farm|solar energy center|solar facility|solar installation|photovoltaic|pv farm|pv plant|solar project)\b/i.test(combined)) {
     return "Utility Solar";
   }
-  if (/\b(?:wind farm|offshore wind|turbine)\b/i.test(combined)) {
+
+  // 4. Wind Energy
+  if (/\b(?:wind farm|wind energy center|offshore wind|wind facility|wind turbine|wind park)\b/i.test(combined)) {
     return "Wind Energy";
   }
+
+  // 5. Hyperscale Data Centers
+  if (/\b(?:data center|data centre|hyperscale|colocation|cloud campus|stargate|ai compute campus|ai data center|technology campus|hyperion campus|colossus)\b/i.test(combined)) {
+    return "Hyperscale Data Center";
+  }
+
+  // 6. Semiconductor Manufacturing
+  if (
+    /\b(?:semiconductor|silicon wafer|wafer fab|megafab|cleanroom|microchip|foundry|tsmc|asml|micron|infineon|intel fab|globalfoundries)\b/i.test(combined) ||
+    (/\bfab\b/i.test(combined) && !/\bbattery\b/i.test(combined))
+  ) {
+    return "Semiconductor Manufacturing";
+  }
+
+  // 7. Clean Hydrogen
   if (/\b(?:hydrogen|electrolyzer|clean ammonia)\b/i.test(combined)) {
     return "Clean Hydrogen";
   }
+
   return hintCategory || "Capital Infrastructure";
 }
 
@@ -1072,9 +1173,13 @@ A VALID CAPITAL PROJECT MUST:
    - "Planning": In permitting, FEED, architectural design, environmental review, or procurement.
    - "Under Construction": Groundbreaking, foundation work, active construction, or ongoing campus buildout.
 
-REJECT:
+REJECT (MUST NOT EXTRACT):
 - Existing facilities already completed or operational in past years.
-- Educational guides, explainer articles, technology overviews, academic reports (e.g. "What is a Data Center", "How Chips Are Made", "Understanding Water Impact").
+- Tool, equipment, or machinery product launches (e.g. wafer dicing systems, plasma systems, lithography tools, metrology tools). Equipment shipped to customers is NOT a capital project!
+- Material, wafer, or substrate product announcements (e.g. single-crystal diamond wafers, substrate materials).
+- R&D partnerships, industry collaboration initiatives, or technology roadmaps without a physical facility buildout.
+- Macroeconomic equipment spending reports or capex forecasts (e.g. SEMI $374B equipment spending report).
+- Educational guides, explainer articles, technology overviews, academic reports, or crypto/finance learn blogs (e.g. mexc.co/learn).
 - Colocation marketplaces or vendor directories (e.g. datacenters.com).
 - Any candidate where developer is an author byline ("Written by..."), regulatory commission, or sentence fragment.
 
@@ -1518,6 +1623,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       if (!companyName || companyName === "Project Developer" || companyName === "Leading Developer" || isNewsPublisher(companyName)) {
         companyName = extractCompanyDynamically(matchedCandidate.text || matchedCandidate.snippet, matchedCandidate.title, cleanUrl);
       }
+      companyName = normalizeDeveloperName(companyName, cleanUrl);
       if (!isValidCompanyEntity(companyName)) {
         continue;
       }
@@ -1558,12 +1664,16 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     for (const item of uncachedCandidates.slice(0, 5)) {
       const fb = fallbackRegexExtract(item.text || item.snippet, item.cleanUrl, item.title, targetCategory);
       if (fb && fb.is_project !== false && isValidCompanyEntity(fb.company)) {
+        const normDev = normalizeDeveloperName(fb.company, item.cleanUrl);
+        if (isGenericReportOrDirectory(item.cleanUrl, fb.canonical_name || item.title, normDev, fb.summary)) {
+          continue;
+        }
         const projId = "proj-" + crypto.randomUUID().slice(0, 8);
         const projectRecord = {
           id: projId,
           canonical_name: fb.canonical_name || item.title,
-          company: fb.company,
-          developer: fb.company,
+          company: normDev,
+          developer: normDev,
           project_url: item.cleanUrl,
           status: fb.status || "Planning",
           category: inferCategory(fb.canonical_name || item.title, fb.summary, fb.category || targetCategory),
@@ -1581,10 +1691,29 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     }
   }
 
-  // 6. Ranking & Deduplication
-  addEvent("deduplication_completed", `Verified ${extractedProjects.length} valid project URLs with companies, dates & status.`);
+  // 6. Project Entity Deduplication (Zero Duplicate Projects Across Multiple News Sources)
+  const uniqueProjectMap = new Map();
 
-  const searchResults = extractedProjects.map((p, index) => ({
+  for (const proj of extractedProjects) {
+    if (!proj || !proj.canonical_name) continue;
+    if (isGenericReportOrDirectory(proj.project_url, proj.canonical_name, proj.company || proj.developer, proj.summary)) {
+      continue;
+    }
+    const key = getProjectDedupKey(proj.canonical_name, proj.company || proj.developer);
+    if (!uniqueProjectMap.has(key)) {
+      uniqueProjectMap.set(key, proj);
+    } else {
+      const existing = uniqueProjectMap.get(key);
+      if ((proj.summary?.length || 0) > (existing.summary?.length || 0)) {
+        uniqueProjectMap.set(key, { ...existing, summary: proj.summary, project_url: proj.project_url, date: proj.date || existing.date });
+      }
+    }
+  }
+
+  const finalProjects = Array.from(uniqueProjectMap.values());
+  addEvent("deduplication_completed", `Verified ${finalProjects.length} unique capital projects (deduplicated from ${extractedProjects.length} source records).`);
+
+  const searchResults = finalProjects.map((p, index) => ({
     id: "sr-" + crypto.randomUUID().slice(0, 8),
     search_run_id: searchRunId,
     project_id: p.id,

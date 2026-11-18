@@ -37,8 +37,8 @@ apiClient.interceptors.response.use(
 // DURABLE PERSISTENCE LAYER (Saves data across code updates & redeploys)
 // ==============================================================================
 
-const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v4';
-const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v4';
+const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v5';
+const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v5';
 
 function hasNonLatin(str?: string): boolean {
   if (!str) return false;
@@ -51,13 +51,38 @@ function isUpcomingStatus(status?: string): boolean {
   return !s.includes('operational') && !s.includes('completed') && !s.includes('commissioned');
 }
 
+export function isProductOrEquipment(name?: string, summary?: string): boolean {
+  if (!name && !summary) return false;
+  const combined = `${name || ''} ${summary || ''}`.toLowerCase();
+  return (
+    /\b(?:dicing system|wafer dicing|plasma system|inspection tool|single-crystal diamond|diamond wafer|fab equipment spending|industry initiative|collaborative initiative|spending expected to total)\b/i.test(combined) ||
+    /\b(?:launched its new product|first tool shipped|commercial availability|reports global.*spending|euv photomask)\b/i.test(combined)
+  );
+}
+
+export function getProjectDedupKey(name?: string, developer?: string): string {
+  const normName = (name || '')
+    .toLowerCase()
+    .replace(/^(?:the|a|an)\s+/i, '')
+    .replace(/['’]s\b/gi, '')
+    .replace(/\b(?:project|campus|facility|plant|center|centre|park|farm|bess|phase\s*\d+|expansion|site)\b/gi, '')
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+  const normDev = (developer || '')
+    .toLowerCase()
+    .replace(/\b(?:inc|corp|corporation|ltd|llc|limited|company|co|group|energy|technologies)\b/gi, '')
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+  return `${normDev}_${normName}`;
+}
+
 function getStoredProjects(): Project[] {
   try {
     const raw = localStorage.getItem(STORAGE_PROJECTS_KEY);
     if (!raw) return [];
     const list = JSON.parse(raw);
     return Array.isArray(list)
-      ? list.filter(p => p.canonical_name && !p.canonical_name.startsWith('Project from') && !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary) && isUpcomingStatus(p.status))
+      ? list.filter(p => p.canonical_name && !p.canonical_name.startsWith('Project from') && !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary) && isUpcomingStatus(p.status) && !isProductOrEquipment(p.canonical_name, p.summary))
       : [];
   } catch {
     return [];
@@ -66,11 +91,17 @@ function getStoredProjects(): Project[] {
 
 function saveStoredProjects(projects: Project[]) {
   try {
-    const cleanProjects = projects.filter(p => !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary) && isUpcomingStatus(p.status));
+    const cleanProjects = projects.filter(p => !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary) && isUpcomingStatus(p.status) && !isProductOrEquipment(p.canonical_name, p.summary));
     const existing = getStoredProjects();
     const map = new Map<string, Project>();
-    for (const p of existing) map.set(p.id, p);
-    for (const p of cleanProjects) map.set(p.id, p);
+    for (const p of existing) {
+      const key = getProjectDedupKey(p.canonical_name, p.company || p.developer);
+      map.set(key, p);
+    }
+    for (const p of cleanProjects) {
+      const key = getProjectDedupKey(p.canonical_name, p.company || p.developer);
+      map.set(key, p);
+    }
     const merged = Array.from(map.values()).slice(-500);
     localStorage.setItem(STORAGE_PROJECTS_KEY, JSON.stringify(merged));
   } catch (err) {
