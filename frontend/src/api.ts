@@ -236,7 +236,7 @@ export const api = {
             project_url: r.project_url || r.project?.project_url || (r.sources && r.sources[0]?.source_url) || '',
             category: r.category || 'Capital Projects',
             status: st,
-            date: r.date || r.project?.date || 'Latest 2026',
+            date: (r.date && r.date !== 'Latest 2026') ? r.date : (r.project?.date && r.project?.date !== 'Latest 2026') ? r.project.date : '',
             http_status: r.http_status || 200,
             summary: r.summary || '',
             created_at: new Date().toISOString(),

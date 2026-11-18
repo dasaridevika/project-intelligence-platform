@@ -850,28 +850,29 @@ function extractDateFromTextOrUrl(text, url, publishedDate) {
 
   // Check URL slug for date pattern: /2026/11/04 or -2026-11-04 or /2026-11
   if (url) {
-    const fullDate = url.match(/\b(202[56])[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12]\d|3[01])\b/);
+    const fullDate = url.match(/\b(202[4-9]|203\d)[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12]\d|3[01])\b/);
     if (fullDate) return `${fullDate[1]}-${fullDate[2]}-${fullDate[3]}`;
 
-    const monthYear = url.match(/\b(202[56])[-/](0[1-9]|1[0-2])\b/);
+    const monthYear = url.match(/\b(202[4-9]|203\d)[-/](0[1-9]|1[0-2])\b/);
     if (monthYear) return `${monthYear[1]}-${monthYear[2]}`;
 
-    const year = url.match(/\b(202[56])\b/);
+    const year = url.match(/\b(202[4-9]|203\d)\b/);
     if (year) return year[1];
   }
 
   // Check text snippet for formatted date: e.g. "November 2026", "Nov 15, 2026", "2026"
   if (text) {
-    const textDate = text.slice(0, 800).match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+202[56]\b/i);
+    const textDate = text.slice(0, 800).match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+(202[4-9]|203\d)\b/i);
     if (textDate) return textDate[0];
 
-    const myMatch = text.slice(0, 800).match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+202[56]\b/i);
+    const myMatch = text.slice(0, 800).match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+(202[4-9]|203\d)\b/i);
     if (myMatch) return myMatch[0];
 
-    if (text.includes("2026")) return "2026";
+    const yearMatch = text.slice(0, 800).match(/\b(202[5-9]|203\d)\b/);
+    if (yearMatch) return yearMatch[1];
   }
 
-  return "Latest 2026";
+  return "";
 }
 
 const LOCATION_DICTIONARY = {
@@ -1310,7 +1311,7 @@ Return ONLY a valid JSON object in this exact schema:
       "location": "City, State/Region, Country in English",
       "status": "Announced | Planning | Under Construction",
       "category": "Industrial category (e.g. Hyperscale Data Center, Semiconductor Manufacturing, Battery Gigafactory, Utility Solar)",
-      "date": "Target start, completion, or announcement date (e.g. 2026, 2027, Mid 2026)",
+      "date": "Target start, completion, or announcement date (e.g. 2026, 2027) if explicitly stated in candidate content, or empty string \"\" if not mentioned",
       "summary": "1-2 complete factual sentences in fluent English describing the project and buildout scope."
     }
   ]
@@ -1319,7 +1320,7 @@ Return ONLY a valid JSON object in this exact schema:
   let candidateBlocks = "";
   candidateItems.slice(0, 12).forEach((c, idx) => {
     const textSnippet = (c.text || c.snippet || c.title || "").slice(0, 800);
-    candidateBlocks += `\n[Candidate #${idx + 1}]\nURL: ${c.cleanUrl}\nTitle: ${c.title || "Capital Project"}\nDate: ${c.published_date || "2026"}\nContent: """\n${textSnippet}\n"""\n`;
+    candidateBlocks += `\n[Candidate #${idx + 1}]\nURL: ${c.cleanUrl}\nTitle: ${c.title || "Capital Project"}\nDate: ${c.published_date || ""}\nContent: """\n${textSnippet}\n"""\n`;
   });
 
   const userPrompt = `Evaluate the following ${Math.min(candidateItems.length, 12)} web discovery candidates for genuine upcoming capital projects (Category Hint: ${targetCategory || "All Categories"}):
@@ -1582,6 +1583,10 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   const useExa = requestedProviders.includes("exa") && env.EXA_API_KEY && env.EXA_API_KEY.length > 10;
   const useGoogle = requestedProviders.includes("google") && env.GOOGLE_SEARCH_API_KEY && env.GOOGLE_SEARCH_CX;
 
+  // Rolling window for recent discoveries (last 12 months)
+  const ROLLING_WINDOW_DAYS = 365;
+  const rollingStartPublishedDate = new Date(Date.now() - ROLLING_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
   // Priority 1: Exa AI Neural Search (Dispatches 1 POST request with full text)
   if (useExa) {
     const t0 = Date.now();
@@ -1597,7 +1602,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           query: effectiveSearchText,
           numResults: 25,
           useAutoprompt: true,
-          startPublishedDate: "2025-01-01T00:00:00.000Z",
+          startPublishedDate: rollingStartPublishedDate,
           contents: {
             text: { maxCharacters: 1500 }
           }
@@ -1634,7 +1639,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     const t0 = Date.now();
     queryTelemetry.google_search = 1;
     try {
-      const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(effectiveSearchText)}&num=10&lr=lang_en&hl=en`;
+      const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(effectiveSearchText)}&num=10&lr=lang_en&hl=en&dateRestrict=m12`;
       const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(6000) });
       const elapsed = Date.now() - t0;
       recordApiUsage("Google Custom Search", elapsed, gRes.ok);
@@ -1808,7 +1813,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         continue;
       }
 
-      let projectDate = aiP.date || matchedCandidate.published_date || "Latest 2026";
+      let rawDate = (aiP.date || matchedCandidate.published_date || "").trim();
+      let projectDate = /^(?:latest 2026|not specified|unknown|tbd|none|n\/a)$/i.test(rawDate) ? "" : rawDate;
       const projId = "proj-" + crypto.randomUUID().slice(0, 8);
       const projectRecord = {
         id: projId,
@@ -1849,6 +1855,9 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           continue;
         }
 
+        let fbRawDate = (fb.date || item.published_date || "").trim();
+        let fbDate = /^(?:latest 2026|not specified|unknown|tbd|none|n\/a)$/i.test(fbRawDate) ? "" : fbRawDate;
+
         const projId = "proj-" + crypto.randomUUID().slice(0, 8);
         const projectRecord = {
           id: projId,
@@ -1859,7 +1868,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           status: fb.status || "Planning",
           category: inferCategory(fb.canonical_name || item.title, fb.summary, fb.category || targetCategory),
           country: detectedLocation || "Not specified",
-          date: fb.date || item.published_date || "Latest 2026",
+          date: fbDate,
           http_status: 200,
           summary: cleanSummaryText(fb.summary || item.snippet || ""),
           created_at: new Date().toISOString()
@@ -1908,7 +1917,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     project_url: p.project_url,
     category: p.category,
     status: p.status,
-    date: p.date || "Latest 2026",
+    date: p.date && p.date !== "Latest 2026" ? p.date : "",
     http_status: p.http_status,
     summary: p.summary,
     relevance_score: Math.max(0.70, 0.98 - index * 0.05)
@@ -2249,7 +2258,7 @@ export default {
           project_url: p.project_url,
           category: p.category,
           status: p.status,
-          date: p.date || "Latest 2026",
+          date: p.date && p.date !== "Latest 2026" ? p.date : "",
           http_status: p.http_status,
           summary: p.summary,
           relevance_score: Math.max(0.70, 0.98 - index * 0.05)
@@ -2445,7 +2454,7 @@ export default {
       for (const p of list) {
         const name = `"${(p.canonical_name || '').replace(/"/g, '""')}"`;
         const comp = `"${(p.company || p.developer || '').replace(/"/g, '""')}"`;
-        const dt = `"${(p.date || 'Latest 2026').replace(/"/g, '""')}"`;
+        const dt = `"${(p.date && p.date !== 'Latest 2026' ? p.date : '').replace(/"/g, '""')}"`;
         const pUrl = `"${(p.project_url || '').replace(/"/g, '""')}"`;
         const cat = `"${p.category || ''}"`;
         const stat = `"${p.status || ''}"`;

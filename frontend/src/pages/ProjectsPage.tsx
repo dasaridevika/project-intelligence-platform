@@ -124,7 +124,7 @@ export const ProjectsPage: React.FC = () => {
                 canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',
                 company: r.company || r.developer || r.project?.company || r.project?.developer || 'Leading Developer',
                 developer: r.developer || r.company || r.project?.developer || r.project?.company || 'Leading Developer',
-                date: r.date || r.project?.date || 'Latest 2026',
+                date: (r.date && r.date !== 'Latest 2026') ? r.date : (r.project?.date && r.project?.date !== 'Latest 2026') ? r.project.date : '',
                 project_url: r.project_url || r.project?.project_url || '',
                 category: r.category || 'Capital Projects',
                 status: st,
@@ -649,10 +649,12 @@ export const ProjectsPage: React.FC = () => {
                 <div className="space-y-1.5 max-w-3xl">
                   <div className="flex flex-wrap items-center gap-2">
                     <SectorBadge sectorName={p.category} />
-                    <span className="text-[10px] text-slate-300 font-mono bg-slate-800 border border-slate-700/80 px-2 py-0.5 rounded flex items-center gap-1">
-                      <Calendar className="w-3 h-3 text-sky-400" />
-                      <span>{p.date || 'Latest 2026'}</span>
-                    </span>
+                    {p.date ? (
+                      <span className="text-[10px] text-slate-300 font-mono bg-slate-800 border border-slate-700/80 px-2 py-0.5 rounded flex items-center gap-1">
+                        <Calendar className="w-3 h-3 text-sky-400" />
+                        <span>{p.date}</span>
+                      </span>
+                    ) : null}
                     <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">
                       HTTP {p.http_status || 200} OK
                     </span>

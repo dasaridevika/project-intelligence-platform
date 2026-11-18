@@ -210,7 +210,7 @@ export const SearchPage: React.FC = () => {
                     canonical_name: pName,
                     company: pDev,
                     developer: pDev,
-                    date: proj.date || 'Latest 2026',
+                    date: (proj.date && proj.date !== 'Latest 2026') ? proj.date : '',
                     project_url: proj.project_url,
                     category: proj.category || 'Capital Projects',
                     status: st,
@@ -261,7 +261,7 @@ export const SearchPage: React.FC = () => {
     for (const p of discoveredResults) {
       const name = `"${(p.canonical_name || '').replace(/"/g, '""')}"`;
       const comp = `"${(p.company || p.developer || '').replace(/"/g, '""')}"`;
-      const dt = `"${(p.date || 'Latest 2026').replace(/"/g, '""')}"`;
+      const dt = `"${(p.date && p.date !== 'Latest 2026' ? p.date : '').replace(/"/g, '""')}"`;
       const u = `"${(p.project_url || '').replace(/"/g, '""')}"`;
       const cat = `"${(p.category || '').replace(/"/g, '""')}"`;
       const st = `"${(p.status || '').replace(/"/g, '""')}"`;
@@ -638,10 +638,12 @@ export const SearchPage: React.FC = () => {
                     <div className="flex items-start justify-between gap-2">
                       <SectorBadge sectorName={p.category} />
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="text-[10px] font-mono text-slate-300 px-2 py-0.5 rounded bg-slate-800 border border-slate-700/80 flex items-center gap-1">
-                          <Calendar className="w-3 h-3 text-sky-400" />
-                          <span>{p.date || 'Latest 2026'}</span>
-                        </span>
+                        {p.date ? (
+                          <span className="text-[10px] font-mono text-slate-300 px-2 py-0.5 rounded bg-slate-800 border border-slate-700/80 flex items-center gap-1">
+                            <Calendar className="w-3 h-3 text-sky-400" />
+                            <span>{p.date}</span>
+                          </span>
+                        ) : null}
                         <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-sky-500/10 text-sky-300 border border-sky-500/30">
                           {p.status}
                         </span>
