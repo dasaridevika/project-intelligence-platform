@@ -2131,6 +2131,7 @@ export default {
     // 6. Project Endpoints (/api/v1/projects)
     if (url.pathname === "/api/v1/projects" || url.pathname === "/api/projects") {
       const category = url.searchParams.get("category");
+      const group = url.searchParams.get("group");
       const location = url.searchParams.get("location");
       const status = url.searchParams.get("status");
       const search = url.searchParams.get("search")?.toLowerCase();
@@ -2140,9 +2141,52 @@ export default {
         const s = (p.status || "").toLowerCase();
         return !s.includes("operational") && !s.includes("completed") && !s.includes("commissioned");
       });
-      if (category && category !== "All Categories") {
-        list = list.filter(p => p.category.toLowerCase().includes(category.toLowerCase()));
+
+      // Filter by 462 Primary Sector taxonomy
+      if (category && category !== "All Categories" && category !== "all") {
+        const catLower = category.toLowerCase();
+        list = list.filter(p => {
+          const pCat = (p.category || "").toLowerCase();
+          const pName = (p.canonical_name || "").toLowerCase();
+          const pSum = (p.summary || "").toLowerCase();
+          if (pCat.includes(catLower) || catLower.includes(pCat)) return true;
+          // Semantic alias matching between 462 taxonomy and industry descriptions
+          if (catLower.includes("data center") && (pCat.includes("data center") || pCat.includes("hyperscale"))) return true;
+          if (catLower.includes("semiconductor") && (pCat.includes("semiconductor") || pCat.includes("wafer") || pCat.includes("fab") || pCat.includes("megafab"))) return true;
+          if (catLower.includes("battery") && (pCat.includes("battery") || pCat.includes("gigafactory") || pCat.includes("bess") || pCat.includes("energy storage"))) return true;
+          if (catLower.includes("solar") && pCat.includes("solar")) return true;
+          if (catLower.includes("wind") && pCat.includes("wind")) return true;
+          if (catLower.includes("hydrogen") && pCat.includes("hydrogen")) return true;
+          return pName.includes(catLower) || pSum.includes(catLower);
+        });
       }
+
+      // Filter by Taxonomy Group (15 official groups)
+      if (group && group !== "All Groups" && group !== "all") {
+        const groupLower = group.toLowerCase();
+        list = list.filter(p => {
+          const pCat = (p.category || "").toLowerCase();
+          const pSum = (p.summary || "").toLowerCase();
+          if (groupLower === "technology & data infrastructure") {
+            return pCat.includes("data center") || pCat.includes("semiconductor") || pCat.includes("technology");
+          }
+          if (groupLower === "batteries & energy storage") {
+            return pCat.includes("battery") || pCat.includes("energy storage") || pCat.includes("bess");
+          }
+          if (groupLower === "power & renewable energy") {
+            return pCat.includes("solar") || pCat.includes("wind") || pCat.includes("renewable") || pCat.includes("hydrogen");
+          }
+          if (groupLower === "chemicals & petrochemicals") {
+            return pCat.includes("chemical") || pCat.includes("petrochemical") || pSum.includes("chemical");
+          }
+          if (groupLower === "industrial manufacturing") {
+            return pCat.includes("manufacturing") || pCat.includes("fab") || pCat.includes("factory");
+          }
+          const groupSectors = primarySectors.filter(s => s.group.toLowerCase() === groupLower);
+          return groupSectors.some(s => pCat.includes(s.sector.toLowerCase()) || pSum.includes(s.sector.toLowerCase()));
+        });
+      }
+
       if (location && location !== "All Regions") {
         list = list.filter(p =>
           [p.location_country, p.location_state, p.location_city].some(
@@ -2151,7 +2195,7 @@ export default {
         );
       }
       if (status && status !== "All Statuses" && status !== "All Upcoming Statuses") {
-        list = list.filter(p => p.status.toLowerCase() === status.toLowerCase());
+        list = list.filter(p => (p.status || "").toLowerCase().includes(status.toLowerCase()));
       }
       if (search) {
         list = list.filter(p =>
@@ -2177,10 +2221,55 @@ export default {
 
     // GET /api/v1/projects/export (CSV Export)
     if (url.pathname === "/api/v1/projects/export") {
-      const list = Array.from(store.projects.values()).filter(p => {
+      const category = url.searchParams.get("category");
+      const group = url.searchParams.get("group");
+      const status = url.searchParams.get("status");
+      const search = url.searchParams.get("search")?.toLowerCase();
+
+      let list = Array.from(store.projects.values()).filter(p => {
         const s = (p.status || "").toLowerCase();
         return !s.includes("operational") && !s.includes("completed") && !s.includes("commissioned");
       });
+
+      if (category && category !== "All Categories" && category !== "all") {
+        const catLower = category.toLowerCase();
+        list = list.filter(p => {
+          const pCat = (p.category || "").toLowerCase();
+          if (pCat.includes(catLower) || catLower.includes(pCat)) return true;
+          if (catLower.includes("data center") && (pCat.includes("data center") || pCat.includes("hyperscale"))) return true;
+          if (catLower.includes("semiconductor") && (pCat.includes("semiconductor") || pCat.includes("wafer") || pCat.includes("fab"))) return true;
+          if (catLower.includes("battery") && (pCat.includes("battery") || pCat.includes("gigafactory") || pCat.includes("bess"))) return true;
+          if (catLower.includes("solar") && pCat.includes("solar")) return true;
+          if (catLower.includes("wind") && pCat.includes("wind")) return true;
+          if (catLower.includes("hydrogen") && pCat.includes("hydrogen")) return true;
+          return (p.canonical_name || "").toLowerCase().includes(catLower);
+        });
+      }
+
+      if (group && group !== "All Groups" && group !== "all") {
+        const groupLower = group.toLowerCase();
+        list = list.filter(p => {
+          const pCat = (p.category || "").toLowerCase();
+          if (groupLower === "technology & data infrastructure") return pCat.includes("data center") || pCat.includes("semiconductor");
+          if (groupLower === "batteries & energy storage") return pCat.includes("battery") || pCat.includes("energy storage") || pCat.includes("bess");
+          if (groupLower === "power & renewable energy") return pCat.includes("solar") || pCat.includes("wind") || pCat.includes("renewable") || pCat.includes("hydrogen");
+          const groupSectors = primarySectors.filter(s => s.group.toLowerCase() === groupLower);
+          return groupSectors.some(s => pCat.includes(s.sector.toLowerCase()));
+        });
+      }
+
+      if (status && status !== "All Statuses" && status !== "All Upcoming Statuses") {
+        list = list.filter(p => (p.status || "").toLowerCase().includes(status.toLowerCase()));
+      }
+
+      if (search) {
+        list = list.filter(p =>
+          p.canonical_name.toLowerCase().includes(search) ||
+          (p.developer && p.developer.toLowerCase().includes(search)) ||
+          p.category.toLowerCase().includes(search)
+        );
+      }
+
       let csv = "ID,Project Name,Company,Date,Valid URL,Category,Status,HTTP Status,Discovery Date\n";
       for (const p of list) {
         const name = `"${(p.canonical_name || '').replace(/"/g, '""')}"`;

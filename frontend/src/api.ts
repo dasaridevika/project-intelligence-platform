@@ -217,6 +217,7 @@ export const api = {
   // Projects
   listProjects: async (params?: {
     category?: string;
+    group?: string;
     location?: string;
     status?: string;
     developer?: string;
@@ -269,10 +270,11 @@ export const api = {
     }
   },
 
-  getExportCsvUrl: (category?: string, status?: string): string => {
+  getExportCsvUrl: (category?: string, status?: string, group?: string): string => {
     const q = new URLSearchParams();
     if (category) q.set('category', category);
     if (status) q.set('status', status);
+    if (group) q.set('group', group);
     return `/api/v1/projects/export?${q.toString()}`;
   },
 

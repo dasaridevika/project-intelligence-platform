@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -6,20 +6,28 @@ import {
   Calendar,
   Check,
   CheckCircle2,
+  ChevronDown,
   Copy,
   Database,
   Download,
   ExternalLink,
   Filter,
   Globe,
+  Info,
   Layers,
+  RotateCcw,
   Search,
   SlidersHorizontal,
+  Sparkles,
+  Tag,
   X
 } from 'lucide-react';
 import { api } from '../api';
-import { Project, SearchRun } from '../types';
-import { SectorBadge } from '../components/Sector';
+import { PrimarySector, Project, SearchRun } from '../types';
+import { SectorBadge, findPrimarySector } from '../components/Sector';
+import primarySectorsData from '../data/primary_sectors.json';
+
+const ALL_SECTORS = primarySectorsData as PrimarySector[];
 
 export const ProjectsPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -35,8 +43,56 @@ export const ProjectsPage: React.FC = () => {
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [selectedGroup, setSelectedGroup] = useState<string>('All Groups');
+  const [selectedSector, setSelectedSector] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [sectorSearchTerm, setSectorSearchTerm] = useState<string>('');
+  const [isSectorDropdownOpen, setIsSectorDropdownOpen] = useState<boolean>(false);
+  const sectorDropdownRef = useRef<HTMLDivElement>(null);
+
+  // 15 Taxonomy Groups with counts
+  const taxonomyGroups = useMemo(() => {
+    const map = new Map<string, number>();
+    ALL_SECTORS.forEach((s) => {
+      map.set(s.group, (map.get(s.group) || 0) + 1);
+    });
+    return [
+      { group: 'All Groups', count: ALL_SECTORS.length },
+      ...Array.from(map.entries())
+        .map(([group, count]) => ({ group, count }))
+        .sort((a, b) => a.group.localeCompare(b.group)),
+    ];
+  }, []);
+
+  // Sectors filtered by currently selected group & search term
+  const sectorsInGroup = useMemo(() => {
+    let list = ALL_SECTORS;
+    if (selectedGroup && selectedGroup !== 'All Groups') {
+      list = list.filter((s) => s.group === selectedGroup);
+    }
+    if (sectorSearchTerm.trim()) {
+      const term = sectorSearchTerm.toLowerCase();
+      list = list.filter(
+        (s) =>
+          s.sector.toLowerCase().includes(term) ||
+          s.group.toLowerCase().includes(term) ||
+          s.definition.toLowerCase().includes(term) ||
+          (s.keywords && s.keywords.some((k) => k.toLowerCase().includes(term)))
+      );
+    }
+    return list;
+  }, [selectedGroup, sectorSearchTerm]);
+
+  // Click outside to close dropdown
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (sectorDropdownRef.current && !sectorDropdownRef.current.contains(e.target as Node)) {
+        setIsSectorDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const copyToClipboard = (url: string) => {
     navigator.clipboard.writeText(url);
@@ -82,7 +138,8 @@ export const ProjectsPage: React.FC = () => {
         } else {
           const res = await api.listProjects({
             search: searchQuery || undefined,
-            category: categoryFilter || undefined,
+            category: selectedSector || undefined,
+            group: selectedGroup !== 'All Groups' ? selectedGroup : undefined,
             status: statusFilter || undefined,
           });
           const validProjects = (res.projects || []).filter((p: Project) => {
@@ -99,18 +156,108 @@ export const ProjectsPage: React.FC = () => {
       }
     }
     loadData();
-  }, [searchId, categoryFilter, statusFilter]);
+  }, [searchId, selectedSector, selectedGroup, statusFilter]);
 
-  const filteredProjects = projects.filter((p) => {
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      p.canonical_name.toLowerCase().includes(q) ||
-      (p.company && p.company.toLowerCase().includes(q)) ||
-      (p.developer && p.developer.toLowerCase().includes(q)) ||
-      (p.project_url && p.project_url.toLowerCase().includes(q))
+  // Active Selected Sector Metadata
+  const activeSectorItem = useMemo(() => {
+    if (!selectedSector) return null;
+    return ALL_SECTORS.find(
+      (s) => s.sector.toLowerCase() === selectedSector.toLowerCase() || s.id === selectedSector.toLowerCase()
     );
-  });
+  }, [selectedSector]);
+
+  // Comprehensive Project Filtering using 462-Sector Taxonomy + Status + Text Search
+  const filteredProjects = useMemo(() => {
+    return projects.filter((p) => {
+      // 1. Status Filter
+      if (statusFilter) {
+        const pStatus = (p.status || '').toLowerCase();
+        if (!pStatus.includes(statusFilter.toLowerCase())) return false;
+      }
+
+      // 2. Text Search (Project Name, Developer, URL, Summary)
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchesQuery =
+          p.canonical_name.toLowerCase().includes(q) ||
+          (p.company && p.company.toLowerCase().includes(q)) ||
+          (p.developer && p.developer.toLowerCase().includes(q)) ||
+          (p.project_url && p.project_url.toLowerCase().includes(q)) ||
+          (p.summary && p.summary.toLowerCase().includes(q)) ||
+          (p.category && p.category.toLowerCase().includes(q));
+        if (!matchesQuery) return false;
+      }
+
+      const pCat = (p.category || '').toLowerCase();
+      const pName = (p.canonical_name || '').toLowerCase();
+      const pSum = (p.summary || '').toLowerCase();
+
+      // 3. Exact 462 Primary Sector Filter
+      if (selectedSector) {
+        const s = ALL_SECTORS.find(
+          (item) => item.sector.toLowerCase() === selectedSector.toLowerCase() || item.id === selectedSector.toLowerCase()
+        );
+        if (s) {
+          const sName = s.sector.toLowerCase();
+          // Exact or substring match
+          if (pCat.includes(sName) || sName.includes(pCat)) return true;
+
+          // Semantic aliases across 462 sectors
+          if (sName === 'data center' && (pCat.includes('data center') || pCat.includes('hyperscale') || pName.includes('data center'))) return true;
+          if (sName === 'semiconductor plant' && (pCat.includes('semiconductor') || pCat.includes('wafer') || pCat.includes('fab') || pCat.includes('megafab'))) return true;
+          if (sName === 'semiconductor chemicals plant' && (pCat.includes('semiconductor chemical') || pSum.includes('semiconductor chemical'))) return true;
+          if (sName === 'battery energy storage' && (pCat.includes('energy storage') || pCat.includes('bess') || pSum.includes('bess') || pName.includes('bess'))) return true;
+          if (sName === 'lithium-ion (li-ion) battery production plant' && (pCat.includes('gigafactory') || pCat.includes('battery cell') || pCat.includes('battery fab') || pCat.includes('battery plant') || pCat.includes('lfp battery'))) return true;
+          if (sName.includes('solar') && (pCat.includes('solar') || pName.includes('solar') || pCat.includes('pv'))) return true;
+          if (sName.includes('wind') && (pCat.includes('wind') || pName.includes('wind'))) return true;
+          if (sName.includes('hydrogen') && (pCat.includes('hydrogen') || pName.includes('hydrogen'))) return true;
+
+          // Keyword match
+          if (s.keywords && s.keywords.some((k) => k.length > 3 && (pCat.includes(k) || pName.includes(k) || pSum.includes(k)))) {
+            return true;
+          }
+          return false;
+        }
+      }
+
+      // 4. Taxonomy Group Filter (15 Groups)
+      if (selectedGroup && selectedGroup !== 'All Groups') {
+        if (selectedGroup === 'Technology & Data Infrastructure') {
+          if (pCat.includes('data center') || pCat.includes('semiconductor') || pCat.includes('technology') || pCat.includes('hyperscale')) return true;
+        } else if (selectedGroup === 'Batteries & Energy Storage') {
+          if (pCat.includes('battery') || pCat.includes('energy storage') || pCat.includes('bess') || pCat.includes('gigafactory')) return true;
+        } else if (selectedGroup === 'Power & Renewable Energy') {
+          if (pCat.includes('solar') || pCat.includes('wind') || pCat.includes('renewable') || pCat.includes('hydrogen')) return true;
+        } else if (selectedGroup === 'Chemicals & Petrochemicals') {
+          if (pCat.includes('chemical') || pCat.includes('petrochemical') || pSum.includes('chemical')) return true;
+        } else if (selectedGroup === 'Industrial Manufacturing') {
+          if (pCat.includes('manufacturing') || pCat.includes('fab') || pCat.includes('factory')) return true;
+        }
+
+        // Check against sectors belonging to this group
+        const groupSectors = ALL_SECTORS.filter((s) => s.group === selectedGroup);
+        const hasGroupSector = groupSectors.some((gs) => {
+          const gsName = gs.sector.toLowerCase();
+          return pCat.includes(gsName) || pSum.includes(gsName);
+        });
+        if (hasGroupSector) return true;
+
+        return false;
+      }
+
+      return true;
+    });
+  }, [projects, statusFilter, searchQuery, selectedSector, selectedGroup]);
+
+  const isAnyFilterActive = searchQuery || statusFilter || selectedSector || selectedGroup !== 'All Groups';
+
+  const clearAllFilters = () => {
+    setSearchQuery('');
+    setSelectedGroup('All Groups');
+    setSelectedSector('');
+    setStatusFilter('');
+    setSectorSearchTerm('');
+  };
 
   const getStatusColor = (status: string) => {
     const s = status.toLowerCase();
@@ -133,7 +280,7 @@ export const ProjectsPage: React.FC = () => {
             {searchRun ? `"${searchRun.query}"` : 'Project URLs & Status Directory'}
           </h1>
           <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            Valid project URLs and lifecycle statuses fetched by Edge AI Workers.
+            Discover verified capital development projects classified against the 462 Industrial Sector Taxonomy.
           </p>
         </div>
 
@@ -149,7 +296,7 @@ export const ProjectsPage: React.FC = () => {
           )}
 
           <a
-            href={api.getExportCsvUrl(categoryFilter, statusFilter)}
+            href={api.getExportCsvUrl(selectedSector, statusFilter, selectedGroup !== 'All Groups' ? selectedGroup : undefined)}
             download="valid_project_urls.csv"
             className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-medium text-slate-200 transition-colors"
           >
@@ -159,47 +306,289 @@ export const ProjectsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Filter Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-900/60 border border-slate-800 p-3 rounded-xl">
-        <div className="relative">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by project title or URL..."
-            className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-sky-500"
-          />
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+      {/* Main Filter & 462-Sector Taxonomy Panel */}
+      <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 sm:p-5 space-y-4 shadow-xl">
+        {/* Top Filter Controls: Search & Status */}
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+          {/* Text Search */}
+          <div className="sm:col-span-8 relative">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search projects by facility title, developer name, URL, or scope..."
+              className="w-full pl-9 pr-8 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-sky-500 shadow-inner"
+            />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Status Select */}
+          <div className="sm:col-span-3">
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-sky-500"
+            >
+              <option value="">All Upcoming Statuses</option>
+              <option value="under construction">Under Construction</option>
+              <option value="announced">Announced</option>
+              <option value="planning">Planning</option>
+            </select>
+          </div>
+
+          {/* Reset Filters Button */}
+          <div className="sm:col-span-1 flex items-center justify-end">
+            <button
+              onClick={clearAllFilters}
+              disabled={!isAnyFilterActive}
+              className={`w-full h-full py-2.5 px-3 rounded-lg border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
+                isAnyFilterActive
+                  ? 'bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20'
+                  : 'bg-slate-950/40 border-slate-800 text-slate-600 cursor-not-allowed'
+              }`}
+              title="Reset all filters"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span className="sm:hidden">Reset</span>
+            </button>
+          </div>
         </div>
 
-        <div>
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-sky-500"
-          >
-            <option value="">All Categories</option>
-            <option value="Data Center">Data Center</option>
-            <option value="Semiconductor">Semiconductor</option>
-            <option value="Solar Power">Solar Power</option>
-            <option value="Renewable Energy">Renewable Energy</option>
-            <option value="EV & Battery">EV & Battery</option>
-            <option value="Hydrogen">Hydrogen</option>
-            <option value="Infrastructure">Infrastructure</option>
-          </select>
+        {/* Taxonomy Section Header */}
+        <div className="pt-2 border-t border-slate-800/80">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-sky-400" />
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-200">
+                Industrial Sector Taxonomy
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20 font-mono font-medium">
+                462 Primary Sectors • 15 Groups
+              </span>
+            </div>
+
+            {(selectedGroup !== 'All Groups' || selectedSector) && (
+              <button
+                onClick={() => {
+                  setSelectedGroup('All Groups');
+                  setSelectedSector('');
+                }}
+                className="text-[11px] text-sky-400 hover:text-sky-300 transition-colors flex items-center gap-1 self-start sm:self-auto"
+              >
+                <span>Clear Sector Filter</span>
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          {/* Taxonomy Selectors: 15 Groups Dropdown + 462 Sectors Searchable Dropdown */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* 1. Taxonomy Group Selector */}
+            <div>
+              <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                Filter by Taxonomy Group (15 Categories)
+              </label>
+              <select
+                value={selectedGroup}
+                onChange={(e) => {
+                  setSelectedGroup(e.target.value);
+                  setSelectedSector(''); // Reset sector when group changes
+                }}
+                className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-sky-500"
+              >
+                {taxonomyGroups.map((g) => (
+                  <option key={g.group} value={g.group}>
+                    {g.group === 'All Groups'
+                      ? `All Taxonomy Groups (${g.count} Sectors)`
+                      : `${g.group} (${g.count} Sectors)`}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 2. 462 Primary Sector Selector (Searchable & Grouped) */}
+            <div className="relative" ref={sectorDropdownRef}>
+              <label className="block text-[11px] font-medium text-slate-400 mb-1">
+                Filter by Specific Primary Sector ({sectorsInGroup.length} Available)
+              </label>
+
+              <button
+                type="button"
+                onClick={() => setIsSectorDropdownOpen(!isSectorDropdownOpen)}
+                className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-left text-xs text-slate-200 hover:border-slate-600 focus:outline-none focus:border-sky-500 transition-colors shadow-inner"
+              >
+                <span className="truncate">
+                  {selectedSector ? (
+                    <span className="font-semibold text-sky-300">{selectedSector}</span>
+                  ) : (
+                    <span className="text-slate-400">
+                      Select or search from {selectedGroup === 'All Groups' ? '462 primary sectors' : `${sectorsInGroup.length} ${selectedGroup} sectors`}...
+                    </span>
+                  )}
+                </span>
+                <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isSectorDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {/* Dropdown Menu */}
+              {isSectorDropdownOpen && (
+                <div className="absolute left-0 right-0 top-full mt-1.5 z-50 rounded-xl bg-slate-900 border border-slate-700 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+                  <div className="p-2.5 border-b border-slate-800 bg-slate-950/80">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={sectorSearchTerm}
+                        onChange={(e) => setSectorSearchTerm(e.target.value)}
+                        placeholder="Type to search 462 sectors (e.g. semiconductor, data center, battery, solar, hydrogen)..."
+                        className="w-full pl-8 pr-7 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-sky-500"
+                        autoFocus
+                      />
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      {sectorSearchTerm && (
+                        <button
+                          type="button"
+                          onClick={() => setSectorSearchTerm('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="max-h-60 overflow-y-auto divide-y divide-slate-800/60 p-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedSector('');
+                        setIsSectorDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs flex items-center justify-between transition-colors ${
+                        !selectedSector
+                          ? 'bg-sky-500/10 text-sky-400 font-semibold'
+                          : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'
+                      }`}
+                    >
+                      <span>All Sectors in {selectedGroup}</span>
+                      {!selectedSector && <Check className="w-3.5 h-3.5 text-sky-400" />}
+                    </button>
+
+                    {sectorsInGroup.map((sec) => (
+                      <button
+                        key={sec.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedSector(sec.sector);
+                          setIsSectorDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-xs flex items-center justify-between transition-colors ${
+                          selectedSector === sec.sector
+                            ? 'bg-sky-500/10 text-sky-400 font-semibold'
+                            : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'
+                        }`}
+                      >
+                        <div className="truncate pr-2">
+                          <p className="truncate font-medium">{sec.sector}</p>
+                          <p className="text-[10px] text-slate-500 truncate">{sec.group}</p>
+                        </div>
+                        {selectedSector === sec.sector && (
+                          <Check className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                        )}
+                      </button>
+                    ))}
+
+                    {sectorsInGroup.length === 0 && (
+                      <div className="p-4 text-center text-xs text-slate-400">
+                        No sectors matched "{sectorSearchTerm}".
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Active Sector Definition & Keywords Box */}
+          {activeSectorItem && (
+            <div className="mt-3 p-3.5 rounded-lg bg-slate-950/80 border border-slate-800 flex flex-col sm:flex-row sm:items-start justify-between gap-3 text-xs animate-in fade-in">
+              <div className="space-y-1.5 max-w-3xl">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/30">
+                    {activeSectorItem.group}
+                  </span>
+                  <span className="font-semibold text-white">
+                    {activeSectorItem.sector}
+                  </span>
+                </div>
+                <p className="text-slate-300 text-[11px] leading-relaxed">
+                  {activeSectorItem.definition}
+                </p>
+                {activeSectorItem.keywords && activeSectorItem.keywords.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1 pt-1">
+                    <span className="text-[10px] text-slate-500 font-medium">Keywords:</span>
+                    {activeSectorItem.keywords.slice(0, 8).map((kw) => (
+                      <span key={kw} className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 font-mono">
+                        #{kw}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={() => setSelectedSector('')}
+                className="shrink-0 text-[11px] text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition-colors flex items-center gap-1 self-start"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Remove</span>
+              </button>
+            </div>
+          )}
         </div>
 
-        <div>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 focus:outline-none focus:border-sky-500"
-          >
-            <option value="">All Upcoming Statuses</option>
-            <option value="under construction">Under Construction</option>
-            <option value="announced">Announced</option>
-            <option value="planning">Planning</option>
-          </select>
+        {/* Result Counter & Active Filter Pills */}
+        <div className="pt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 border-t border-slate-800/60">
+          <div className="flex items-center gap-2">
+            <span>
+              Showing <strong className="text-white font-semibold">{filteredProjects.length}</strong> of{' '}
+              <strong className="text-slate-300">{projects.length}</strong> verified projects
+            </span>
+            {selectedGroup !== 'All Groups' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 text-[11px]">
+                <span>Group: {selectedGroup}</span>
+                <button onClick={() => setSelectedGroup('All Groups')} className="hover:text-white">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {selectedSector && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px]">
+                <span>Sector: {selectedSector}</span>
+                <button onClick={() => setSelectedSector('')} className="hover:text-white">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {statusFilter && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[11px]">
+                <span>Status: {statusFilter}</span>
+                <button onClick={() => setStatusFilter('')} className="hover:text-white">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+          </div>
+
+          <span className="text-[11px] text-slate-500">
+            HTTP 200 OK • Non-Operational Only
+          </span>
         </div>
       </div>
 
@@ -212,17 +601,39 @@ export const ProjectsPage: React.FC = () => {
       ) : filteredProjects.length === 0 ? (
         <div className="text-center py-20 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
           <Globe className="w-10 h-10 text-slate-500 mx-auto opacity-50" />
-          <h3 className="text-base font-semibold text-white">No Project URLs Found</h3>
-          <p className="text-xs text-slate-400 max-w-sm mx-auto">
-            No projects matched your filters. Run a query to fetch valid project URLs and their status.
+          <h3 className="text-base font-semibold text-white">
+            {selectedSector
+              ? `No Projects Found for '${selectedSector}'`
+              : 'No Project URLs Found'}
+          </h3>
+          <p className="text-xs text-slate-400 max-w-md mx-auto">
+            {selectedSector
+              ? `No projects in the repository currently match the '${selectedSector}' taxonomy sector. Launch a real-time Discovery Search to discover upcoming projects in this sector.`
+              : 'No projects matched your selected taxonomy or status filters. Adjust your filters or launch a new discovery query.'}
           </p>
-          <button
-            onClick={() => navigate('/search')}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition-colors"
-          >
-            <Search className="w-3.5 h-3.5" />
-            <span>Launch Discovery Query</span>
-          </button>
+          <div className="flex items-center justify-center gap-2 pt-2">
+            {isAnyFilterActive && (
+              <button
+                onClick={clearAllFilters}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Clear All Filters</span>
+              </button>
+            )}
+            <button
+              onClick={() => {
+                const query = selectedSector || selectedGroup !== 'All Groups' ? (selectedSector || selectedGroup) : '';
+                navigate(`/search${query ? `?q=${encodeURIComponent(query)}` : ''}`);
+              }}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition-colors"
+            >
+              <Search className="w-3.5 h-3.5" />
+              <span>
+                {selectedSector ? `Discover ${selectedSector} Projects` : 'Launch Discovery Query'}
+              </span>
+            </button>
+          </div>
         </div>
       ) : (
         <div className="rounded-xl bg-slate-900 border border-slate-800 overflow-hidden shadow-xl">

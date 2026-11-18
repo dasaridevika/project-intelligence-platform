@@ -41,6 +41,42 @@ const GROUP_COLORS: Record<string, { bg: string; text: string; border: string }>
 
 const DEFAULT_COLOR = { bg: 'bg-sky-500/10', text: 'text-sky-400', border: 'border-sky-500/30' };
 
+export const findPrimarySector = (name: string): PrimarySector | undefined => {
+  if (!name) return undefined;
+  const lower = name.toLowerCase().trim();
+  const all = primarySectorsData as PrimarySector[];
+
+  // 1. Exact match by sector or id
+  const exact = all.find((s) => s.sector.toLowerCase() === lower || s.id === lower);
+  if (exact) return exact;
+
+  // 2. Semantic aliases between common project descriptions and official 462 taxonomy
+  if (lower.includes('data center') || lower.includes('data centre') || lower.includes('hyperscale')) {
+    return all.find((s) => s.sector === 'Data Center');
+  }
+  if (lower.includes('semiconductor') || lower.includes('wafer') || lower.includes('fab') || lower.includes('megafab')) {
+    return all.find((s) => s.sector === 'Semiconductor Plant');
+  }
+  if (lower.includes('battery storage') || lower.includes('bess') || lower.includes('energy storage')) {
+    return all.find((s) => s.sector === 'Battery Energy Storage');
+  }
+  if (lower.includes('gigafactory') || lower.includes('battery cell') || lower.includes('battery fab') || lower.includes('battery plant') || lower.includes('lfp battery')) {
+    return all.find((s) => s.sector === 'Lithium-ion (Li-ion) Battery Production Plant');
+  }
+  if (lower.includes('solar')) {
+    return all.find((s) => s.sector === 'Solar Photovoltaic Power Plant (PV)');
+  }
+  if (lower.includes('wind')) {
+    return all.find((s) => s.sector === 'Onshore Wind Power Plant');
+  }
+  if (lower.includes('hydrogen')) {
+    return all.find((s) => s.sector === 'Hydrogen Production Plants');
+  }
+
+  // 3. Substring match
+  return all.find((s) => s.sector.toLowerCase().includes(lower) || lower.includes(s.sector.toLowerCase()));
+};
+
 export const SectorBadge: React.FC<SectorBadgeProps> = ({
   sectorName,
   className = '',
@@ -48,9 +84,7 @@ export const SectorBadge: React.FC<SectorBadgeProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
 
-  const sectorItem = (primarySectorsData as PrimarySector[]).find(
-    (s) => s.sector.toLowerCase() === sectorName.toLowerCase() || s.id === sectorName.toLowerCase()
-  );
+  const sectorItem = findPrimarySector(sectorName);
 
   const groupName = sectorItem?.group || 'Primary Sector';
   const colors = GROUP_COLORS[groupName] || DEFAULT_COLOR;
