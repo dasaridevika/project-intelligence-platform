@@ -1472,57 +1472,6 @@ function extractLocation(queryStr) {
   return "Global";
 }
 
-// Resilient public web search fallback (activated if primary API providers return 0 results)
-async function searchWebFallback(query) {
-  try {
-    const fallbackUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query.trim() + " capital projects")}&kl=us-en`;
-    const res = await fetch(fallbackUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        Accept: "text/html"
-      },
-      signal: AbortSignal.timeout(5000)
-    });
-    if (!res.ok) return [];
-    const html = await res.text();
-    const urls = [];
-    const linkRegex = /<a[^>]+class="result__url"[^>]+href="([^"]+)"/gi;
-    const titleRegex = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
-    let match;
-    const titles = [];
-    while ((match = titleRegex.exec(html)) !== null && titles.length < 15) {
-      const cleanSnippet = match[1].replace(/<[^>]+>/g, "").trim();
-      if (!hasNonLatinScript(cleanSnippet)) {
-        titles.push(cleanSnippet);
-      }
-    }
-    let idx = 0;
-    while ((match = linkRegex.exec(html)) !== null && urls.length < 15) {
-      let rawHref = match[1];
-      if (rawHref.includes("uddg=")) {
-        const uddgMatch = rawHref.match(/uddg=([^&]+)/);
-        if (uddgMatch) rawHref = decodeURIComponent(uddgMatch[1]);
-      }
-      if (rawHref.startsWith("http")) {
-        const t = titles[idx] || "Capital Project Announcement";
-        if (!hasNonLatinScript(t)) {
-          urls.push({
-            url: rawHref,
-            title: t,
-            snippet: t,
-            published_date: extractDateFromTextOrUrl(t, rawHref),
-            provider: "web_fallback"
-          });
-        }
-        idx++;
-      }
-    }
-    return urls;
-  } catch (_) {
-    return [];
-  }
-}
-
 // Managed concurrency pool to maximize edge throughput without hitting Workers AI limits
 async function mapConcurrent(items, concurrency, fn) {
   const results = new Array(items.length);
@@ -1732,17 +1681,6 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     } catch (e) {
       recordApiUsage("Google Custom Search", Date.now() - t0, false);
       addEvent("provider_error", `Google Search network notice: ${e?.message || e}`);
-    }
-  }
-
-  // Fallback (only if 0 candidates from primary APIs)
-  if (candidateUrls.length === 0) {
-    queryTelemetry.fallback_search = 1;
-    addEvent("provider_started", `Engaging public discovery fallback.`);
-    const fallbackResults = await searchWebFallback(effectiveSearchText);
-    if (fallbackResults.length > 0) {
-      candidateUrls = fallbackResults;
-      addEvent("provider_completed", `Fallback discovery retrieved ${candidateUrls.length} candidate URLs.`);
     }
   }
 
