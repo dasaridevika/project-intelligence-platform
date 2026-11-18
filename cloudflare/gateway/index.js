@@ -10,7 +10,7 @@
  * - Static React SPA Hosting: Serves production frontend assets with single-page routing
  */
 
-import primarySectors from "../../frontend/src/data/primary_sectors.json";
+import primarySectors from "../../frontend/src/data/primary_sectors.json" with { type: "json" };
 
 // ==============================================================================
 // 1. CONSTANTS, FILTERS & DOMAIN REPUTATION BLACKLIST
@@ -888,6 +888,49 @@ function isGenericReportOrDirectory(url, name, company, summary) {
   return false;
 }
 
+function cleanProjectName(rawName, developer) {
+  if (!rawName || typeof rawName !== "string") return "";
+  let name = rawName.trim();
+
+  // 1. Remove trailing news publisher / site branding (e.g. ' - The Asia Business Daily', ' | Reuters', ' - Electrek')
+  name = name.replace(/\s*[-–—|]\s*(?:The\s+)?(?:Asia Business Daily|Reuters|Bloomberg|Electrek|PV Magazine|Industrial Info|Power Systems|Renewables Now|Energy Storage News|TechTimes|Korea Herald|Chosun|Data Center Dynamics|Channel NewsAsia|SemiWiki|CleanTechnica).*$/i, "");
+
+  // 2. Strip bracketed leads (e.g. '[Chip Talk] ', '[Exclusive] ', '[Breaking] ')
+  name = name.replace(/^\[[^\]]+\]\s*/i, "");
+
+  // 3. Strip superlative news lead-ins (e.g. 'One of North America’s largest solar farms... in Texas')
+  name = name.replace(/^(?:one\s+of\s+(?:north\s+america['’]s|the\s+world['’]s|the\s+nation['’]s|the\s+u\.s\.['’]s|the\s+us['’]s)\s+(?:largest|biggest|most)\s+)/i, "");
+
+  // 4. Action verb phrases in headlines:
+  // e.g. 'Panamint Secures Loans for Phase 1 of 958-MW Texas Solar Project'
+  // e.g. 'GlobalFoundries selected to operate two new semiconductor fabs in New ...'
+  const actionPattern = /^(?:([A-Z][a-zA-Z0-9\s,&.'-]{1,35}?)\s+)?(?:secures\s+(?:(?:construction\s+|debt\s+|tax\s+equity\s+)?(?:loans?|financing|funding|approval|green\s+light)|permits?)|wins\s+(?:approval|bid|contract)|receives\s+approval|gets\s+(?:approval|green\s+light)|selected\s+to\s+(?:operate|build|develop)|announces\s+(?:plans\s+(?:for|to\s+build)|construction\s+of|development\s+of|new)|plans\s+to\s+build|breaks\s+ground\s+on|begins\s+construction\s+of|starts\s+construction\s+(?:on|of)|commences\s+construction\s+(?:on|of)|closes\s+(?:[\$€£]?[\d.]+\s*(?:b|m|billion|million)?\s+)?financing\s+for|signs\s+(?:ppa|agreement|deal)\s+for|inks\s+(?:ppa|deal|agreement)\s+for|advances\s+(?:plans\s+for)?)(?:\s+(?:for|on|of|in|to))?\s+(.+)$/i;
+
+  const m = name.match(actionPattern);
+  if (m) {
+    const leadEntity = (m[1] || "").trim();
+    let rest = m[2].trim();
+    rest = rest.replace(/^(?:the|a|an)\s+/i, "");
+    rest = rest.charAt(0).toUpperCase() + rest.slice(1);
+
+    const ent = leadEntity || (developer ? developer.split(/\s+/)[0] : "");
+    if (ent && !new RegExp("\\b" + ent + "\\b", "i").test(rest)) {
+      name = ent + " " + rest;
+    } else {
+      name = rest;
+    }
+  }
+
+  // 5. Clean up any trailing status action clauses if present
+  name = name.replace(/\s+(?:just came online|came online|comes online|go fully operational|goes fully operational|went fully operational|is now operational|is now open|opens its doors|goes live)\b.*$/i, "");
+
+  // 6. Clean up trailing cut-off prepositions and ellipses
+  name = name.replace(/\s+(?:in|at|on|for|with|of|to)\s*(?:[A-Z][a-zA-Z\s]*)?(?:\.{2,}|…)$/i, "");
+  name = name.replace(/(?:\.{2,}|…)$/, "");
+
+  return name.trim();
+}
+
 function inferCategory(projectName, summary, hintCategory) {
   const combined = `${projectName || ""} ${summary || ""}`.toLowerCase();
 
@@ -899,25 +942,34 @@ function inferCategory(projectName, summary, hintCategory) {
     return "Battery Gigafactory";
   }
 
-  // 2. Battery Energy Storage Systems (BESS)
+  // 2. Concentrated Solar Power (CSP) - strictly requires explicit thermal/CSP indicators
+  if (
+    /\b(?:concentrated solar|solar thermal|heliostats?|parabolic trough|molten salt tower|solar tower power)\b/i.test(combined) ||
+    (/\bcsp\b/i.test(combined) && !/\b(?:chip-scale|customer|cloud)\b/i.test(combined))
+  ) {
+    return "Concentrated Solar Power (CSP)";
+  }
+
+  // 3. Solar Photovoltaic (PV) & Solar + Storage (including solar farms, PV plants, solar-plus-storage)
+  if (
+    /\b(?:solar-plus-storage|solar and battery|solar & battery|solar and storage|solar & storage|solar\s*\+\s*battery|solar\s*\+\s*storage)\b/i.test(combined) ||
+    /\b(?:solar park|solar farm|solar energy center|solar facility|solar installation|photovoltaic|pv farm|pv plant|solar project|utility solar)\b/i.test(combined) ||
+    /\bsolar\b/i.test(combined)
+  ) {
+    return "Solar Photovoltaic Power Plant (PV)";
+  }
+
+  // 4. Standalone Battery Energy Storage Systems (BESS)
   if (/\b(?:bess|battery storage|energy storage site|storage facility|battery energy storage|mwh storage)\b/i.test(combined)) {
     return "Battery Energy Storage";
   }
 
-  // 3. Solar & Storage / Utility Solar
-  if (/\b(?:solar-plus-storage|solar and battery|solar & storage|solar\s*\+\s*battery)\b/i.test(combined)) {
-    return "Utility Solar & Storage";
-  }
-  if (/\b(?:solar park|solar farm|solar energy center|solar facility|solar installation|photovoltaic|pv farm|pv plant|solar project)\b/i.test(combined)) {
-    return "Utility Solar";
-  }
-
-  // 4. Wind Energy
+  // 5. Wind Energy
   if (/\b(?:wind farm|wind energy center|offshore wind|wind facility|wind turbine|wind park)\b/i.test(combined)) {
     return "Wind Energy";
   }
 
-  // 5. Semiconductor Manufacturing (Checked before Data Center so "Micron DRAM fabs for AI data centers" is Semiconductor)
+  // 6. Semiconductor Manufacturing (Checked before Data Center so "Micron DRAM fabs for AI data centers" is Semiconductor)
   if (
     /\b(?:semiconductor|silicon wafer|wafer fab|megafab|cleanroom|microchip|chip factory|memory chip|foundry|tsmc|asml|micron|infineon|intel fab|globalfoundries|sk hynix)\b/i.test(combined) ||
     (/\bfabs?\b/i.test(combined) && !/\bbattery\b/i.test(combined) && !/\bdata\s*center\s*(?:campus|project|facility)\b/i.test(projectName.toLowerCase()))
@@ -925,12 +977,12 @@ function inferCategory(projectName, summary, hintCategory) {
     return "Semiconductor Manufacturing";
   }
 
-  // 6. Hyperscale Data Centers
+  // 7. Hyperscale Data Centers
   if (/\b(?:data center|data centre|hyperscale|colocation|cloud campus|stargate|ai compute campus|ai data center|technology campus|hyperion campus|colossus)\b/i.test(combined)) {
     return "Hyperscale Data Center";
   }
 
-  // 7. Clean Hydrogen
+  // 8. Clean Hydrogen
   if (/\b(?:hydrogen|electrolyzer|clean ammonia)\b/i.test(combined)) {
     return "Clean Hydrogen";
   }
@@ -941,21 +993,22 @@ function inferCategory(projectName, summary, hintCategory) {
 function isCompletedOrOperationalFacility(url, title, summary, text) {
   const u = (url || "").toLowerCase();
   const t = (title || "").toLowerCase();
-  const s = (summary || "").toLowerCase();
-  const b = (text || "").toLowerCase();
+  const s = ((summary || "") + " " + (text || "")).toLowerCase();
 
   // 1. URL slug patterns indicating the facility has already opened/completed or launched
   if (
     /(?:-|_|\/)(?:is-open|now-open|opens|opened|launches-operations|begins-operations|goes-online|inaugurated|commissioned|completed|entry-into)(?:-|_|\/|\.|$)/i.test(u) ||
-    /(?:-|_|\/)(?:launches|launched)(?:-[a-z0-9-]+)?-(?:data-cent(?:er|re)|fab|plant|facility|campus|hub)(?:-|_|\/|\.|$)/i.test(u) ||
-    /(?:-|_|\/)(?:opens|opened)-(?:[a-z0-9-]+-)?(?:data-cent(?:er|re)|fab|plant|facility|campus|hub)(?:-|_|\/|\.|$)/i.test(u)
+    /(?:-|_|\/)(?:came-online|comes-online|just-came-online|goes-online|go-fully-operational|goes-fully-operational|went-fully-operational|fully-operational|go-operational|goes-operational|went-operational)(?:-|_|\/|\.|$)/i.test(u) ||
+    /(?:-|_|\/)(?:launches|launched)(?:-[a-z0-9-]+)?-(?:data-cent(?:er|re)|fab|plant|facility|campus|hub|solar|farm)(?:-|_|\/|\.|$)/i.test(u) ||
+    /(?:-|_|\/)(?:opens|opened)-(?:[a-z0-9-]+-)?(?:data-cent(?:er|re)|fab|plant|facility|campus|hub|solar|farm)(?:-|_|\/|\.|$)/i.test(u)
   ) {
     return true;
   }
 
-  // 2. Title & Headline patterns indicating opened/completed status or commercial launch
+  // 2. Title & Headline patterns indicating opened/completed status or commercial operation
   if (
     /\b(?:is open|now open|has opened|opens data cent(?:er|re)|opened its|opens new|officially opened|opens megafab|opens plant|inaugurated|inaugurates|commenced commercial operations|now operational|commercial operation started|begins operations|went online|starts operations|has been commissioned|completes construction of)\b/i.test(t) ||
+    /\b(?:came online|just came online|comes online|go fully operational|goes fully operational|went fully operational|go operational|goes operational|went operational|fully operational|now fully operational|is fully operational)\b/i.test(t) ||
     /\b(?:launches|launched)\s+(?:(?:third|fourth|second|first|new|its|another)\s+)?(?:data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(t) ||
     /\b(?:launches\s+data\s*cent(?:er|re)|launched\s+data\s*cent(?:er|re))\b/i.test(t) ||
     /\bmarking\s+its\s+entry\s+into\b/i.test(t)
@@ -966,6 +1019,7 @@ function isCompletedOrOperationalFacility(url, title, summary, text) {
   // 3. Summary & content patterns
   if (
     /\b(?:is now open|has officially opened|opened its doors|opened its factory|opened its fab|opened its plant|opened its facility|began operations|started commercial operations|is now operational|facility is open|operational since|first data cent(?:er|re) built .* is open)\b/i.test(s) ||
+    /\b(?:came online|just came online|comes online|go fully operational|goes fully operational|went fully operational|go operational|goes operational|went operational|fully operational|now fully operational|is fully operational)\b/i.test(s) ||
     /\b(?:launches|launched)\s+(?:(?:third|fourth|second|first|new|its|another)\s+)?(?:data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(s) ||
     /\bmarking\s+its\s+entry\s+into\b/i.test(s) ||
     /\b(?:opened (?:its\s+)?(?:factory|fab|plant|facility)\s+in\s+(?:202[0-4]|201\d))\b/i.test(s) ||
@@ -985,8 +1039,9 @@ function extractStatusFromText(text, url) {
 
   // Priority 1: If explicitly completed, opened, or operational, drop it immediately!
   if (
-    isCompletedOrOperationalFacility(u, "", t, "") ||
-    /\b(?:completed|operational|commissioned|opened|inaugurated|online|in service|commercial operation|is open|now open|has opened|opens data cent(?:er|re)|began operations)\b/i.test(t)
+    isCompletedOrOperationalFacility(u, "", "", t) ||
+    /\b(?:completed|operational|commissioned|opened|inaugurated|online|in service|commercial operation|is open|now open|has opened|opens data cent(?:er|re)|began operations)\b/i.test(t) ||
+    /\b(?:came online|just came online|comes online|go fully operational|goes fully operational|went fully operational|go operational|goes operational|went operational|fully operational|now fully operational|is fully operational)\b/i.test(t)
   ) {
     return null;
   }
@@ -1389,7 +1444,7 @@ function fallbackRegexExtract(text, url, titleHint, hintCategory) {
 
   // Check for facility / plant / project indicators
   const facilityMatch = (titleHint || text.slice(0, 400)).match(/([A-Z][a-zA-Z0-9\s,&-]{3,50}(?:Project|Plant|Facility|Campus|Center|Centre|Park|Fab|Corridor|Hub|Farm|Station))/);
-  const canonical_name = facilityMatch ? facilityMatch[1].trim() : (titleHint || extractProjectNameFromUrl(url));
+  const rawCanonical = facilityMatch ? facilityMatch[1].trim() : (titleHint || extractProjectNameFromUrl(url));
 
   const company = extractCompanyDynamically(text, titleHint, url);
   if (hasNonLatinScript(company)) {
@@ -1399,14 +1454,23 @@ function fallbackRegexExtract(text, url, titleHint, hintCategory) {
     };
   }
 
-  if (!canonical_name || canonical_name.length < 5 || canonical_name === "Capital Project" || hasNonLatinScript(canonical_name) || isGenericReportOrDirectory(url, canonical_name, company)) {
+  const canonical_name = cleanProjectName(rawCanonical, company);
+
+  if (!canonical_name || canonical_name.length < 5 || canonical_name === "Capital Project" || hasNonLatinScript(canonical_name) || isGenericReportOrDirectory(url, canonical_name, company) || isGenericReportOrDirectory(url, rawCanonical, company)) {
     return {
       is_project: false,
       reason: "Industry market report, educational article, or general tracker, not a specific physical project facility"
     };
   }
 
-  const projectStatus = extractStatusFromText(text);
+  if (isCompletedOrOperationalFacility(url, canonical_name, "", text) || isCompletedOrOperationalFacility(url, rawCanonical, "", text)) {
+    return {
+      is_project: false,
+      reason: "Facility is already completed or operational. Platform strictly requires upcoming capital projects only."
+    };
+  }
+
+  const projectStatus = extractStatusFromText(text, url);
   if (!projectStatus) {
     return {
       is_project: false,
@@ -1421,7 +1485,7 @@ function fallbackRegexExtract(text, url, titleHint, hintCategory) {
     developer: company,
     project_url: url,
     status: projectStatus,
-    category: hintCategory || "Capital Projects",
+    category: inferCategory(canonical_name, text, hintCategory),
     date: extractDateFromTextOrUrl(text, url),
     summary: cleanSummaryText(text.slice(0, 250))
   };
@@ -1590,10 +1654,11 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
           companyVal = extractCompanyDynamically(pageText, hintTitle, targetUrl);
         }
 
-        let projectName = item.canonical_name;
-        if (!projectName || projectName.startsWith("Project from") || projectName.length < 5) {
-          projectName = hintTitle || extractProjectNameFromUrl(targetUrl);
+        let rawProjectName = item.canonical_name;
+        if (!rawProjectName || rawProjectName.startsWith("Project from") || rawProjectName.length < 5) {
+          rawProjectName = hintTitle || extractProjectNameFromUrl(targetUrl);
         }
+        let projectName = cleanProjectName(rawProjectName, companyVal);
 
         if ((!companyVal || companyVal === "Project Developer" || companyVal === "Leading Developer") && projectName) {
           const nameCompany = extractCompanyDynamically("", projectName, targetUrl);
@@ -1603,7 +1668,14 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
         }
 
         if (hasNonLatinScript(projectName) || hasNonLatinScript(companyVal)) continue;
-        if (isGenericReportOrDirectory(targetUrl, projectName, companyVal, item.summary)) continue;
+        if (isGenericReportOrDirectory(targetUrl, projectName, companyVal, item.summary) || isGenericReportOrDirectory(targetUrl, rawProjectName, companyVal, item.summary)) continue;
+        if (
+          isCompletedOrOperationalFacility(targetUrl, projectName, item.summary, pageText) ||
+          isCompletedOrOperationalFacility(targetUrl, rawProjectName, item.summary, pageText) ||
+          isCompletedOrOperationalFacility(targetUrl, hintTitle, item.summary, pageText)
+        ) {
+          continue;
+        }
         if (!isValidCompanyEntity(companyVal)) continue;
 
         let projectDate = item.date;
@@ -1669,7 +1741,7 @@ REJECT (MUST NOT EXTRACT):
 - DATA/STATISTICS PUBLISHERS AS DEVELOPER: Candidates where the company is a government statistical agency, market research platform, energy data tracker, or publisher (e.g. EIA, Enerdatics, DMC Education, S&P Global, FERC, Wood Mackenzie, Rystad Energy, Statista) rather than a commercial project owner/developer erecting the facility. If no specific corporate owner/developer is named, REJECT IT.
 - NATIONAL MACRO POLICY TARGETS & ROADMAPS: Broad macroeconomic government announcements, national policy initiatives, or multi-year GW targets (e.g. "South Korea announces $919bn investment into three mega projects, plans to build 18.4GW worth of data centers by 2035", "Government of South Korea"). A national government announcing a 10-year policy target or multi-billion funding roadmap is a public policy goal, NOT an individual physical development with a developer!
 - REGULATORY & GRID REVIEW ARTICLES: Articles primarily discussing power supply rules, grid reviews, zoning regulations, or regulatory hurdles (e.g. "Korea data center power rules raise Seoul area bar... sites under 10 MW skip grid review"). These are regulatory news reports, NOT project announcements!
-- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING (e.g. "Singapore's first data center ... is open", "Nxera opens data centre", "opens new facility", "began commercial operations", "facility opened today", "now operational", "commissioned"). Also REJECT facilities described as "launches data center", "launches its third data center in [city]", "launches new plant", or "marking its entry into [country]". In tech and data centers, "launches data center" means the facility is finished, open, and accepting customer workloads! These are OPERATIONAL and MUST BE REJECTED. NEVER label "launches data center" or an already opened facility as "Under Construction"! We ONLY track upcoming pipeline under development (Announced, Planning, Under Construction).
+- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING (e.g. "Singapore's first data center ... is open", "Nxera opens data centre", "opens new facility", "began commercial operations", "facility opened today", "now operational", "commissioned", "came online", "just came online", "went online", "goes online", "go fully operational", "goes fully operational", "went fully operational", "now fully operational", "energized"). Also REJECT facilities described as "launches data center", "launches its third data center in [city]", "launches new plant", or "marking its entry into [country]". In energy, solar, power, and tech, "came online", "just came online", "went online", and "go fully operational" mean the power plant, solar farm, or facility is completed and operating! These are OPERATIONAL and MUST BE REJECTED. NEVER label "just came online", "came online", or "go fully operational" as "Under Construction"! We ONLY track upcoming pipeline under development (Announced, Planning, Under Construction).
 - Tool, equipment, or machinery product launches (e.g. wafer dicing systems, plasma systems, lithography tools, metrology tools). Equipment shipped to customers is NOT a capital project!
 - Material, wafer, or substrate product announcements (e.g. single-crystal diamond wafers, substrate materials).
 - R&D partnerships, industry collaboration initiatives, or technology roadmaps without a physical facility buildout.
@@ -1686,7 +1758,7 @@ Return ONLY a valid JSON object in this exact schema:
     {
       "candidate_index": 1,
       "source_url": "The exact URL copied verbatim from the [Candidate #ID] block above where this project is described",
-      "canonical_name": "Official project or facility name in English",
+      "canonical_name": "Official, clean project or facility name in English (e.g. 'Desert Pine Solar and Storage', 'Panamint Solar Project Phase 1', 'Sequoia Solar Farm'). MUST NOT be a journalistic news headline or sentence, and MUST NOT include action verbs or headlines like 'Secures Loans for', 'Secures Financing for', 'Wins Approval for', 'Breaks Ground on', 'Go Fully Operational', or 'just came online'.",
       "company": "Specific corporate developer or owner building the project in English",
       "location": "City, State/Region, Country in English",
       "status": "Announced | Planning | Under Construction",
@@ -1754,22 +1826,70 @@ Output your JSON analysis now:`;
 
 // Dynamic NLP Query Classifier against 462 Primary Sectors (No hardcoded keyword branches)
 function classifyQuery(queryStr) {
-  const qLower = queryStr.toLowerCase().trim();
-  const qWords = qLower.split(/\s+/).filter(w => w.length > 2);
+  const qLower = (queryStr || "").toLowerCase().trim();
+  if (!qLower) return { category: "Capital Projects", group: "General Industrial" };
+
+  // Common high-volume sector shortcuts when query is short / generic
+  if (/\b(?:concentrated\s+solar|solar\s+thermal|heliostats?|parabolic\s+trough|csp)\b/i.test(qLower)) {
+    const s = primarySectors.find(x => x.id === "concentrated-solar-power-csp");
+    if (s) return { category: s.sector, group: s.group, definition: s.definition };
+  }
+  if (/\bfloating\s+solar\b/i.test(qLower)) {
+    const s = primarySectors.find(x => x.id === "floating-solar-power-plant");
+    if (s) return { category: s.sector, group: s.group, definition: s.definition };
+  }
+  if (/\b(?:solar|pv\s+farm|solar\s+farm|solar\s+project|solar\s+power|photovoltaic)\b/i.test(qLower)) {
+    const s = primarySectors.find(x => x.id === "solar-photovoltaic-power-plant-pv");
+    if (s) return { category: s.sector, group: s.group, definition: s.definition };
+  }
+  if (/\b(?:data\s*cent(?:er|re)|hyperscale|colocation|cloud\s+campus)\b/i.test(qLower)) {
+    const s = primarySectors.find(x => x.sector.toLowerCase() === "data center");
+    if (s) return { category: s.sector, group: s.group, definition: s.definition };
+  }
+  if (/\b(?:semiconductor|wafer\s+fab|microchip|chip\s+fab|chip\s+factory)\b/i.test(qLower)) {
+    const s = primarySectors.find(x => x.id === "semiconductor-plant");
+    if (s) return { category: s.sector, group: s.group, definition: s.definition };
+  }
+  if (/\b(?:bess|battery\s+energy\s+storage|battery\s+storage|utility\s+battery)\b/i.test(qLower)) {
+    const s = primarySectors.find(x => x.id === "battery-energy-storage");
+    if (s) return { category: s.sector, group: s.group, definition: s.definition };
+  }
+  if (/\boffshore\s+wind\b/i.test(qLower)) {
+    const s = primarySectors.find(x => x.id === "offshore-wind-power-plant");
+    if (s) return { category: s.sector, group: s.group, definition: s.definition };
+  }
+  if (/\b(?:wind\s+farm|wind\s+power|onshore\s+wind|wind\s+energy)\b/i.test(qLower)) {
+    const s = primarySectors.find(x => x.id === "onshore-wind-power-plant");
+    if (s) return { category: s.sector, group: s.group, definition: s.definition };
+  }
+
+  const qWords = qLower.split(/\s+/).filter(w => w.length > 2 && !["and", "for", "the", "project", "projects", "plant", "plants", "facility", "facilities"].includes(w));
 
   let bestSector = null;
   let maxScore = 0;
 
   for (const s of primarySectors) {
     const sLower = s.sector.toLowerCase();
-    if (qLower.includes(sLower) || sLower.includes(qLower)) {
+    const sClean = sLower.replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+
+    // Exact sector match
+    if (qLower === sLower || qLower === sClean) {
+      return { category: s.sector, group: s.group, definition: s.definition };
+    }
+
+    // Full sector included in query
+    if (qWords.length >= 2 && qLower.includes(sClean)) {
       return { category: s.sector, group: s.group, definition: s.definition };
     }
 
     let score = 0;
+    const sWords = sClean.split(/\s+/);
     for (const w of qWords) {
-      if (sLower.includes(w)) score++;
+      if (sWords.includes(w)) score += 5;
+      else if (sWords.some(sw => sw.startsWith(w) || w.startsWith(sw))) score += 2;
+      if (Array.isArray(s.keywords) && s.keywords.includes(w)) score += 1;
     }
+
     if (score > maxScore) {
       maxScore = score;
       bestSector = s;
@@ -2140,12 +2260,14 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         continue;
       }
 
-      const projectName = aiP.canonical_name || matchedCandidate.title || "Capital Project";
+      const rawProjectName = aiP.canonical_name || matchedCandidate.title || "Capital Project";
       let companyName = aiP.company;
       if (!companyName || companyName === "Project Developer" || companyName === "Leading Developer" || isNewsPublisher(companyName)) {
         companyName = extractCompanyDynamically(matchedCandidate.text || matchedCandidate.snippet, matchedCandidate.title, cleanUrl);
       }
       companyName = normalizeDeveloperName(companyName, cleanUrl);
+      const projectName = cleanProjectName(rawProjectName, companyName);
+
       if (!projectName || /^(?:none|n\/a|null|not specified|unknown|tbd|capital project)$/i.test(projectName.trim())) {
         continue;
       }
@@ -2158,10 +2280,14 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       if (hasNonLatinScript(projectName) || hasNonLatinScript(companyName) || hasNonLatinScript(aiP.summary) || isForeignLanguageText(aiP.summary)) {
         continue;
       }
-      if (isGenericReportOrDirectory(cleanUrl, projectName, companyName, aiP.summary)) {
+      if (isGenericReportOrDirectory(cleanUrl, projectName, companyName, aiP.summary) || isGenericReportOrDirectory(cleanUrl, rawProjectName, companyName, aiP.summary)) {
         continue;
       }
-      if (isCompletedOrOperationalFacility(cleanUrl, projectName, aiP.summary, matchedCandidate.text || matchedCandidate.snippet)) {
+      if (
+        isCompletedOrOperationalFacility(cleanUrl, projectName, aiP.summary, matchedCandidate.text || matchedCandidate.snippet) ||
+        isCompletedOrOperationalFacility(cleanUrl, matchedCandidate.title, aiP.summary, matchedCandidate.text || matchedCandidate.snippet) ||
+        isCompletedOrOperationalFacility(cleanUrl, rawProjectName, aiP.summary, matchedCandidate.text || matchedCandidate.snippet)
+      ) {
         addEvent("candidate_filtered", `DROPPED (Completed/Operational Facility): '${projectName}' (URL: ${cleanUrl}) has already opened or commenced operations.`);
         continue;
       }
@@ -2216,10 +2342,17 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       const fb = fallbackRegexExtract(item.text || item.snippet, item.cleanUrl, item.title, targetCategory);
       if (fb && fb.is_project !== false && isValidCompanyEntity(fb.company)) {
         const normDev = normalizeDeveloperName(fb.company, item.cleanUrl);
-        if (isGenericReportOrDirectory(item.cleanUrl, fb.canonical_name || item.title, normDev, fb.summary)) {
+        const fbRawName = fb.canonical_name || item.title || "Capital Project";
+        const fbProjectName = cleanProjectName(fbRawName, normDev);
+
+        if (isGenericReportOrDirectory(item.cleanUrl, fbProjectName, normDev, fb.summary) || isGenericReportOrDirectory(item.cleanUrl, fbRawName, normDev, fb.summary)) {
           continue;
         }
-        if (isCompletedOrOperationalFacility(item.cleanUrl, fb.canonical_name || item.title, fb.summary, item.text || item.snippet)) {
+        if (
+          isCompletedOrOperationalFacility(item.cleanUrl, fbProjectName, fb.summary, item.text || item.snippet) ||
+          isCompletedOrOperationalFacility(item.cleanUrl, item.title, fb.summary, item.text || item.snippet) ||
+          isCompletedOrOperationalFacility(item.cleanUrl, fbRawName, fb.summary, item.text || item.snippet)
+        ) {
           continue;
         }
 
@@ -2243,12 +2376,12 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         const projId = "proj-" + crypto.randomUUID().slice(0, 8);
         const projectRecord = {
           id: projId,
-          canonical_name: fb.canonical_name || item.title,
+          canonical_name: fbProjectName,
           company: normDev,
           developer: normDev,
           project_url: item.cleanUrl,
           status: fbStatus,
-          category: inferCategory(fb.canonical_name || item.title, fb.summary, fb.category || targetCategory),
+          category: inferCategory(fbProjectName, fb.summary, fb.category || targetCategory),
           country: detectedLocation || "Not specified",
           date: fbDate,
           http_status: 200,
