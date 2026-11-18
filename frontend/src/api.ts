@@ -61,19 +61,24 @@ export function isProductOrEquipment(name?: string, summary?: string): boolean {
 }
 
 export function getProjectDedupKey(name?: string, developer?: string): string {
-  const normName = (name || '')
+  let d = (developer || '')
+    .toLowerCase()
+    .replace(/\b(?:platforms|technologies|technology|energy|resources|resource|holdings|services|solutions|group|corp|corporation|inc|llc|ltd|limited|co|company)\b/gi, '')
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+
+  let n = (name || '')
     .toLowerCase()
     .replace(/^(?:the|a|an)\s+/i, '')
     .replace(/['’]s\b/gi, '')
-    .replace(/\b(?:project|campus|facility|plant|center|centre|park|farm|bess|phase\s*\d+|expansion|site)\b/gi, '')
+    .replace(/\b(?:ai|artificial\s*intelligence|hyperscale|data\s*center|data\s*centre|megafab|gigafactory|project|campus|facility|plant|center|centre|park|farm|bess|battery|solar|wind|energy\s*storage|storage|and|phase\s*\d+|expansion|site|hub)\b/gi, '')
     .replace(/[^a-z0-9]/g, '')
     .trim();
-  const normDev = (developer || '')
-    .toLowerCase()
-    .replace(/\b(?:inc|corp|corporation|ltd|llc|limited|company|co|group|energy|technologies)\b/gi, '')
-    .replace(/[^a-z0-9]/g, '')
-    .trim();
-  return `${normDev}_${normName}`;
+
+  if (d && n.startsWith(d)) {
+    n = n.slice(d.length);
+  }
+  return `${d}_${n}`;
 }
 
 function getStoredProjects(): Project[] {
