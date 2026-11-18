@@ -473,31 +473,22 @@ function isNewsPublisher(name) {
   if (!name || typeof name !== "string") return false;
   const n = name.toLowerCase().trim();
 
-  // Known data publishers, statistics agencies, intelligence platforms, and news outlets
-  const exactOrSubstringPublishers = [
-    "reuters", "bloomberg", "constructconnect", "datacenterdynamics", "dcn",
-    "landgate", "oxford economics", "oxfordeconomics", "globaldata", "jpmorgan",
-    "pwc", "rba", "cnbc", "forbes", "ft.com", "financial times", "marketwatch",
-    "associated press", "prnewswire", "businesswire", "globenewswire",
-    "mckinsey", "gartner", "idc", "accenture", "deloitte", "kpmg", "ey", "bcg", "boston consulting", "bain",
-    // Energy / industrial data publishers & statistical agencies (NOT project developers)
-    "eia", "u.s. eia", "energy information administration", "enerdatics", "dmc education",
-    "wood mackenzie", "woodmac", "rystad", "rystad energy", "s&p global", "sp global", "spglobal",
-    "statista", "bnef", "bloombergnef", "ferc", "iea", "clean energy associates", "levelten",
-    "canary media", "pv magazine", "solar power world", "recharge news"
-  ];
+  // Explicit whole-word pattern for known media outlets, publishers, and research/statistics agencies
+  // MUST use word boundaries (\b) so real companies like "Tennessee Valley Authority" (containing "ey")
+  // or "GlobalFoundries" (containing "global") or "Micron Technology" (containing "technology") are NOT falsely rejected!
+  const publisherPattern = /\b(?:reuters|bloomberg|constructconnect|datacenterdynamics|dcn|associated press|prnewswire|businesswire|globenewswire|cnbc|forbes|financial times|marketwatch|canary media|pv magazine|solar power world|recharge news|mckinsey|gartner|idc|accenture|deloitte|kpmg|ey|ernst\s*&\s*young|ernst\s+and\s+young|pwc|pricewaterhousecoopers|bcg|boston consulting|bain|oxford economics|globaldata|statista|eia|u\.s\.\s*eia|energy information administration|enerdatics|dmc education|wood mackenzie|woodmac|rystad energy|rystad|s&p global|sp global|spglobal|ferc|iea|clean energy associates|levelten)\b/i;
 
-  if (exactOrSubstringPublishers.some(pub => n === pub || n.includes(pub))) {
+  if (publisherPattern.test(n)) {
     return true;
   }
 
-  // Publisher keywords (matched as words, not partial substrings)
-  if (/\b(?:press release|editorial|staff writer|editor|author|news agency|market research|data platform|data tracker|statistics agency|statistical agency)\b/i.test(n)) {
+  // Publisher keywords (matched as whole words/phrases, never partial substrings)
+  if (/\b(?:press release|staff writer|news agency|market research|data platform|data tracker|statistics agency|statistical agency)\b/i.test(n)) {
     return true;
   }
 
-  // Standalone non-developer words
-  if (/^(?:news|times|post|journal|herald|tribune|insight|insights|blog|blogs|article|articles|update|updates|overview|report|reports|tracker|pipeline|atlas|index|editorial|education|statistics|database)$/i.test(n)) {
+  // Standalone non-developer words when used as the entire company name
+  if (/^(?:news|times|post|journal|herald|tribune|insight|insights|blog|blogs|article|articles|update|updates|overview|report|reports|tracker|editorial|education|statistics|database)$/i.test(n)) {
     return true;
   }
 
