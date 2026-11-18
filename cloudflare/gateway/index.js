@@ -472,21 +472,36 @@ async function fetchUrlContent(targetUrl) {
 function isNewsPublisher(name) {
   if (!name || typeof name !== "string") return false;
   const n = name.toLowerCase().trim();
-  const newsIndicators = [
+
+  // Known data publishers, statistics agencies, intelligence platforms, and news outlets
+  const exactOrSubstringPublishers = [
     "reuters", "bloomberg", "constructconnect", "datacenterdynamics", "dcn",
     "landgate", "oxford economics", "oxfordeconomics", "globaldata", "jpmorgan",
-    "pwc", "rba", "news", "times", "post", "journal", "herald", "tribune",
-    "cnbc", "forbes", "ft.com", "financial times", "press release", "marketwatch",
+    "pwc", "rba", "cnbc", "forbes", "ft.com", "financial times", "marketwatch",
     "associated press", "prnewswire", "businesswire", "globenewswire",
-    // Management consulting and market research firms (not developers)
     "mckinsey", "gartner", "idc", "accenture", "deloitte", "kpmg", "ey", "bcg", "boston consulting", "bain",
-    // Generic non-developer words
-    "north america", "south america", "europe", "asia", "global", "worldwide",
-    "insights", "insight", "blog", "blogs", "articles", "article", "update", "updates",
-    "overview", "report", "reports", "tracker", "index", "atlas", "pipeline",
-    "technologies", "technology", "editorial", "staff", "editor", "author"
+    // Energy / industrial data publishers & statistical agencies (NOT project developers)
+    "eia", "u.s. eia", "energy information administration", "enerdatics", "dmc education",
+    "wood mackenzie", "woodmac", "rystad", "rystad energy", "s&p global", "sp global", "spglobal",
+    "statista", "bnef", "bloombergnef", "ferc", "iea", "clean energy associates", "levelten",
+    "canary media", "pv magazine", "solar power world", "recharge news"
   ];
-  return newsIndicators.some(ind => n === ind || n.includes(ind));
+
+  if (exactOrSubstringPublishers.some(pub => n === pub || n.includes(pub))) {
+    return true;
+  }
+
+  // Publisher keywords (matched as words, not partial substrings)
+  if (/\b(?:press release|editorial|staff writer|editor|author|news agency|market research|data platform|data tracker|statistics agency|statistical agency)\b/i.test(n)) {
+    return true;
+  }
+
+  // Standalone non-developer words
+  if (/^(?:news|times|post|journal|herald|tribune|insight|insights|blog|blogs|article|articles|update|updates|overview|report|reports|tracker|pipeline|atlas|index|editorial|education|statistics|database)$/i.test(n)) {
+    return true;
+  }
+
+  return false;
 }
 
 function isValidCompanyEntity(name) {
@@ -494,6 +509,21 @@ function isValidCompanyEntity(name) {
   const n = name.trim();
   if (n.length < 2 || n.length > 50) return false;
   const lower = n.toLowerCase();
+
+  // Reject data/statistics publishers, government statistical agencies, or educational blogs
+  if (
+    lower === "eia" ||
+    lower === "u.s. eia" ||
+    lower === "enerdatics" ||
+    lower.includes("dmc education") ||
+    lower.includes("energy information administration") ||
+    lower === "statista" ||
+    lower.includes("wood mackenzie") ||
+    lower.includes("rystad energy") ||
+    lower.includes("s&p global")
+  ) {
+    return false;
+  }
 
   // Reject placeholder or generic fallback words
   if (
@@ -707,7 +737,23 @@ function isGenericReportOrDirectory(url, name, company, summary) {
   if (n.startsWith("project from") || n.startsWith("capital project at") || n === "capital project") {
     return true;
   }
-  if (/^(?:what is\b|what are\b|how to\b|how do\b|understanding\b|definitive guide\b|guide to\b|top \d+\b|definition of\b|explaining\b|overview of\b|find a data center)/i.test(n)) {
+
+  // Reject listicles, rankings, and multi-project roundups (e.g. "USA Top 50 Solar Projects")
+  if (/\b(?:top\s+\d+|largest\s+\d+|biggest\s+\d+|\d+\s+largest|\d+\s+biggest|\d+\s+top|projects?\s+roundup|roundup\s+of|list\s+of\s+.*projects?|roundup)\b/i.test(n)) {
+    return true;
+  }
+
+  // Reject industry pipelines, generator rows, inventories, and market datasets (e.g. "US solar development pipeline", "Solar Photovoltaic generator rows")
+  if (/\b(?:development\s+pipeline|project\s+pipeline|pipeline\s+report|generator\s+rows|generator\s+inventory|generator\s+capacity|capacity\s+tracker|monthly\s+generator|national\s+pipeline|solar\s+pipeline|wind\s+pipeline|data\s+center\s+pipeline)\b/i.test(n)) {
+    return true;
+  }
+
+  // Reject data publishers, statistics agencies, or educational organizations as company
+  if (c === "eia" || c === "enerdatics" || c === "dmc education" || isNewsPublisher(c)) {
+    return true;
+  }
+
+  if (/^(?:what is\b|what are\b|how to\b|how do\b|understanding\b|definitive guide\b|guide to\b|definition of\b|explaining\b|overview of\b|find a data center)/i.test(n)) {
     return true;
   }
   if (/\b(?:activity report|market report|construction report|industry outlook|market analysis|capex report|data center report|fabs and facilities report)\b/i.test(n)) {
@@ -1072,8 +1118,8 @@ TASK:
 Determine if the provided webpage discusses one or more SPECIFIC, REAL-WORLD CAPITAL PROJECTS in development.
 
 A VALID CAPITAL PROJECT MUST:
-1. Cover a concrete physical facility, building, plant, megafab, hyperscale data center, power plant, solar/wind farm, transmission line, battery gigafactory, or campus expansion.
-2. Have an identifiable company, developer, owner, or operator building, expanding, or financing it. NEVER return the news site or reporting publisher (e.g. Reuters, Bloomberg, ConstructConnect, DCN).
+1. Cover a concrete, individual physical facility, building, plant, megafab, hyperscale data center, power plant, solar/wind farm, transmission line, battery gigafactory, or campus expansion.
+2. Have an identifiable corporate company, developer, owner, or operator building, expanding, or financing it. NEVER return the news site, data publisher, or statistical agency (e.g. EIA, Enerdatics, DMC Education, S&P Global, Wood Mackenzie, Reuters, Bloomberg, ConstructConnect, DCN).
 3. Have a verifiable location (city, state, region, or country).
 4. Be in one of these 3 active development lifecycle stages (ALL 3 ARE VALID):
    - "Announced": Newly announced investments, proposed facilities, capital expansion plans, or financing rounds for buildouts.
@@ -1083,15 +1129,18 @@ A VALID CAPITAL PROJECT MUST:
 DO NOT REJECT active construction, site buildouts, or facility expansions!
 
 ONLY REJECT (set "is_project": false) IF:
-1. The facility is already completed, commissioned in past years, or existing operational facilities (e.g. listicles of 'Top 10 Most Advanced Fabs in the World' describing already running plants).
-2. The page is an educational article, academic study, field report, technology explainer, or how-to guide (e.g. "Understanding How Data Centers Impact Water", "What is a Data Center", "How Chips Are Made").
-3. The page is a directory of colocation spaces, search engine for capacity, or vendor marketplace (e.g. datacenters.com).
-4. The page is discussing a political protest, zoning dispute, or lawsuit without an actively funded physical development project.
-5. The page is purely macroeconomic analysis, market forecast, or paid market research report.
+1. The candidate is a list, roundup, compilation, or ranking (e.g. "USA Top 50 Solar Projects", "Top 10 Data Centers", "Largest Projects Roundup"). NEVER extract a multi-project listicle as a single project!
+2. The candidate is an industry pipeline report, generator inventory, or statistical dataset (e.g. "US solar development pipeline", "Solar Photovoltaic generator rows", "Monthly Generator Inventory").
+3. The developer/company is a data/statistics publisher, research agency, or government bureau (e.g. EIA, Enerdatics, DMC Education, Wood Mackenzie, Statista) rather than a commercial project developer.
+4. The facility is already completed, commissioned in past years, or existing operational facilities (e.g. listicles describing already running plants).
+5. The page is an educational article, academic study, field report, technology explainer, or how-to guide (e.g. "Understanding How Data Centers Impact Water", "What is a Data Center", "How Chips Are Made").
+6. The page is a directory of colocation spaces, search engine for capacity, or vendor marketplace (e.g. datacenters.com).
+7. The page is discussing a political protest, zoning dispute, or lawsuit without an actively funded physical development project.
+8. The page is purely macroeconomic analysis, market forecast, or paid market research report.
 
 CRITICAL REQUIREMENT - COMPANY ENTITY:
-- The "company" field MUST be the actual corporate developer, operator, or owner entity (e.g. Micron Technology, TSMC, Core Scientific, Equinix, Intel).
-- NEVER use sentence fragments, regulatory commissions (e.g. "Public Service Commission"), author bylines ("Written by..."), or generic terms ("Project Developer", "Understanding").
+- The "company" field MUST be the actual corporate developer, operator, or owner entity (e.g. NextEra Energy, Micron Technology, TSMC, Core Scientific, Equinix, Intel).
+- NEVER use data publishers or statistics agencies (e.g. EIA, Enerdatics, DMC Education), regulatory commissions (e.g. "Public Service Commission"), author bylines ("Written by..."), or generic terms ("Project Developer", "Understanding").
 
 CRITICAL REQUIREMENT - ACCURATE CATEGORY:
 - The "category" field MUST match the project's actual industrial type:
@@ -1282,8 +1331,8 @@ Examine the numbered candidates. For each candidate that discusses a genuine, re
 Extract the required project parameters in fluent, standard English.
 
 A VALID CAPITAL PROJECT MUST:
-1. Be a concrete physical facility, building, megafab, data center campus, power plant, solar/battery farm, or facility expansion.
-2. Have an identifiable corporate developer, owner, or operator building or financing it. NEVER return the news site or reporting publisher (e.g. Reuters, Bloomberg, ConstructConnect, DCN, Data Center Dynamics).
+1. Be a concrete, individual physical facility, building, megafab, data center campus, power plant, solar/battery farm, or facility expansion (e.g. "Desert Sunlight Solar Farm", "Vance Data Center Campus"). It must be ONE distinct development, NOT an aggregate industry category, ranking, or multi-project inventory.
+2. Have an identifiable corporate developer, owner, or operator building, financing, or operating it (e.g. NextEra Energy, Duke Energy, Amazon, Microsoft, TSMC, Samsung, Meta). NEVER return a data publisher, research platform, government statistical bureau, or news outlet as the developer (e.g. EIA, Enerdatics, DMC Education, S&P Global, FERC, Wood Mackenzie, Rystad Energy, Statista, Reuters, Bloomberg, ConstructConnect, DCN, Data Center Dynamics).
 3. Have a verifiable location (city, state, region, or country).
 4. Be in one of these 3 active development lifecycle stages (ALL 3 ARE VALID):
    - "Announced": Newly announced investments, proposed facilities, capital expansion plans, or financing rounds for buildouts.
@@ -1291,6 +1340,9 @@ A VALID CAPITAL PROJECT MUST:
    - "Under Construction": Groundbreaking, foundation work, active construction, or ongoing campus buildout.
 
 REJECT (MUST NOT EXTRACT):
+- LISTS, ROUNDUPS, COMPILATIONS & LISTICLES: Multi-project rankings, compilations, or roundup articles (e.g. "USA Top 50 Solar Projects", "Top 10 Data Centers", "Largest Solar Plants Roundup", "List of Major Projects"). NEVER extract an entire listicle, ranking, or roundup as a single project!
+- PIPELINES, INVENTORIES & STATISTICAL DATASETS: Industry pipeline overviews, generator rows, project databases, capacity trackers, or national statistics (e.g. "US solar development pipeline", "Solar Photovoltaic generator rows", "Monthly Generator Inventory", "State Energy Capacity Tracker"). These are statistical data tables or aggregate market overviews, NOT individual physical projects!
+- DATA/STATISTICS PUBLISHERS AS DEVELOPER: Candidates where the company is a government statistical agency, market research platform, energy data tracker, or publisher (e.g. EIA, Enerdatics, DMC Education, S&P Global, FERC, Wood Mackenzie, Rystad Energy, Statista) rather than a commercial project owner/developer erecting the facility. If no specific corporate owner/developer is named, REJECT IT.
 - Existing facilities already completed or operational in past years.
 - Tool, equipment, or machinery product launches (e.g. wafer dicing systems, plasma systems, lithography tools, metrology tools). Equipment shipped to customers is NOT a capital project!
 - Material, wafer, or substrate product announcements (e.g. single-crystal diamond wafers, substrate materials).
