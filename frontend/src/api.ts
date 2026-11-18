@@ -78,6 +78,9 @@ export function getProjectDedupKey(name?: string, developer?: string): string {
   if (d && n.startsWith(d)) {
     n = n.slice(d.length);
   }
+  if (d === 'tsmc' && (n.includes('japanadvancedsemiconductor') || n.includes('jasm'))) {
+    n = 'kumamoto';
+  }
   return `${d}_${n}`;
 }
 

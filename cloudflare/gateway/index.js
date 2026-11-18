@@ -667,6 +667,9 @@ function getProjectDedupKey(name, developer) {
   if (d && n.startsWith(d)) {
     n = n.slice(d.length);
   }
+  if (d === "tsmc" && (n.includes("japanadvancedsemiconductor") || n.includes("jasm"))) {
+    n = "kumamoto";
+  }
   return `${d}_${n}`;
 }
 
@@ -818,6 +821,16 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     return true;
   }
 
+  // 6. News columns, opinion editorials, commentary, and trade/materials policy articles
+  if (
+    /^\[(?:chip talk|editorial|opinion|analysis|column|commentary|insight|viewpoint)\]/i.test(n) ||
+    /\b(?:reducing dependence on|cooperation with .* to reduce dependence|supply chain cooperation|keep localizing|bilateral cooperation)\b/i.test(s) ||
+    /\b(?:partner with .* keep localizing)\b/i.test(n) ||
+    /\b(?:two challenges|challenges facing)\b/i.test(n)
+  ) {
+    return true;
+  }
+
   // Generic noun without named facility or valid developer
   if ((!c || c === "project developer" || c === "leading developer" || c === "unknown") &&
       /^(?:data center|hyperscale data center|data centre|power plant|solar farm|wind farm|battery gigafactory|semiconductor fab|semiconductor chemicals plant|aircraft manufacturing plant|industrial category)$/i.test(n)) {
@@ -914,7 +927,11 @@ function isCompletedOrOperationalFacility(url, title, summary, text) {
 
   // 3. Summary & content patterns
   if (
-    /\b(?:is now open|has officially opened|opened its doors|began operations|started commercial operations|is now operational|facility is open|operational since|first data cent(?:er|re) built .* is open)\b/i.test(s)
+    /\b(?:is now open|has officially opened|opened its doors|opened its factory|opened its fab|opened its plant|opened its facility|began operations|started commercial operations|is now operational|facility is open|operational since|first data cent(?:er|re) built .* is open)\b/i.test(s) ||
+    /\b(?:opened (?:its\s+)?(?:factory|fab|plant|facility)\s+in\s+(?:202[0-4]|201\d))\b/i.test(s) ||
+    /\b(?:opened (?:its\s+)?(?:factory|fab|plant|facility)\s+in\s+[a-z0-9'\s]+?\s+in\s+(?:[a-z]+\s+)?(?:202[0-4]|201\d))\b/i.test(s) ||
+    /\b(?:opened\s+in\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+(?:202[0-4]|201\d))\b/i.test(s) ||
+    /\b(?:opened in (?:202[0-4]|201\d) and is planning to expand)\b/i.test(s)
   ) {
     return true;
   }
@@ -988,19 +1005,43 @@ function formatDisplayDate(rawDate) {
   const d = rawDate.trim();
   if (/^(?:latest 2026|not specified|unknown|tbd|none|n\/a)$/i.test(d)) return "";
 
-  // Convert ISO string e.g. "2026-11-09T21:00:33.000Z" or "2026-11-09" to readable format
+  // Extract all years in the string
+  const allYears = Array.from(d.matchAll(/\b(20[1-3]\d)\b/g)).map(m => parseInt(m[1], 10));
+  const futureYears = allYears.filter(y => y >= 2025);
+  const pastYears = allYears.filter(y => y < 2025);
+
+  // If the ONLY year mentioned is historical (< 2025, e.g. "2021 (project announcement)"), return null to drop
+  if (allYears.length > 0 && futureYears.length === 0 && pastYears.length > 0) {
+    return null;
+  }
+
+  // If upcoming years are mentioned, extract target year
+  if (futureYears.length > 0) {
+    const targetYear = futureYears[0];
+    const monthMatch = d.match(new RegExp(`\\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+${targetYear}\\b`, 'i'));
+    if (monthMatch) {
+      const monthPrefix = monthMatch[1].slice(0, 3);
+      const cleanMonth = monthPrefix.charAt(0).toUpperCase() + monthPrefix.slice(1).toLowerCase();
+      return `${cleanMonth} ${targetYear}`;
+    }
+    return `${targetYear}`;
+  }
+
+  // Convert ISO string e.g. "2026-11-09T21:00:33.000Z" to readable format
   const isoMatch = d.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
   if (isoMatch) {
-    const year = isoMatch[1];
+    const year = parseInt(isoMatch[1], 10);
+    if (year < 2025) return null;
     const monthNum = parseInt(isoMatch[2], 10);
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     if (monthNum >= 1 && monthNum <= 12) {
       return `${months[monthNum - 1]} ${year}`;
     }
-    return year;
+    return `${year}`;
   }
 
-  return d;
+  // Strip trailing parentheticals, e.g. "2026 (groundbreaking)" -> "2026"
+  return d.replace(/\s*\([^)]*\)/g, "").trim();
 }
 
 const PROJECT_MATCH_STOPWORDS = new Set([
@@ -1116,8 +1157,8 @@ const LOCATION_DICTIONARY = {
   "ireland": ["ireland", "irish", "dublin", "cork", "galway", "limerick"],
   "netherlands": ["netherlands", "dutch", "amsterdam", "eindhoven", "rotterdam"],
   "spain": ["spain", "spanish", "madrid", "barcelona", "aragon", "valencia"],
-  "japan": ["japan", "japanese", "tokyo", "hokkaido", "kumamoto", "chitose", "osaka", "yokohama"],
-  "south korea": ["south korea", "korea", "korean", "yongin", "seoul", "gyeonggi", "pyeongtaek", "incheon", "busan"],
+  "japan": ["japan", "japanese", "tokyo", "hokkaido", "kumamoto", "kikuyo", "chitose", "osaka", "yokohama"],
+  "south korea": ["south korea", "korea", "korean", "yongin", "seoul", "gyeonggi", "pyeongtaek", "incheon", "busan", "gumi", "suwon"],
   "taiwan": ["taiwan", "taiwanese", "hsinchu", "taichung", "tainan", "kaohsiung", "taipei"],
   "singapore": ["singapore"],
   "malaysia": ["malaysia", "malaysian", "johor", "kuala lumpur", "penang"],
@@ -1128,6 +1169,25 @@ const LOCATION_DICTIONARY = {
   "canada": ["canada", "canadian", "ontario", "quebec", "british columbia", "alberta", "toronto", "montreal", "vancouver"]
 };
 
+function getCanonicalCountry(locationStr) {
+  if (!locationStr || typeof locationStr !== "string") return null;
+  const s = locationStr.toLowerCase();
+  
+  for (const [country, aliases] of Object.entries(LOCATION_DICTIONARY)) {
+    for (const alias of aliases) {
+      if (alias.length < 3) continue;
+      const regex = new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+      if (regex.test(s)) {
+        if (country === "texas" || country === "northern virginia" || country === "arizona" || country === "california") {
+          return "united states";
+        }
+        return country;
+      }
+    }
+  }
+  return null;
+}
+
 function matchesSelectedCountry(detectedLocation, text, title, selectedCountry) {
   if (!selectedCountry) return true;
   const sel = selectedCountry.toLowerCase().trim();
@@ -1135,16 +1195,29 @@ function matchesSelectedCountry(detectedLocation, text, title, selectedCountry) 
     return true;
   }
 
-  const combined = ((detectedLocation || "") + " " + (title || "") + " " + (text || "")).toLowerCase();
-  
-  const aliases = LOCATION_DICTIONARY[sel] || [sel];
-  const hasTargetMatch = aliases.some(alias => {
+  // 1. If project has an identified location:
+  if (detectedLocation) {
+    const locCountry = getCanonicalCountry(detectedLocation);
+    if (locCountry) {
+      // If the project location belongs to a DIFFERENT country, DROP IT!
+      const isUsRegion = (sel === "united states" || ["texas", "arizona", "california", "northern virginia"].includes(sel)) &&
+                         (locCountry === "united states" || ["texas", "arizona", "california", "northern virginia"].includes(locCountry));
+      if (!isUsRegion && locCountry !== sel) {
+        return false;
+      }
+      return true;
+    }
+  }
+
+  // 2. If no location was extracted, check title or detected location
+  // NEVER check body text where foreign partnerships, trade delegations or "U.S.-Japan" initiatives appear!
+  const titleCombined = ((title || "") + " " + (detectedLocation || "")).toLowerCase();
+  const targetAliases = LOCATION_DICTIONARY[sel] || [sel];
+  return targetAliases.some(alias => {
     const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const regex = new RegExp(`\\b${escaped}\\b`, "i");
-    return regex.test(combined);
+    return regex.test(titleCombined);
   });
-
-  return hasTargetMatch;
 }
 
 function extractLocationFromCandidate(text, title, url) {
@@ -2017,6 +2090,10 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
 
       let rawDate = (aiP.date || matchedCandidate.published_date || "").trim();
       let projectDate = formatDisplayDate(rawDate);
+      if (projectDate === null) {
+        addEvent("candidate_filtered", `DROPPED (Historical/Past Project Date): '${projectName}' date '${rawDate}' is prior to 2025.`);
+        continue;
+      }
       const projId = "proj-" + crypto.randomUUID().slice(0, 8);
       const projectRecord = {
         id: projId,
@@ -2067,6 +2144,9 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
 
         let fbRawDate = (fb.date || item.published_date || "").trim();
         let fbDate = formatDisplayDate(fbRawDate);
+        if (fbDate === null) {
+          continue;
+        }
 
         const projId = "proj-" + crypto.randomUUID().slice(0, 8);
         const projectRecord = {
