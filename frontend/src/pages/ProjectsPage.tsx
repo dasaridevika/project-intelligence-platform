@@ -112,13 +112,13 @@ export const ProjectsPage: React.FC = () => {
           setSearchRun(run);
           const mapped: Project[] = (res.results || [])
             .filter((r: any) => {
-              const s = (r.status || '').toLowerCase();
-              return !s.includes('operational') && !s.includes('completed') && !s.includes('commissioned');
+              const s = (r.status || '').toLowerCase().trim();
+              return s === 'announced' || s === 'planning' || s === 'under construction';
             })
             .filter((r: any) => !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(r.canonical_name || r.name || r.title || ''))
             .map((r: any) => {
-              let st = r.status || 'Planning';
-              if (st === 'Active') st = 'Planning';
+              const s = (r.status || '').toLowerCase().trim();
+              const st = s === 'under construction' ? 'Under Construction' : s === 'announced' ? 'Announced' : 'Planning';
               return {
                 id: r.project_id || r.id,
                 canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',

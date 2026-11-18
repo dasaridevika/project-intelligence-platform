@@ -879,11 +879,14 @@ function extractStatusFromText(text) {
   if (t.includes("announced") || t.includes("announces") || t.includes("unveils") || t.includes("proposes") || t.includes("plans to build") || t.includes("secures funding")) {
     return "Announced";
   }
-  // Only reject if it explicitly states it was already completed in the past
-  if (/\b(?:was completed in 202[0-4]|became operational in 202[0-4]|commissioned in 202[0-4])\b/i.test(t)) {
+  // If explicitly completed or operational, return null
+  if (/\b(?:completed|operational|commissioned|opened|inaugurated|online|in service|commercial operation)\b/i.test(t)) {
     return null;
   }
-  return "Planning";
+  if (/\b(?:planning|permitting|environmental review|feed|designed to|proposed)\b/i.test(t)) {
+    return "Planning";
+  }
+  return null;
 }
 
 function extractDateFromTextOrUrl(text, url, publishedDate) {
@@ -1242,15 +1245,18 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
       for (const item of rawItems) {
         if (!item || typeof item !== "object") continue;
         const rawStatus = (item.status || "").trim();
-        if (/operational|completed|commissioned|opened|inaugurated/i.test(rawStatus)) {
-          continue;
+        let finalStatus = null;
+        if (/^announced$/i.test(rawStatus)) {
+          finalStatus = "Announced";
+        } else if (/^planning$/i.test(rawStatus)) {
+          finalStatus = "Planning";
+        } else if (/^under\s+construction$/i.test(rawStatus)) {
+          finalStatus = "Under Construction";
         }
 
-        let finalStatus = "Planning";
-        if (/under construction|construction|breaks ground|underway/i.test(rawStatus)) {
-          finalStatus = "Under Construction";
-        } else if (/announced|announces|unveils|proposed/i.test(rawStatus)) {
-          finalStatus = "Announced";
+        // Drop unknown or completed statuses
+        if (!finalStatus) {
+          continue;
         }
 
         if (
@@ -1833,12 +1839,21 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       }
 
       const cleanUrl = matchedCandidate.cleanUrl;
-      const status = aiP.status || "Planning";
-      if (status === "Operational" || status === "Completed" || status === "Commissioned") {
+      const rawStatus = (aiP.status || "").trim();
+      let projectStatus = null;
+      if (/^announced$/i.test(rawStatus)) {
+        projectStatus = "Announced";
+      } else if (/^planning$/i.test(rawStatus)) {
+        projectStatus = "Planning";
+      } else if (/^under\s+construction$/i.test(rawStatus)) {
+        projectStatus = "Under Construction";
+      }
+
+      // Drop any project whose status isn't strictly Announced, Planning, or Under Construction
+      if (!projectStatus) {
+        addEvent("candidate_filtered", `DROPPED (Invalid/Completed Status): '${aiP.canonical_name || "Unknown"}' status '${aiP.status || "None"}' is not Announced, Planning, or Under Construction.`);
         continue;
       }
-      const validUpcomingStatuses = ["Announced", "Planning", "Under Construction"];
-      const projectStatus = validUpcomingStatuses.includes(status) ? status : "Planning";
 
       const projectName = aiP.canonical_name || matchedCandidate.title || "Capital Project";
       let companyName = aiP.company;
@@ -1918,6 +1933,11 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           continue;
         }
 
+        const fbStatus = fb.status;
+        if (!fbStatus || !["Announced", "Planning", "Under Construction"].includes(fbStatus)) {
+          continue;
+        }
+
         let fbRawDate = (fb.date || item.published_date || "").trim();
         let fbDate = /^(?:latest 2026|not specified|unknown|tbd|none|n\/a)$/i.test(fbRawDate) ? "" : fbRawDate;
 
@@ -1928,7 +1948,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           company: normDev,
           developer: normDev,
           project_url: item.cleanUrl,
-          status: fb.status || "Planning",
+          status: fbStatus,
           category: inferCategory(fb.canonical_name || item.title, fb.summary, fb.category || targetCategory),
           country: detectedLocation || "Not specified",
           date: fbDate,

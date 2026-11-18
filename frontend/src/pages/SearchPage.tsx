@@ -194,12 +194,11 @@ export const SearchPage: React.FC = () => {
               setSearchProgress((p) => Math.min(p + 5, 85));
               setSearchStage(`Candidate Identified: ${ev.metadata?.canonical_name || (ev.metadata?.project as any)?.canonical_name || 'Capital Project'}`);
               const proj = ev.metadata?.project || (ev as any).project;
-              const pStatus = (proj?.status || '').toLowerCase();
-              const isNotUpcoming = pStatus.includes('operational') || pStatus.includes('completed') || pStatus.includes('commissioned');
+              const pStatus = (proj?.status || '').toLowerCase().trim();
+              const isUpcoming = pStatus === 'announced' || pStatus === 'planning' || pStatus === 'under construction';
               const isProduct = isProductOrEquipment(proj?.canonical_name || proj?.title, proj?.summary);
-              if (proj && !isNotUpcoming && !isProduct && !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(proj.canonical_name || proj.title || '')) {
-                let st = proj.status || 'Planning';
-                if (st === 'Active') st = 'Planning';
+              if (proj && isUpcoming && !isProduct && !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(proj.canonical_name || proj.title || '')) {
+                const st = pStatus === 'under construction' ? 'Under Construction' : pStatus === 'announced' ? 'Announced' : 'Planning';
                 setDiscoveredResults((prev) => {
                   const pName = proj.canonical_name || proj.name || proj.title || 'Capital Project';
                   const pDev = proj.company || proj.developer || 'Leading Developer';

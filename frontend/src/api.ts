@@ -46,9 +46,9 @@ function hasNonLatin(str?: string): boolean {
 }
 
 function isUpcomingStatus(status?: string): boolean {
-  if (!status) return true;
-  const s = status.toLowerCase();
-  return !s.includes('operational') && !s.includes('completed') && !s.includes('commissioned');
+  if (!status) return false;
+  const s = status.toLowerCase().trim();
+  return s === 'announced' || s === 'planning' || s === 'under construction';
 }
 
 export function isProductOrEquipment(name?: string, summary?: string): boolean {
@@ -226,8 +226,8 @@ export const api = {
       const mapped: Project[] = res.data.results
         .filter((r: any) => !hasNonLatin(r.canonical_name) && !hasNonLatin(r.title) && !hasNonLatin(r.summary) && isUpcomingStatus(r.status))
         .map((r: any) => {
-          let st = r.status || 'Planning';
-          if (st === 'Active') st = 'Planning';
+          const s = (r.status || '').toLowerCase().trim();
+          const st = s === 'under construction' ? 'Under Construction' : s === 'announced' ? 'Announced' : 'Planning';
           return {
             id: r.project_id || r.id,
             canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',
