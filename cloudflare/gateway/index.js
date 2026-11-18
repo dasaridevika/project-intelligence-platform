@@ -156,6 +156,16 @@ function recordApiUsage(providerName, latencyMs, isSuccess = true) {
   }
 }
 
+// Cache TTL: 1 hour expiry (3,600,000 ms) so repeat searches with different parameters refresh
+const QUERY_CACHE_TTL_MS = 60 * 60 * 1000;
+
+function getQueryCacheKey(query, sector, country) {
+  const q = (query || "").trim().toLowerCase();
+  const s = (sector && sector !== "All Categories" && sector !== "all") ? sector.trim().toLowerCase() : "all";
+  const c = (country && country !== "Worldwide (Global)" && country !== "All Regions" && country !== "Global" && country !== "all") ? country.trim().toLowerCase() : "all";
+  return `${q}::${s}::${c}`;
+}
+
 // Durable KV Persistence Layer (Survives worker code changes & redeploys)
 async function hydrateStore(env) {
   if (!env.PROJECT_DATA) return;
@@ -180,7 +190,11 @@ async function hydrateStore(env) {
           if (s?.id) {
             store.searches.set(s.id, s);
             if (s.query) {
-              store.queryCache.set(s.query.toLowerCase().trim(), s.id);
+              const key = getQueryCacheKey(s.query, s.category || s.parsed_query?.category, s.location || s.parsed_query?.location);
+              const searchTime = s.created_at ? new Date(s.created_at).getTime() : Date.now();
+              if (Date.now() - searchTime < QUERY_CACHE_TTL_MS) {
+                store.queryCache.set(key, { runId: s.id, timestamp: searchTime });
+              }
             }
           }
         }
@@ -1551,7 +1565,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   }
 
   const effectiveSearchText = searchParts.join(" ").trim();
-  const normalizedQuery = effectiveSearchText.toLowerCase();
+  const cacheKey = getQueryCacheKey(query, targetCategory, targetLocation);
 
   const addEvent = (eventType, message, component = "ai_worker", metadata = {}) => {
     const event = {
@@ -1574,36 +1588,45 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   addEvent("search_created", `Search accepted for: '${effectiveSearchText}' (Base Query: '${query}'). Dispatched to Cloudflare Workers AI edge pipeline.`);
   addEvent("query_analyzed", `NLP Analysis: Category '${targetCategory}' [${sectorInfo.group || 'Industrial'}], Location '${targetLocation}', Search Text '${effectiveSearchText}'`);
 
-  // 2. Query Cache Pre-check: Only use cache if results have verified project names and companies in English and are UPCOMING
-  if (store.queryCache.has(normalizedQuery)) {
-    const priorRunId = store.queryCache.get(normalizedQuery);
-    const cachedResults = store.searchResults.get(priorRunId) || [];
-    const isValidCache = cachedResults.length > 0 && cachedResults.every(r => 
-      r.canonical_name && 
-      !r.canonical_name.startsWith("Project from") && 
-      !/^(?:none|n\/a|null|unknown|tbd|capital project)$/i.test(r.canonical_name.trim()) &&
-      !/^(?:none|n\/a|null|unknown|tbd|project developer)$/i.test((r.company || r.developer || "").trim()) &&
-      !hasNonLatinScript(r.canonical_name) &&
-      !hasNonLatinScript(r.summary) &&
-      !isForeignLanguageText(r.summary) &&
-      !isForeignLanguageText(r.canonical_name) &&
-      isValidCompanyEntity(r.company || r.developer) &&
-      !isGenericReportOrDirectory(r.project_url, r.canonical_name, r.company || r.developer, r.summary) &&
-      ["Announced", "Planning", "Under Construction"].includes(r.status)
-    );
-    if (isValidCache) {
-      addEvent("query_cache_hit", `Cache Hit: Query '${effectiveSearchText}' already executed with ${cachedResults.length} verified projects. Zero external calls or LLM inferences needed.`);
-      store.searchResults.set(searchRunId, cachedResults);
-      const run = store.searches.get(searchRunId);
-      if (run) {
-        run.status = "completed";
-        run.results_count = cachedResults.length;
-        run.duration_ms = Date.now() - startTime;
-      }
-      addEvent("search_completed", `Discovery complete via memory cache: ${cachedResults.length} projects linked in ${Date.now() - startTime}ms.`);
-      return cachedResults;
+  // 2. Query Cache Pre-check: Only use cache if within TTL, matching country & sector, and projects are valid
+  if (store.queryCache.has(cacheKey)) {
+    const cachedEntry = store.queryCache.get(cacheKey);
+    const priorRunId = typeof cachedEntry === "string" ? cachedEntry : cachedEntry?.runId;
+    const cachedAt = typeof cachedEntry === "object" ? (cachedEntry?.timestamp || 0) : 0;
+    const isExpired = cachedAt > 0 && (Date.now() - cachedAt > QUERY_CACHE_TTL_MS);
+
+    if (isExpired) {
+      store.queryCache.delete(cacheKey);
+      addEvent("query_cache_expired", `Cache expired for '${cacheKey}' (${Math.round((Date.now() - cachedAt) / 60000)}m old). Running fresh live discovery.`);
     } else {
-      store.queryCache.delete(normalizedQuery);
+      const cachedResults = store.searchResults.get(priorRunId) || [];
+      const isValidCache = cachedResults.length > 0 && cachedResults.every(r => 
+        r.canonical_name && 
+        !r.canonical_name.startsWith("Project from") && 
+        !/^(?:none|n\/a|null|unknown|tbd|capital project)$/i.test(r.canonical_name.trim()) &&
+        !/^(?:none|n\/a|null|unknown|tbd|project developer)$/i.test((r.company || r.developer || "").trim()) &&
+        !hasNonLatinScript(r.canonical_name) &&
+        !hasNonLatinScript(r.summary) &&
+        !isForeignLanguageText(r.summary) &&
+        !isForeignLanguageText(r.canonical_name) &&
+        isValidCompanyEntity(r.company || r.developer) &&
+        !isGenericReportOrDirectory(r.project_url, r.canonical_name, r.company || r.developer, r.summary) &&
+        ["Announced", "Planning", "Under Construction"].includes(r.status)
+      );
+      if (isValidCache) {
+        addEvent("query_cache_hit", `Cache Hit: Query '${query}' [Sector: '${targetCategory}', Country: '${targetLocation}'] already executed with ${cachedResults.length} verified projects. Zero external calls or LLM inferences needed.`);
+        store.searchResults.set(searchRunId, cachedResults);
+        const run = store.searches.get(searchRunId);
+        if (run) {
+          run.status = "completed";
+          run.results_count = cachedResults.length;
+          run.duration_ms = Date.now() - startTime;
+        }
+        addEvent("search_completed", `Discovery complete via memory cache: ${cachedResults.length} projects linked in ${Date.now() - startTime}ms.`);
+        return cachedResults;
+      } else {
+        store.queryCache.delete(cacheKey);
+      }
     }
   }
 
@@ -1982,8 +2005,11 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     run.api_telemetry = queryTelemetry;
   }
 
-  // Save to queryCache
-  store.queryCache.set(normalizedQuery, searchRunId);
+  // Save to queryCache with composite key (query + sector + country) and TTL timestamp
+  store.queryCache.set(cacheKey, {
+    runId: searchRunId,
+    timestamp: Date.now()
+  });
 
   // Durable KV Persistence (survives worker redeploys & syncs across edge colos)
   if (env.PROJECT_DATA) {
@@ -2051,7 +2077,11 @@ export default {
             if (s?.id && !store.searches.has(s.id)) {
               store.searches.set(s.id, s);
               if (s.query) {
-                store.queryCache.set(s.query.toLowerCase().trim(), s.id);
+                const key = getQueryCacheKey(s.query, s.category || s.parsed_query?.category, s.location || s.parsed_query?.location);
+                const searchTime = s.created_at ? new Date(s.created_at).getTime() : Date.now();
+                if (Date.now() - searchTime < QUERY_CACHE_TTL_MS) {
+                  store.queryCache.set(key, { runId: s.id, timestamp: searchTime });
+                }
               }
             }
           }
@@ -2214,11 +2244,17 @@ export default {
           return jsonRes({ error: "Search query is required" }, 400);
         }
 
+        const requestedCat = body?.categories?.[0];
+        const requestedLoc = body?.location;
+        const requestedProv = Array.isArray(body?.providers) && body.providers.length > 0 ? body.providers : ["exa", "google"];
+
         const searchRunId = crypto.randomUUID();
         const searchRunRecord = {
           id: searchRunId,
           query,
-          parsed_query: { query },
+          category: requestedCat || null,
+          location: requestedLoc || null,
+          parsed_query: { query, category: requestedCat, location: requestedLoc },
           status: "processing",
           results_count: 0,
           created_at: new Date().toISOString(),
@@ -2227,9 +2263,6 @@ export default {
         store.searches.set(searchRunId, searchRunRecord);
 
         // Run discovery pipeline
-        const requestedCat = body?.categories?.[0];
-        const requestedLoc = body?.location;
-        const requestedProv = Array.isArray(body?.providers) && body.providers.length > 0 ? body.providers : ["exa", "google"];
         await executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedCat, requestedLoc, requestedProv);
         const searchRun = store.searches.get(searchRunId);
         const searchResults = store.searchResults.get(searchRunId) || [];
