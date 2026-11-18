@@ -1585,8 +1585,10 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       );
       if (validCached.length > 0) {
         validCached.forEach(p => {
-          extractedProjects.push(p);
-          addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${p.canonical_name}' (Source: ${cleanUrl})`, "ai_worker", { project: p, canonical_name: p.canonical_name });
+          const freshCategory = inferCategory(p.canonical_name, p.summary, p.category || targetCategory);
+          const updated = { ...p, category: freshCategory };
+          extractedProjects.push(updated);
+          addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${p.canonical_name}' (Source: ${cleanUrl})`, "ai_worker", { project: updated, canonical_name: p.canonical_name });
         });
         continue;
       }
