@@ -1743,15 +1743,26 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       if (!aiP) continue;
 
       let matchedCandidate = null;
-      if (typeof aiP.candidate_index === "number" && aiP.candidate_index >= 1 && aiP.candidate_index <= uncachedCandidates.length) {
-        matchedCandidate = uncachedCandidates[aiP.candidate_index - 1];
+      let candidateIdx = null;
+      if (typeof aiP.candidate_index === "number") {
+        candidateIdx = Math.floor(aiP.candidate_index);
+      } else if (typeof aiP.candidate_index === "string") {
+        const match = aiP.candidate_index.match(/\d+/);
+        if (match) {
+          candidateIdx = parseInt(match[0], 10);
+        }
+      }
+
+      if (candidateIdx !== null && !isNaN(candidateIdx) && candidateIdx >= 1 && candidateIdx <= uncachedCandidates.length) {
+        matchedCandidate = uncachedCandidates[candidateIdx - 1];
       } else if (aiP.url) {
-        matchedCandidate = uncachedCandidates.find(c => c.cleanUrl.includes(aiP.url) || aiP.url.includes(c.cleanUrl));
+        matchedCandidate = uncachedCandidates.find(c => c.cleanUrl && (c.cleanUrl.includes(aiP.url) || aiP.url.includes(c.cleanUrl)));
       }
-      if (!matchedCandidate && uncachedCandidates.length > 0) {
-        matchedCandidate = uncachedCandidates.find(c => (aiP.canonical_name && c.title && c.title.toLowerCase().includes(aiP.canonical_name.toLowerCase().slice(0, 15)))) || uncachedCandidates[0];
+
+      if (!matchedCandidate) {
+        addEvent("candidate_filtered", `DROPPED: AI extraction for '${aiP.canonical_name || "Unknown"}' skipped because candidate index '${aiP.candidate_index}' did not match any candidate URL.`);
+        continue;
       }
-      if (!matchedCandidate) continue;
 
       const cleanUrl = matchedCandidate.cleanUrl;
       const status = aiP.status || "Planning";
