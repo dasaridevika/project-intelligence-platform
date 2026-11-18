@@ -29,6 +29,23 @@ import primarySectorsData from '../data/primary_sectors.json';
 
 const ALL_SECTORS = primarySectorsData as PrimarySector[];
 
+export function formatProjectDate(d?: string): string {
+  if (!d) return '';
+  const trimmed = d.trim();
+  if (/^(?:latest 2026|not specified|unknown|tbd|none|n\/a)$/i.test(trimmed)) return '';
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
+  if (isoMatch) {
+    const year = isoMatch[1];
+    const monthNum = parseInt(isoMatch[2], 10);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    if (monthNum >= 1 && monthNum <= 12) {
+      return `${months[monthNum - 1]} ${year}`;
+    }
+    return year;
+  }
+  return trimmed;
+}
+
 export const ProjectsPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -124,7 +141,7 @@ export const ProjectsPage: React.FC = () => {
                 canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',
                 company: r.company || r.developer || r.project?.company || r.project?.developer || 'Leading Developer',
                 developer: r.developer || r.company || r.project?.developer || r.project?.company || 'Leading Developer',
-                date: (r.date && r.date !== 'Latest 2026') ? r.date : (r.project?.date && r.project?.date !== 'Latest 2026') ? r.project.date : '',
+                date: formatProjectDate(r.date || r.project?.date),
                 project_url: r.project_url || r.project?.project_url || '',
                 category: r.category || 'Capital Projects',
                 status: st,
@@ -649,10 +666,10 @@ export const ProjectsPage: React.FC = () => {
                 <div className="space-y-1.5 max-w-3xl">
                   <div className="flex flex-wrap items-center gap-2">
                     <SectorBadge sectorName={p.category} />
-                    {p.date ? (
+                    {p.date && formatProjectDate(p.date) ? (
                       <span className="text-[10px] text-slate-300 font-mono bg-slate-800 border border-slate-700/80 px-2 py-0.5 rounded flex items-center gap-1">
                         <Calendar className="w-3 h-3 text-sky-400" />
-                        <span>{p.date}</span>
+                        <span>{formatProjectDate(p.date)}</span>
                       </span>
                     ) : null}
                     <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">

@@ -36,6 +36,9 @@ const BLOCKED_DOMAINS = [
   "computerhope.com", "coursera.org", "wordreference.com",
   // Aggregator portals, marketing blogs, educational explainers, marketplaces
   "datacenters.com", "chipsupplychain.org", "patentpc.com", "poynter.org",
+  // Statistics agencies, market research databases & legal/consulting advisory portals
+  "statista.com", "eia.gov", "enerdatics.com", "woodmac.com", "woodmackenzie.com", 
+  "rystadenergy.com", "whitecase.com",
   // Social media, video, and community forums
   "youtube.com", "youtu.be", "vimeo.com", "facebook.com", "fb.com", "twitter.com",
   "x.com", "instagram.com", "tiktok.com", "pinterest.com", "reddit.com", "quora.com",
@@ -58,6 +61,15 @@ const JUNK_PATH_PATTERNS = [
   /\/staff\b/i, /\/staff-directory\b/i, /\/directory\b/i, /\/phonebook\b/i,
   /\/contact-us\b/i, /\/clinical-departments\b/i, /\/departments?\b/i,
   /\/cart\b/i, /\/checkout\b/i, /\/pdf\//i,
+  // Aggregator maps, directories, and topic index listings
+  /\/topics\b/i, /\/topics\/\d+/i,
+  /-map\b/i, /\/maps?\b/i, /\/data-center-map\b/i,
+  // Commercial vendor product & service catalogs (not project news)
+  /\/products-services\b/i, /\/products?\b/i, /\/services?\b/i,
+  // Legal & consulting thought leadership / insights
+  /\/insight-our-thinking\b/i, /\/thought-leadership\b/i,
+  // Generic section/category landing roots without article slugs
+  /\/international\/[a-z]{2}\/news\/?$/i, /\/news\/?$/i, /\/en-realestate\/?$/i,
   // Educational guides, explainers, tutorials, glossaries, FAQs
   /\/what-is\b/i, /\/what-are\b/i, /\/how-to\b/i, /\/how-do\b/i, /\/how-data-centers\b/i,
   /\/guides?\b/i, /\/glossary\b/i, /\/faq\b/i, /\/fact-check/i, /\/fact-checking/i,
@@ -797,6 +809,15 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     return true;
   }
 
+  // 5. Technology, equipment, or concept development agreements without a physical facility buildout
+  if (
+    /\b(?:developing|developed)\s+(?:a\s+)?(?:[a-z0-9\-]+\s+)?(?:power|control|software|cooling|battery|propulsion|floating)\s+technology\b/i.test(s) ||
+    /\b(?:power and control technology|cooling technology|software platform|technology development for)\b/i.test(s) ||
+    /\b(?:concept design|feasibility study only)\b/i.test(s)
+  ) {
+    return true;
+  }
+
   // Generic noun without named facility or valid developer
   if ((!c || c === "project developer" || c === "leading developer" || c === "unknown") &&
       /^(?:data center|hyperscale data center|data centre|power plant|solar farm|wind farm|battery gigafactory|semiconductor fab|semiconductor chemicals plant|aircraft manufacturing plant|industrial category)$/i.test(n)) {
@@ -924,6 +945,111 @@ function extractDateFromTextOrUrl(text, url, publishedDate) {
   }
 
   return "";
+}
+
+function formatDisplayDate(rawDate) {
+  if (!rawDate || typeof rawDate !== "string") return "";
+  const d = rawDate.trim();
+  if (/^(?:latest 2026|not specified|unknown|tbd|none|n\/a)$/i.test(d)) return "";
+
+  // Convert ISO string e.g. "2026-11-09T21:00:33.000Z" or "2026-11-09" to readable format
+  const isoMatch = d.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
+  if (isoMatch) {
+    const year = isoMatch[1];
+    const monthNum = parseInt(isoMatch[2], 10);
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    if (monthNum >= 1 && monthNum <= 12) {
+      return `${months[monthNum - 1]} ${year}`;
+    }
+    return year;
+  }
+
+  return d;
+}
+
+const PROJECT_MATCH_STOPWORDS = new Set([
+  "data", "center", "centre", "project", "facility", "campus", "plant", "farm", "park", 
+  "korea", "south", "expansion", "and", "the", "for", "with", "from", "new", "build", 
+  "building", "announced", "planning", "construction", "power", "energy", "hyperscale",
+  "utility", "ai", "hub", "site", "phase", "stage", "infrastructure", "technologies",
+  "technology", "group", "holdings", "corp", "inc", "ltd", "llc", "gmbh", "co"
+]);
+
+function candidateMentionsProject(candidate, aiP) {
+  if (!candidate || !aiP) return false;
+  const cUrl = (candidate.cleanUrl || "").toLowerCase();
+  const cTitle = (candidate.title || "").toLowerCase();
+  const cText = (candidate.text || candidate.snippet || "").toLowerCase();
+  const fullContent = `${cUrl} ${cTitle} ${cText}`;
+
+  const comp = (aiP.company || "").toLowerCase().trim();
+  const name = (aiP.canonical_name || "").toLowerCase().trim();
+
+  // 1. Company check with word boundary
+  if (comp && comp.length >= 3 && !PROJECT_MATCH_STOPWORDS.has(comp)) {
+    const compRegex = new RegExp(`\\b${comp.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+    if (compRegex.test(fullContent)) {
+      return true;
+    }
+  }
+
+  // 2. Distinctive project tokens (proper names like "Naver", "Sejong", "Gumi", "Paju")
+  const nameTokens = name
+    .split(/[\s\-–—/]+/)
+    .map(t => t.toLowerCase().replace(/[^a-z0-9]/g, ""))
+    .filter(t => t.length >= 4 && !PROJECT_MATCH_STOPWORDS.has(t));
+
+  for (const tok of nameTokens) {
+    const tokRegex = new RegExp(`\\b${tok}\\b`, 'i');
+    if (tokRegex.test(fullContent)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function findBestCorroboratingCandidate(candidates, aiP) {
+  if (!candidates || candidates.length === 0 || !aiP) return null;
+  let bestCandidate = null;
+  let bestScore = 0;
+
+  const comp = (aiP.company || "").toLowerCase().trim();
+  const name = (aiP.canonical_name || "").toLowerCase().trim();
+  const nameTokens = name
+    .split(/[\s\-–—/]+/)
+    .map(t => t.toLowerCase().replace(/[^a-z0-9]/g, ""))
+    .filter(t => t.length >= 4 && !PROJECT_MATCH_STOPWORDS.has(t));
+
+  for (const c of candidates) {
+    let score = 0;
+    const cUrl = (c.cleanUrl || "").toLowerCase();
+    const cTitle = (c.title || "").toLowerCase();
+    const cText = (c.text || c.snippet || "").toLowerCase();
+
+    // Check company
+    if (comp && comp.length >= 3 && !PROJECT_MATCH_STOPWORDS.has(comp)) {
+      const compRegex = new RegExp(`\\b${comp.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+      if (compRegex.test(cUrl)) score += 10;
+      if (compRegex.test(cTitle)) score += 6;
+      if (compRegex.test(cText)) score += 3;
+    }
+
+    // Check distinctive tokens
+    for (const tok of nameTokens) {
+      const tokRegex = new RegExp(`\\b${tok}\\b`, 'i');
+      if (tokRegex.test(cUrl)) score += 8;
+      if (tokRegex.test(cTitle)) score += 5;
+      if (tokRegex.test(cText)) score += 2;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestCandidate = c;
+    }
+  }
+
+  return bestScore >= 4 ? bestCandidate : null;
 }
 
 const LOCATION_DICTIONARY = {
@@ -1358,6 +1484,7 @@ REJECT (MUST NOT EXTRACT):
 - Macroeconomic equipment spending reports or capex forecasts (e.g. SEMI $374B equipment spending report).
 - Educational guides, explainer articles, technology overviews, academic reports, or crypto/finance learn blogs (e.g. mexc.co/learn).
 - Colocation marketplaces or vendor directories (e.g. datacenters.com).
+- Technology, equipment, control system, cooling, or software platform R&D developments without an actual physical facility buildout (e.g. "developing a floating data center power and control technology"). Developing a technology or concept is NOT a capital project!
 - Any candidate where developer is an author byline ("Written by..."), regulatory commission, or sentence fragment.
 
 RESPONSE FORMAT:
@@ -1366,6 +1493,7 @@ Return ONLY a valid JSON object in this exact schema:
   "projects": [
     {
       "candidate_index": 1,
+      "source_url": "The exact URL copied verbatim from the [Candidate #ID] block above where this project is described",
       "canonical_name": "Official project or facility name in English",
       "company": "Specific corporate developer or owner building the project in English",
       "location": "City, State/Region, Country in English",
@@ -1755,6 +1883,17 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       if (!aiP) continue;
 
       let matchedCandidate = null;
+
+      // 1. Try matching by exact or partial source_url / url returned by AI
+      const rawAiUrl = (aiP.source_url || aiP.url || "").trim().toLowerCase();
+      if (rawAiUrl) {
+        matchedCandidate = uncachedCandidates.find(c => {
+          const cUrl = (c.cleanUrl || "").toLowerCase();
+          return cUrl === rawAiUrl || cUrl.includes(rawAiUrl) || rawAiUrl.includes(cUrl);
+        });
+      }
+
+      // 2. Try candidate_index if the candidate actually mentions/corroborates this project
       let candidateIdx = null;
       if (typeof aiP.candidate_index === "number") {
         candidateIdx = Math.floor(aiP.candidate_index);
@@ -1765,14 +1904,21 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         }
       }
 
-      if (candidateIdx !== null && !isNaN(candidateIdx) && candidateIdx >= 1 && candidateIdx <= uncachedCandidates.length) {
-        matchedCandidate = uncachedCandidates[candidateIdx - 1];
-      } else if (aiP.url) {
-        matchedCandidate = uncachedCandidates.find(c => c.cleanUrl && (c.cleanUrl.includes(aiP.url) || aiP.url.includes(c.cleanUrl)));
+      if (!matchedCandidate && candidateIdx !== null && !isNaN(candidateIdx) && candidateIdx >= 1 && candidateIdx <= uncachedCandidates.length) {
+        const candByIndex = uncachedCandidates[candidateIdx - 1];
+        if (candidateMentionsProject(candByIndex, aiP)) {
+          matchedCandidate = candByIndex;
+        }
       }
 
+      // 3. Fallback: Search all candidates to find the one whose URL, title, or text best corroborates the project
       if (!matchedCandidate) {
-        addEvent("candidate_filtered", `DROPPED: AI extraction for '${aiP.canonical_name || "Unknown"}' skipped because candidate index '${aiP.candidate_index}' did not match any candidate URL.`);
+        matchedCandidate = findBestCorroboratingCandidate(uncachedCandidates, aiP);
+      }
+
+      // Strict Validation: If no candidate mentions or corroborates this project, reject it to prevent wrong URLs
+      if (!matchedCandidate || !candidateMentionsProject(matchedCandidate, aiP)) {
+        addEvent("candidate_filtered", `DROPPED (Unverified Source): AI extraction for '${aiP.canonical_name || "Unknown"}' skipped because no candidate URL verified this project/developer.`);
         continue;
       }
 
@@ -1830,7 +1976,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       }
 
       let rawDate = (aiP.date || matchedCandidate.published_date || "").trim();
-      let projectDate = /^(?:latest 2026|not specified|unknown|tbd|none|n\/a)$/i.test(rawDate) ? "" : rawDate;
+      let projectDate = formatDisplayDate(rawDate);
       const projId = "proj-" + crypto.randomUUID().slice(0, 8);
       const projectRecord = {
         id: projId,
@@ -1877,7 +2023,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         }
 
         let fbRawDate = (fb.date || item.published_date || "").trim();
-        let fbDate = /^(?:latest 2026|not specified|unknown|tbd|none|n\/a)$/i.test(fbRawDate) ? "" : fbRawDate;
+        let fbDate = formatDisplayDate(fbRawDate);
 
         const projId = "proj-" + crypto.randomUUID().slice(0, 8);
         const projectRecord = {
