@@ -1414,7 +1414,29 @@ async function mapConcurrent(items, concurrency, fn) {
 
 async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedCategory, requestedLocation, requestedProviders = ["exa", "google"]) {
   const startTime = Date.now();
-  const normalizedQuery = query.toLowerCase().trim();
+
+  // 1. Initial analysis
+  const sectorInfo = classifyQuery(query);
+  const targetCategory = requestedCategory && requestedCategory !== "All Categories" ? requestedCategory : sectorInfo.category;
+  const targetLocation = requestedLocation && requestedLocation !== "All Regions" ? requestedLocation : extractLocation(query);
+
+  // Build composite search query from all three inputs: ${query} ${sector} ${country}
+  const searchParts = [query.trim()];
+
+  if (requestedCategory && requestedCategory !== "All Categories" && requestedCategory !== "all") {
+    if (!query.toLowerCase().includes(requestedCategory.toLowerCase())) {
+      searchParts.push(requestedCategory);
+    }
+  }
+
+  if (requestedLocation && requestedLocation !== "Worldwide (Global)" && requestedLocation !== "All Regions" && requestedLocation !== "Global" && requestedLocation !== "all") {
+    if (!query.toLowerCase().includes(requestedLocation.toLowerCase())) {
+      searchParts.push(requestedLocation);
+    }
+  }
+
+  const effectiveSearchText = searchParts.join(" ").trim();
+  const normalizedQuery = effectiveSearchText.toLowerCase();
 
   const addEvent = (eventType, message, component = "ai_worker", metadata = {}) => {
     const event = {
@@ -1434,13 +1456,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     store.activityEvents.get(searchRunId).push(event);
   };
 
-  // 1. Initial analysis
-  const sectorInfo = classifyQuery(query);
-  const targetCategory = requestedCategory && requestedCategory !== "All Categories" ? requestedCategory : sectorInfo.category;
-  const targetLocation = requestedLocation && requestedLocation !== "All Regions" ? requestedLocation : extractLocation(query);
-
-  addEvent("search_created", `Search accepted for: '${query}'. Dispatched to Cloudflare Workers AI edge pipeline.`);
-  addEvent("query_analyzed", `NLP Analysis: Category '${targetCategory}' [${sectorInfo.group || 'Industrial'}], Location '${targetLocation}'`);
+  addEvent("search_created", `Search accepted for: '${effectiveSearchText}' (Base Query: '${query}'). Dispatched to Cloudflare Workers AI edge pipeline.`);
+  addEvent("query_analyzed", `NLP Analysis: Category '${targetCategory}' [${sectorInfo.group || 'Industrial'}], Location '${targetLocation}', Search Text '${effectiveSearchText}'`);
 
   // 2. Query Cache Pre-check: Only use cache if results have verified project names and companies in English and are UPCOMING
   if (store.queryCache.has(normalizedQuery)) {
@@ -1460,7 +1477,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       ["Announced", "Planning", "Under Construction"].includes(r.status)
     );
     if (isValidCache) {
-      addEvent("query_cache_hit", `Cache Hit: Query '${query}' already executed with ${cachedResults.length} verified projects. Zero external calls or LLM inferences needed.`);
+      addEvent("query_cache_hit", `Cache Hit: Query '${effectiveSearchText}' already executed with ${cachedResults.length} verified projects. Zero external calls or LLM inferences needed.`);
       store.searchResults.set(searchRunId, cachedResults);
       const run = store.searches.get(searchRunId);
       if (run) {
@@ -1485,7 +1502,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     total_requests: 0
   };
 
-  addEvent("provider_started", `Executing web discovery for query: '${query}'`);
+  addEvent("provider_started", `Executing web discovery for: '${effectiveSearchText}'`);
 
   let candidateUrls = [];
   const useExa = requestedProviders.includes("exa") && env.EXA_API_KEY && env.EXA_API_KEY.length > 10;
@@ -1503,7 +1520,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          query: query.trim(),
+          query: effectiveSearchText,
           numResults: 25,
           useAutoprompt: true,
           startPublishedDate: "2025-01-01T00:00:00.000Z",
@@ -1543,7 +1560,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     const t0 = Date.now();
     queryTelemetry.google_search = 1;
     try {
-      const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(query.trim())}&num=10&lr=lang_en&hl=en`;
+      const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(effectiveSearchText)}&num=10&lr=lang_en&hl=en`;
       const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(6000) });
       const elapsed = Date.now() - t0;
       recordApiUsage("Google Custom Search", elapsed, gRes.ok);
@@ -1574,7 +1591,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   if (candidateUrls.length === 0) {
     queryTelemetry.fallback_search = 1;
     addEvent("provider_started", `Engaging public discovery fallback.`);
-    const fallbackResults = await searchWebFallback(query);
+    const fallbackResults = await searchWebFallback(effectiveSearchText);
     if (fallbackResults.length > 0) {
       candidateUrls = fallbackResults;
       addEvent("provider_completed", `Fallback discovery retrieved ${candidateUrls.length} candidate URLs.`);
