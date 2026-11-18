@@ -61,27 +61,26 @@ export function isProductOrEquipment(name?: string, summary?: string): boolean {
 }
 
 export function getProjectDedupKey(name?: string, developer?: string): string {
-  let d = (developer || '')
-    .toLowerCase()
-    .replace(/\b(?:platforms|technologies|technology|energy|resources|resource|holdings|services|solutions|group|corp|corporation|inc|llc|ltd|limited|co|company)\b/gi, '')
-    .replace(/[^a-z0-9]/g, '')
-    .trim();
+  const STOPWORDS_REGEX = /\b(?:the|a|an|platforms|platform|technologies|technology|energy|resources|resource|holdings|services|solutions|group|corp|corporation|inc|llc|ltd|limited|co|company|asset|assets|management|capital|investments|investment|partners|partnership|ventures|venture|and|ai|artificial\s*intelligence|hyperscale|data\s*center|data\s*centre|megafab|gigafactory|project|campus|facility|plant|center|centre|park|farm|bess|battery|solar|wind|energy\s*storage|storage|phase\s*\d+|expansion|site|hub)\b/gi;
 
-  let n = (name || '')
+  const combined = `${developer || ''} ${name || ''}`
     .toLowerCase()
-    .replace(/^(?:the|a|an)\s+/i, '')
     .replace(/['’]s\b/gi, '')
-    .replace(/\b(?:ai|artificial\s*intelligence|hyperscale|data\s*center|data\s*centre|megafab|gigafactory|project|campus|facility|plant|center|centre|park|farm|bess|battery|solar|wind|energy\s*storage|storage|and|phase\s*\d+|expansion|site|hub)\b/gi, '')
-    .replace(/[^a-z0-9]/g, '')
+    .replace(STOPWORDS_REGEX, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 
-  if (d && n.startsWith(d)) {
-    n = n.slice(d.length);
+  // Extract unique distinctive entity tokens sorted alphabetically
+  const tokens = Array.from(new Set(combined.split(/\s+/).filter(t => t.length >= 3)));
+  tokens.sort();
+
+  let key = tokens.join('_');
+  if (key.includes('tsmc') && (key.includes('japanadvancedsemiconductor') || key.includes('jasm'))) {
+    key = 'kumamoto_tsmc';
   }
-  if (d === 'tsmc' && (n.includes('japanadvancedsemiconductor') || n.includes('jasm'))) {
-    n = 'kumamoto';
-  }
-  return `${d}_${n}`;
+
+  return key || `${(developer || '').toLowerCase()}_${(name || '').toLowerCase()}`;
 }
 
 export function cleanSummaryText(raw?: string): string {

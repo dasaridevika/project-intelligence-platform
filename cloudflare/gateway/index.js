@@ -61,6 +61,8 @@ const JUNK_PATH_PATTERNS = [
   /\/staff\b/i, /\/staff-directory\b/i, /\/directory\b/i, /\/phonebook\b/i,
   /\/contact-us\b/i, /\/clinical-departments\b/i, /\/departments?\b/i,
   /\/cart\b/i, /\/checkout\b/i, /\/pdf\//i,
+  // Regulatory, grid connection rules, power review policy articles (not specific project announcements)
+  /-power-rules\b/i, /-grid-review\b/i, /-grid-rules\b/i, /-regulatory-framework\b/i, /-power-regulations\b/i,
   // Aggregator maps, directories, and topic index listings
   /\/topics\b/i, /\/topics\/\d+/i,
   /-map\b/i, /\/maps?\b/i, /\/data-center-map\b/i,
@@ -534,7 +536,13 @@ function isValidCompanyEntity(name) {
     lower === "statista" ||
     lower.includes("wood mackenzie") ||
     lower.includes("rystad energy") ||
-    lower.includes("s&p global")
+    lower.includes("s&p global") ||
+    lower.startsWith("government of") ||
+    lower.startsWith("ministry of") ||
+    lower.startsWith("department of") ||
+    lower === "government" ||
+    lower === "federal government" ||
+    lower === "state government"
   ) {
     return false;
   }
@@ -650,27 +658,26 @@ function normalizeDeveloperName(name, url) {
 }
 
 function getProjectDedupKey(name, developer) {
-  let d = (developer || "")
+  const STOPWORDS_REGEX = /\b(?:the|a|an|platforms|platform|technologies|technology|energy|resources|resource|holdings|services|solutions|group|corp|corporation|inc|llc|ltd|limited|co|company|asset|assets|management|capital|investments|investment|partners|partnership|ventures|venture|and|ai|artificial\s*intelligence|hyperscale|data\s*center|data\s*centre|megafab|gigafactory|project|campus|facility|plant|center|centre|park|farm|bess|battery|solar|wind|energy\s*storage|storage|phase\s*\d+|expansion|site|hub)\b/gi;
+
+  const combined = `${developer || ""} ${name || ""}`
     .toLowerCase()
-    .replace(/\b(?:platforms|technologies|technology|energy|resources|resource|holdings|services|solutions|group|corp|corporation|inc|llc|ltd|limited|co|company)\b/gi, "")
-    .replace(/[^a-z0-9]/g, "")
-    .trim();
-  
-  let n = (name || "")
-    .toLowerCase()
-    .replace(/^(?:the|a|an)\s+/i, "")
     .replace(/['’]s\b/gi, "")
-    .replace(/\b(?:ai|artificial\s*intelligence|hyperscale|data\s*center|data\s*centre|megafab|gigafactory|project|campus|facility|plant|center|centre|park|farm|bess|battery|solar|wind|energy\s*storage|storage|and|phase\s*\d+|expansion|site|hub)\b/gi, "")
-    .replace(/[^a-z0-9]/g, "")
+    .replace(STOPWORDS_REGEX, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 
-  if (d && n.startsWith(d)) {
-    n = n.slice(d.length);
+  // Extract unique distinctive entity tokens sorted alphabetically
+  const tokens = Array.from(new Set(combined.split(/\s+/).filter(t => t.length >= 3)));
+  tokens.sort();
+
+  let key = tokens.join("_");
+  if (key.includes("tsmc") && (key.includes("japanadvancedsemiconductor") || key.includes("jasm"))) {
+    key = "kumamoto_tsmc";
   }
-  if (d === "tsmc" && (n.includes("japanadvancedsemiconductor") || n.includes("jasm"))) {
-    n = "kumamoto";
-  }
-  return `${d}_${n}`;
+
+  return key || `${(developer || "").toLowerCase()}_${(name || "").toLowerCase()}`;
 }
 
 function cleanSummaryText(raw) {
@@ -767,6 +774,32 @@ function isGenericReportOrDirectory(url, name, company, summary) {
 
   // Reject data publishers, statistics agencies, or educational organizations as company
   if (c === "eia" || c === "enerdatics" || c === "dmc education" || isNewsPublisher(c)) {
+    return true;
+  }
+
+  // Reject national government macroeconomic policy announcements, spending targets, and multi-billion masterplans
+  if (
+    /^(?:government\s+of\s+|ministry\s+of\s+|department\s+of\s+|state\s+council)/i.test(c) ||
+    /\b(?:government\s+of\s+[a-z\s]+|ministry\s+of\s+[a-z\s]+)\b/i.test(c) ||
+    c === "government of south korea" ||
+    c === "government of japan" ||
+    c === "us government"
+  ) {
+    return true;
+  }
+  if (
+    /\b(?:mega\s+projects?|national\s+initiative|strategic\s+roadmap|investment\s+into\s+three\s+mega|build\s+\d+[\d.]*\s*gw\s+worth|national\s+plan\s+to\s+build|plans\s+to\s+build\s+\d+[\d.]*\s*gw|\$\d+[\d.]*\s*bn\s+investment\s+into\s+three\s+mega)\b/i.test(n) ||
+    /\b(?:investment\s+into\s+three\s+mega\s+projects|plans\s+to\s+build\s+\d+[\d.]*\s*gw\s+worth\s+of\s+data\s+centers)\b/i.test(s)
+  ) {
+    return true;
+  }
+
+  // Reject regulatory, grid connection rules, and utility review articles
+  if (
+    /(?:power-rules|grid-review|grid-connection-rules|power-regulations|regulatory-review|data-center-rules|datacenter-rules|planning-permission-rules|grid-rules|zoning-rules)/i.test(u) ||
+    /\b(?:power\s+rules\s+raise|grid\s+review|power\s+connection\s+rules|regulatory\s+hurdle|regulatory\s+bar|sites\s+under\s+\d+\s*mw\s+skip\s+grid)\b/i.test(u) ||
+    /\b(?:power\s+rules\s+raise\s+.*area\s+bar|sites\s+under\s+\d+\s*mw\s+skip\s+grid\s+review)\b/i.test(n)
+  ) {
     return true;
   }
 
@@ -911,16 +944,21 @@ function isCompletedOrOperationalFacility(url, title, summary, text) {
   const s = (summary || "").toLowerCase();
   const b = (text || "").toLowerCase();
 
-  // 1. URL slug patterns indicating the facility has already opened/completed
+  // 1. URL slug patterns indicating the facility has already opened/completed or launched
   if (
-    /(?:-|_|\/)(?:is-open|now-open|opens|opened|launches-operations|begins-operations|goes-online|inaugurated|commissioned|completed)(?:-|_|\/|\.|$)/i.test(u)
+    /(?:-|_|\/)(?:is-open|now-open|opens|opened|launches-operations|begins-operations|goes-online|inaugurated|commissioned|completed|entry-into)(?:-|_|\/|\.|$)/i.test(u) ||
+    /(?:-|_|\/)(?:launches|launched)(?:-[a-z0-9-]+)?-(?:data-cent(?:er|re)|fab|plant|facility|campus|hub)(?:-|_|\/|\.|$)/i.test(u) ||
+    /(?:-|_|\/)(?:opens|opened)-(?:[a-z0-9-]+-)?(?:data-cent(?:er|re)|fab|plant|facility|campus|hub)(?:-|_|\/|\.|$)/i.test(u)
   ) {
     return true;
   }
 
-  // 2. Title & Headline patterns indicating opened/completed status
+  // 2. Title & Headline patterns indicating opened/completed status or commercial launch
   if (
-    /\b(?:is open|now open|has opened|opens data cent(?:er|re)|opened its|opens new|officially opened|opens megafab|opens plant|inaugurated|inaugurates|commenced commercial operations|now operational|commercial operation started|begins operations|went online|starts operations|has been commissioned|completes construction of)\b/i.test(t)
+    /\b(?:is open|now open|has opened|opens data cent(?:er|re)|opened its|opens new|officially opened|opens megafab|opens plant|inaugurated|inaugurates|commenced commercial operations|now operational|commercial operation started|begins operations|went online|starts operations|has been commissioned|completes construction of)\b/i.test(t) ||
+    /\b(?:launches|launched)\s+(?:(?:third|fourth|second|first|new|its|another)\s+)?(?:data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(t) ||
+    /\b(?:launches\s+data\s*cent(?:er|re)|launched\s+data\s*cent(?:er|re))\b/i.test(t) ||
+    /\bmarking\s+its\s+entry\s+into\b/i.test(t)
   ) {
     return true;
   }
@@ -928,6 +966,8 @@ function isCompletedOrOperationalFacility(url, title, summary, text) {
   // 3. Summary & content patterns
   if (
     /\b(?:is now open|has officially opened|opened its doors|opened its factory|opened its fab|opened its plant|opened its facility|began operations|started commercial operations|is now operational|facility is open|operational since|first data cent(?:er|re) built .* is open)\b/i.test(s) ||
+    /\b(?:launches|launched)\s+(?:(?:third|fourth|second|first|new|its|another)\s+)?(?:data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(s) ||
+    /\bmarking\s+its\s+entry\s+into\b/i.test(s) ||
     /\b(?:opened (?:its\s+)?(?:factory|fab|plant|facility)\s+in\s+(?:202[0-4]|201\d))\b/i.test(s) ||
     /\b(?:opened (?:its\s+)?(?:factory|fab|plant|facility)\s+in\s+[a-z0-9'\s]+?\s+in\s+(?:[a-z]+\s+)?(?:202[0-4]|201\d))\b/i.test(s) ||
     /\b(?:opened\s+in\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+(?:202[0-4]|201\d))\b/i.test(s) ||
@@ -1049,7 +1089,13 @@ const PROJECT_MATCH_STOPWORDS = new Set([
   "korea", "south", "expansion", "and", "the", "for", "with", "from", "new", "build", 
   "building", "announced", "planning", "construction", "power", "energy", "hyperscale",
   "utility", "ai", "hub", "site", "phase", "stage", "infrastructure", "technologies",
-  "technology", "group", "holdings", "corp", "inc", "ltd", "llc", "gmbh", "co"
+  "technology", "group", "holdings", "corp", "inc", "ltd", "llc", "gmbh", "co",
+  // Generic corporate & financial words that must NOT corroborate candidate links:
+  "asset", "assets", "management", "investment", "investments", "capital", "development", 
+  "developments", "system", "systems", "solutions", "services", "properties", "property",
+  "partners", "partnership", "platform", "platforms", "global", "national", "international", 
+  "state", "first", "second", "third", "fourth", "initiative", "rules", "grid", "capacity", 
+  "mega", "strategic", "announces", "plans", "into", "joint", "venture", "market", "markets"
 ]);
 
 function candidateMentionsProject(candidate, aiP) {
@@ -1063,10 +1109,24 @@ function candidateMentionsProject(candidate, aiP) {
   const name = (aiP.canonical_name || "").toLowerCase().trim();
 
   // 1. Company check with word boundary
+  let compMatched = false;
   if (comp && comp.length >= 3 && !PROJECT_MATCH_STOPWORDS.has(comp)) {
     const compRegex = new RegExp(`\\b${comp.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
     if (compRegex.test(fullContent)) {
-      return true;
+      compMatched = true;
+    } else {
+      // Also check core proper noun tokens from company (e.g. "Macquarie", "Gabia", "Samsung", "Digital Edge")
+      const compTokens = comp
+        .split(/[\s\-–—/]+/)
+        .map(t => t.toLowerCase().replace(/[^a-z0-9]/g, ""))
+        .filter(t => t.length >= 4 && !PROJECT_MATCH_STOPWORDS.has(t));
+      for (const cTok of compTokens) {
+        const cTokRegex = new RegExp(`\\b${cTok}\\b`, 'i');
+        if (cTokRegex.test(fullContent)) {
+          compMatched = true;
+          break;
+        }
+      }
     }
   }
 
@@ -1076,11 +1136,32 @@ function candidateMentionsProject(candidate, aiP) {
     .map(t => t.toLowerCase().replace(/[^a-z0-9]/g, ""))
     .filter(t => t.length >= 4 && !PROJECT_MATCH_STOPWORDS.has(t));
 
+  let nameTokenMatches = 0;
   for (const tok of nameTokens) {
     const tokRegex = new RegExp(`\\b${tok}\\b`, 'i');
     if (tokRegex.test(fullContent)) {
-      return true;
+      nameTokenMatches++;
     }
+  }
+
+  // If company matched AND at least 1 distinctive project token matched: solid match
+  if (compMatched && (nameTokens.length === 0 || nameTokenMatches >= 1)) {
+    return true;
+  }
+
+  // If company matched and candidate URL or title specifically mentions the company:
+  if (compMatched && (cUrl.includes(comp) || cTitle.includes(comp))) {
+    return true;
+  }
+
+  // If company did not match, require strong multi-token corroboration
+  if (nameTokens.length === 1 && nameTokenMatches === 1) {
+    const tokRegex = new RegExp(`\\b${nameTokens[0]}\\b`, 'i');
+    return tokRegex.test(cTitle) || tokRegex.test(cUrl);
+  }
+
+  if (nameTokens.length >= 2 && (nameTokenMatches >= 2 || nameTokenMatches / nameTokens.length >= 0.5)) {
+    return true;
   }
 
   return false;
@@ -1586,7 +1667,9 @@ REJECT (MUST NOT EXTRACT):
 - LISTS, ROUNDUPS, COMPILATIONS & LISTICLES: Multi-project rankings, compilations, or roundup articles (e.g. "USA Top 50 Solar Projects", "Top 10 Data Centers", "Largest Solar Plants Roundup", "List of Major Projects"). NEVER extract an entire listicle, ranking, or roundup as a single project!
 - PIPELINES, INVENTORIES & STATISTICAL DATASETS: Industry pipeline overviews, generator rows, project databases, capacity trackers, or national statistics (e.g. "US solar development pipeline", "Solar Photovoltaic generator rows", "Monthly Generator Inventory", "State Energy Capacity Tracker"). These are statistical data tables or aggregate market overviews, NOT individual physical projects!
 - DATA/STATISTICS PUBLISHERS AS DEVELOPER: Candidates where the company is a government statistical agency, market research platform, energy data tracker, or publisher (e.g. EIA, Enerdatics, DMC Education, S&P Global, FERC, Wood Mackenzie, Rystad Energy, Statista) rather than a commercial project owner/developer erecting the facility. If no specific corporate owner/developer is named, REJECT IT.
-- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING (e.g. "Singapore's first data center ... is open", "Nxera opens data centre", "opens new facility", "began commercial operations", "facility opened today", "now operational", "commissioned"). Even if opened very recently (in 2025 or 2026), ALREADY OPENED or OPERATIONAL facilities MUST BE REJECTED! We ONLY track upcoming pipeline under development (Announced, Planning, Under Construction). NEVER label an already opened or operating facility as "Under Construction"!
+- NATIONAL MACRO POLICY TARGETS & ROADMAPS: Broad macroeconomic government announcements, national policy initiatives, or multi-year GW targets (e.g. "South Korea announces $919bn investment into three mega projects, plans to build 18.4GW worth of data centers by 2035", "Government of South Korea"). A national government announcing a 10-year policy target or multi-billion funding roadmap is a public policy goal, NOT an individual physical development with a developer!
+- REGULATORY & GRID REVIEW ARTICLES: Articles primarily discussing power supply rules, grid reviews, zoning regulations, or regulatory hurdles (e.g. "Korea data center power rules raise Seoul area bar... sites under 10 MW skip grid review"). These are regulatory news reports, NOT project announcements!
+- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING (e.g. "Singapore's first data center ... is open", "Nxera opens data centre", "opens new facility", "began commercial operations", "facility opened today", "now operational", "commissioned"). Also REJECT facilities described as "launches data center", "launches its third data center in [city]", "launches new plant", or "marking its entry into [country]". In tech and data centers, "launches data center" means the facility is finished, open, and accepting customer workloads! These are OPERATIONAL and MUST BE REJECTED. NEVER label "launches data center" or an already opened facility as "Under Construction"! We ONLY track upcoming pipeline under development (Announced, Planning, Under Construction).
 - Tool, equipment, or machinery product launches (e.g. wafer dicing systems, plasma systems, lithography tools, metrology tools). Equipment shipped to customers is NOT a capital project!
 - Material, wafer, or substrate product announcements (e.g. single-crystal diamond wafers, substrate materials).
 - R&D partnerships, industry collaboration initiatives, or technology roadmaps without a physical facility buildout.
