@@ -22,7 +22,7 @@ import {
   Tag,
   X
 } from 'lucide-react';
-import { api } from '../api';
+import { api, cleanSummaryText } from '../api';
 import { PrimarySector, Project, SearchRun } from '../types';
 import { SectorBadge, findPrimarySector } from '../components/Sector';
 import primarySectorsData from '../data/primary_sectors.json';
@@ -129,7 +129,7 @@ export const ProjectsPage: React.FC = () => {
                 category: r.category || 'Capital Projects',
                 status: st,
                 http_status: r.http_status || 200,
-                summary: r.summary || '',
+                summary: cleanSummaryText(r.summary || r.project?.summary || ''),
                 created_at: new Date().toISOString(),
               };
             });
@@ -142,10 +142,12 @@ export const ProjectsPage: React.FC = () => {
             group: selectedGroup !== 'All Groups' ? selectedGroup : undefined,
             status: statusFilter || undefined,
           });
-          const validProjects = (res.projects || []).filter((p: Project) => {
-            const s = (p.status || '').toLowerCase();
-            return !s.includes('operational') && !s.includes('completed') && !s.includes('commissioned');
-          });
+          const validProjects = (res.projects || [])
+            .map((p: Project) => ({ ...p, summary: cleanSummaryText(p.summary) }))
+            .filter((p: Project) => {
+              const s = (p.status || '').toLowerCase();
+              return !s.includes('operational') && !s.includes('completed') && !s.includes('commissioned');
+            });
           setProjects(validProjects);
           setTotalCount(validProjects.length);
         }

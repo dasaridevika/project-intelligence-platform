@@ -23,7 +23,7 @@ import {
   BarChart3,
   Cpu
 } from 'lucide-react';
-import { api, subscribeToSearchEvents, isProductOrEquipment, getProjectDedupKey } from '../api';
+import { api, subscribeToSearchEvents, isProductOrEquipment, getProjectDedupKey, cleanSummaryText } from '../api';
 import { ActivityEvent, PrimarySector, QueryTelemetry, SearchResultItem, SearchRun } from '../types';
 import { SectorBadge, SectorSelector } from '../components/Sector';
 
@@ -215,7 +215,7 @@ export const SearchPage: React.FC = () => {
                     category: proj.category || 'Capital Projects',
                     status: st,
                     http_status: proj.http_status || 200,
-                    summary: proj.summary || '',
+                    summary: cleanSummaryText(proj.summary || ''),
                     relevance_score: 0.95
                   }];
                 });
@@ -231,7 +231,7 @@ export const SearchPage: React.FC = () => {
               setSearchCompleted(true);
               api.getSearchResults(searchId).then((r: any) => {
                 if (r.results && r.results.length > 0) {
-                  setDiscoveredResults(r.results);
+                  setDiscoveredResults(r.results.map((item: any) => ({ ...item, summary: cleanSummaryText(item.summary) })));
                 }
                 if (r.api_telemetry) {
                   setQueryTelemetry(r.api_telemetry);

@@ -87,41 +87,41 @@ const store = {
     {
       provider: "Cloudflare Workers AI",
       endpoint: "@cf/meta/llama-3.2-3b-instruct",
-      requests_sent: 56,
-      success_count: 56,
+      requests_sent: 0,
+      success_count: 0,
       failed_count: 0,
-      avg_latency_ms: 360,
-      units_consumed: 56,
+      avg_latency_ms: 0,
+      units_consumed: 0,
       status_note: "Operational & Active"
     },
     {
       provider: "Exa Neural Search",
       endpoint: "https://api.exa.ai/search",
-      requests_sent: 24,
-      success_count: 24,
+      requests_sent: 0,
+      success_count: 0,
       failed_count: 0,
-      avg_latency_ms: 410,
-      units_consumed: 24,
+      avg_latency_ms: 0,
+      units_consumed: 0,
       status_note: "Operational & Active"
     },
     {
       provider: "Google Custom Search",
       endpoint: "https://www.googleapis.com/customsearch/v1",
-      requests_sent: 18,
-      success_count: 18,
+      requests_sent: 0,
+      success_count: 0,
       failed_count: 0,
-      avg_latency_ms: 220,
-      units_consumed: 18,
+      avg_latency_ms: 0,
+      units_consumed: 0,
       status_note: "Operational & Active"
     },
     {
       provider: "Web Content Fetches",
       endpoint: "Direct HTTP Edge Scraping",
-      requests_sent: 42,
-      success_count: 42,
+      requests_sent: 0,
+      success_count: 0,
       failed_count: 0,
-      avg_latency_ms: 280,
-      units_consumed: 42,
+      avg_latency_ms: 0,
+      units_consumed: 0,
       status_note: "Operational & Active"
     }
   ],
@@ -626,6 +626,43 @@ function getProjectDedupKey(name, developer) {
   return `${d}_${n}`;
 }
 
+function cleanSummaryText(raw) {
+  if (!raw || typeof raw !== "string") return "";
+  let clean = raw
+    // Strip markdown headers (#, ##, ###, ####)
+    .replace(/^#+\s+/gm, "")
+    .replace(/\s+#+\s+/g, " ")
+    // Strip markdown formatting: bold, italics, backticks, bullet symbols
+    .replace(/[*_`~]{1,3}/g, "")
+    .replace(/^\s*[-•*]\s+/gm, "")
+    // Strip HTML tags and entities
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&(?:quot|amp|lt|gt|nbsp|apos|#39);/gi, " ")
+    // Strip common directory / boilerplate / byline phrases
+    .replace(/\b(?:find a data center|search \d+[\d,]* data centers?|click here to read more|read full report|share this article|photo by|written by|author:?)\b/gi, "")
+    // Strip trailing ellipsis and multiple dots
+    .replace(/\.{2,}/g, ".")
+    // Normalize whitespace
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // If text is excessively long or truncated, neatly end at sentence boundary
+  if (clean.length > 280) {
+    const lastPeriod = clean.lastIndexOf(".", 280);
+    if (lastPeriod > 100) {
+      clean = clean.slice(0, lastPeriod + 1);
+    } else {
+      clean = clean.slice(0, 275).replace(/\s+\S*$/, "") + ".";
+    }
+  }
+
+  if (clean && !/[.!?]$/.test(clean)) {
+    clean += ".";
+  }
+
+  return clean;
+}
+
 function isGenericReportOrDirectory(url, name, company, summary) {
   if (!name && !url) return false;
   const n = (name || "").toLowerCase().trim();
@@ -944,7 +981,7 @@ function fallbackRegexExtract(text, url, titleHint, hintCategory) {
     status: projectStatus,
     category: hintCategory || "Capital Projects",
     date: extractDateFromTextOrUrl(text, url),
-    summary: text.slice(0, 180) + "..."
+    summary: cleanSummaryText(text.slice(0, 250))
   };
 }
 
@@ -1136,7 +1173,7 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
           category: inferCategory(projectName, item.summary, item.category || hintCategory),
           country: item.location || item.country || null,
           date: projectDate,
-          summary: item.summary || (pageText.slice(0, 180) + "...")
+          summary: cleanSummaryText(item.summary || pageText.slice(0, 250))
         });
       }
 
@@ -1591,7 +1628,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       if (validCached.length > 0) {
         validCached.forEach(p => {
           const freshCategory = inferCategory(p.canonical_name, p.summary, p.category || targetCategory);
-          const updated = { ...p, category: freshCategory };
+          const updated = { ...p, category: freshCategory, summary: cleanSummaryText(p.summary) };
           extractedProjects.push(updated);
           addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${p.canonical_name}' (Source: ${cleanUrl})`, "ai_worker", { project: updated, canonical_name: p.canonical_name });
         });
@@ -1665,7 +1702,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         country: aiP.location || targetLocation,
         date: projectDate,
         http_status: 200,
-        summary: aiP.summary || matchedCandidate.snippet || "",
+        summary: cleanSummaryText(aiP.summary || matchedCandidate.snippet || ""),
         created_at: new Date().toISOString()
       };
 
@@ -1698,7 +1735,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           country: targetLocation,
           date: fb.date || item.published_date || "Latest 2026",
           http_status: 200,
-          summary: fb.summary || item.snippet || "",
+          summary: cleanSummaryText(fb.summary || item.snippet || ""),
           created_at: new Date().toISOString()
         };
         store.projects.set(projId, projectRecord);

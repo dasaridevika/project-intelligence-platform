@@ -81,13 +81,45 @@ export function getProjectDedupKey(name?: string, developer?: string): string {
   return `${d}_${n}`;
 }
 
+export function cleanSummaryText(raw?: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+  let clean = raw
+    .replace(/^#+\s+/gm, '')
+    .replace(/\s+#+\s+/g, ' ')
+    .replace(/[*_`~]{1,3}/g, '')
+    .replace(/^\s*[-•*]\s+/gm, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&(?:quot|amp|lt|gt|nbsp|apos|#39);/gi, ' ')
+    .replace(/\b(?:find a data center|search \d+[\d,]* data centers?|click here to read more|read full report|share this article|photo by|written by|author:?)\b/gi, '')
+    .replace(/\.{2,}/g, '.')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (clean.length > 280) {
+    const lastPeriod = clean.lastIndexOf('.', 280);
+    if (lastPeriod > 100) {
+      clean = clean.slice(0, lastPeriod + 1);
+    } else {
+      clean = clean.slice(0, 275).replace(/\s+\S*$/, '') + '.';
+    }
+  }
+
+  if (clean && !/[.!?]$/.test(clean)) {
+    clean += '.';
+  }
+
+  return clean;
+}
+
 function getStoredProjects(): Project[] {
   try {
     const raw = localStorage.getItem(STORAGE_PROJECTS_KEY);
     if (!raw) return [];
     const list = JSON.parse(raw);
     return Array.isArray(list)
-      ? list.filter(p => p.canonical_name && !p.canonical_name.startsWith('Project from') && !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary) && isUpcomingStatus(p.status) && !isProductOrEquipment(p.canonical_name, p.summary))
+      ? list
+          .filter(p => p.canonical_name && !p.canonical_name.startsWith('Project from') && !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary) && isUpcomingStatus(p.status) && !isProductOrEquipment(p.canonical_name, p.summary))
+          .map(p => ({ ...p, summary: cleanSummaryText(p.summary) }))
       : [];
   } catch {
     return [];
@@ -96,7 +128,9 @@ function getStoredProjects(): Project[] {
 
 function saveStoredProjects(projects: Project[]) {
   try {
-    const cleanProjects = projects.filter(p => !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary) && isUpcomingStatus(p.status) && !isProductOrEquipment(p.canonical_name, p.summary));
+    const cleanProjects = projects
+      .filter(p => !hasNonLatin(p.canonical_name) && !hasNonLatin(p.summary) && isUpcomingStatus(p.status) && !isProductOrEquipment(p.canonical_name, p.summary))
+      .map(p => ({ ...p, summary: cleanSummaryText(p.summary) }));
     const existing = getStoredProjects();
     const map = new Map<string, Project>();
     for (const p of existing) {
