@@ -239,6 +239,8 @@ export const api = {
             project_url: r.project_url || r.project?.project_url || (r.sources && r.sources[0]?.source_url) || '',
             category: r.category || 'Capital Projects',
             status: st,
+            country: r.country || r.location || r.project?.country || r.project?.location || 'Not specified',
+            location: r.location || r.country || r.project?.location || r.project?.country || 'Not specified',
             date: (r.date && r.date !== 'Latest 2026') ? r.date : (r.project?.date && r.project?.date !== 'Latest 2026') ? r.project.date : '',
             http_status: r.http_status || 200,
             summary: r.summary || '',
@@ -312,11 +314,13 @@ export const api = {
     }
   },
 
-  getExportCsvUrl: (category?: string, status?: string, group?: string): string => {
+  getExportCsvUrl: (category?: string, status?: string, group?: string, location?: string, search?: string): string => {
     const q = new URLSearchParams();
-    if (category) q.set('category', category);
-    if (status) q.set('status', status);
-    if (group) q.set('group', group);
+    if (category && category !== 'All Categories' && category !== 'all') q.set('category', category);
+    if (status && status !== 'All Statuses' && status !== 'All Upcoming Statuses') q.set('status', status);
+    if (group && group !== 'All Groups' && group !== 'all') q.set('group', group);
+    if (location && location !== 'All Regions' && location !== 'Worldwide (Global)' && location !== 'all') q.set('location', location);
+    if (search && search.trim()) q.set('search', search.trim());
     return `/api/v1/projects/export?${q.toString()}`;
   },
 

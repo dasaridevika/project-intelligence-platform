@@ -15,6 +15,7 @@ import {
   Globe,
   Info,
   Layers,
+  MapPin,
   RotateCcw,
   Search,
   SlidersHorizontal,
@@ -25,6 +26,7 @@ import {
 import { api, cleanSummaryText } from '../api';
 import { PrimarySector, Project, SearchRun } from '../types';
 import { SectorBadge, findPrimarySector } from '../components/Sector';
+import { GLOBAL_LOCATIONS } from './SearchPage';
 import primarySectorsData from '../data/primary_sectors.json';
 
 const ALL_SECTORS = primarySectorsData as PrimarySector[];
@@ -62,6 +64,7 @@ export const ProjectsPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGroup, setSelectedGroup] = useState<string>('All Groups');
   const [selectedSector, setSelectedSector] = useState<string>('');
+  const [selectedLocation, setSelectedLocation] = useState<string>('All Regions');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [sectorSearchTerm, setSectorSearchTerm] = useState<string>('');
   const [isSectorDropdownOpen, setIsSectorDropdownOpen] = useState<boolean>(false);
@@ -141,6 +144,8 @@ export const ProjectsPage: React.FC = () => {
                 canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',
                 company: r.company || r.developer || r.project?.company || r.project?.developer || 'Leading Developer',
                 developer: r.developer || r.company || r.project?.developer || r.project?.company || 'Leading Developer',
+                country: r.country || r.location || r.project?.country || r.project?.location || 'Not specified',
+                location: r.location || r.country || r.project?.location || r.project?.country || 'Not specified',
                 date: formatProjectDate(r.date || r.project?.date),
                 project_url: r.project_url || r.project?.project_url || '',
                 category: r.category || 'Capital Projects',
@@ -157,10 +162,16 @@ export const ProjectsPage: React.FC = () => {
             search: searchQuery || undefined,
             category: selectedSector || undefined,
             group: selectedGroup !== 'All Groups' ? selectedGroup : undefined,
+            location: selectedLocation !== 'All Regions' ? selectedLocation : undefined,
             status: statusFilter || undefined,
           });
           const validProjects = (res.projects || [])
-            .map((p: Project) => ({ ...p, summary: cleanSummaryText(p.summary) }))
+            .map((p: Project) => ({
+              ...p,
+              country: p.country || p.location || 'Not specified',
+              location: p.location || p.country || 'Not specified',
+              summary: cleanSummaryText(p.summary)
+            }))
             .filter((p: Project) => {
               const s = (p.status || '').toLowerCase();
               return !s.includes('operational') && !s.includes('completed') && !s.includes('commissioned');
@@ -175,7 +186,7 @@ export const ProjectsPage: React.FC = () => {
       }
     }
     loadData();
-  }, [searchId, selectedSector, selectedGroup, statusFilter]);
+  }, [searchId, selectedSector, selectedGroup, selectedLocation, statusFilter]);
 
   // Active Selected Sector Metadata
   const activeSectorItem = useMemo(() => {
@@ -264,16 +275,24 @@ export const ProjectsPage: React.FC = () => {
         return false;
       }
 
+      // 5. Region / Country Filter
+      if (selectedLocation && selectedLocation !== 'All Regions' && selectedLocation !== 'Worldwide (Global)') {
+        const locLower = selectedLocation.toLowerCase();
+        const pLoc = `${p.country || ''} ${p.location || ''} ${p.canonical_name || ''} ${p.summary || ''}`.toLowerCase();
+        if (!pLoc.includes(locLower)) return false;
+      }
+
       return true;
     });
-  }, [projects, statusFilter, searchQuery, selectedSector, selectedGroup]);
+  }, [projects, statusFilter, searchQuery, selectedSector, selectedGroup, selectedLocation]);
 
-  const isAnyFilterActive = searchQuery || statusFilter || selectedSector || selectedGroup !== 'All Groups';
+  const isAnyFilterActive = searchQuery || statusFilter || selectedSector || selectedGroup !== 'All Groups' || selectedLocation !== 'All Regions';
 
   const clearAllFilters = () => {
     setSearchQuery('');
     setSelectedGroup('All Groups');
     setSelectedSector('');
+    setSelectedLocation('All Regions');
     setStatusFilter('');
     setSectorSearchTerm('');
   };
@@ -315,7 +334,13 @@ export const ProjectsPage: React.FC = () => {
           )}
 
           <a
-            href={api.getExportCsvUrl(selectedSector, statusFilter, selectedGroup !== 'All Groups' ? selectedGroup : undefined)}
+            href={api.getExportCsvUrl(
+              selectedSector,
+              statusFilter,
+              selectedGroup !== 'All Groups' ? selectedGroup : undefined,
+              selectedLocation !== 'All Regions' ? selectedLocation : undefined,
+              searchQuery || undefined
+            )}
             download="valid_project_urls.csv"
             className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-medium text-slate-200 transition-colors"
           >
@@ -327,10 +352,10 @@ export const ProjectsPage: React.FC = () => {
 
       {/* Main Filter & 462-Sector Taxonomy Panel */}
       <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-4 sm:p-5 space-y-4 shadow-xl">
-        {/* Top Filter Controls: Search & Status */}
+        {/* Top Filter Controls: Search, Region, & Status */}
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
           {/* Text Search */}
-          <div className="sm:col-span-8 relative">
+          <div className="sm:col-span-5 relative">
             <input
               type="text"
               value={searchQuery}
@@ -347,6 +372,22 @@ export const ProjectsPage: React.FC = () => {
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
+          </div>
+
+          {/* Region / Country Select */}
+          <div className="sm:col-span-3">
+            <select
+              value={selectedLocation}
+              onChange={(e) => setSelectedLocation(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-sky-500"
+            >
+              <option value="All Regions">All Regions</option>
+              {GLOBAL_LOCATIONS.filter(l => l !== 'Worldwide (Global)').map((loc) => (
+                <option key={loc} value={loc}>
+                  {loc}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Status Select */}
@@ -587,6 +628,14 @@ export const ProjectsPage: React.FC = () => {
                 </button>
               </span>
             )}
+            {selectedLocation !== 'All Regions' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px]">
+                <span>Region: {selectedLocation}</span>
+                <button onClick={() => setSelectedLocation('All Regions')} className="hover:text-white">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
             {selectedSector && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px]">
                 <span>Sector: {selectedSector}</span>
@@ -666,6 +715,12 @@ export const ProjectsPage: React.FC = () => {
                 <div className="space-y-1.5 max-w-3xl">
                   <div className="flex flex-wrap items-center gap-2">
                     <SectorBadge sectorName={p.category} />
+                    {p.country && p.country !== 'Not specified' && (
+                      <span className="text-[10px] text-slate-300 font-medium bg-slate-800 border border-slate-700/80 px-2 py-0.5 rounded flex items-center gap-1">
+                        <MapPin className="w-3 h-3 text-emerald-400" />
+                        <span>{p.country}</span>
+                      </span>
+                    )}
                     {p.date && formatProjectDate(p.date) ? (
                       <span className="text-[10px] text-slate-300 font-mono bg-slate-800 border border-slate-700/80 px-2 py-0.5 rounded flex items-center gap-1">
                         <Calendar className="w-3 h-3 text-sky-400" />

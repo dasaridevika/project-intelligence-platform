@@ -1813,6 +1813,15 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           run.status = "completed";
           run.results_count = cachedResults.length;
           run.duration_ms = Date.now() - startTime;
+          run.completed_at = new Date().toISOString();
+          run.api_telemetry = {
+            exa_search: 0,
+            google_search: 0,
+            fallback_search: 0,
+            web_content_fetches: 0,
+            workers_ai_inferences: 0,
+            total_requests: 0
+          };
         }
         addEvent("search_completed", `Discovery complete via memory cache: ${cachedResults.length} projects linked in ${Date.now() - startTime}ms.`);
         return cachedResults;
@@ -2207,6 +2216,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     project_url: p.project_url,
     category: p.category,
     status: p.status,
+    country: p.country || "Not specified",
+    location: p.country || "Not specified",
     date: p.date && p.date !== "Latest 2026" ? p.date : "",
     http_status: p.http_status,
     summary: p.summary,
@@ -2667,11 +2678,12 @@ export default {
         });
       }
 
-      if (location && location !== "All Regions") {
+      if (location && location !== "All Regions" && location !== "Worldwide (Global)" && location !== "all") {
+        const locLower = location.toLowerCase();
         list = list.filter(p =>
-          [p.location_country, p.location_state, p.location_city].some(
-            l => l && l.toLowerCase().includes(location.toLowerCase())
-          )
+          [p.country, p.location, p.location_country, p.location_state, p.location_city].some(
+            l => l && l.toLowerCase().includes(locLower)
+          ) || matchesSelectedCountry(p.country || p.location, p.summary, p.canonical_name, location)
         );
       }
       if (status && status !== "All Statuses" && status !== "All Upcoming Statuses") {
@@ -2703,6 +2715,7 @@ export default {
     if (url.pathname === "/api/v1/projects/export") {
       const category = url.searchParams.get("category");
       const group = url.searchParams.get("group");
+      const location = url.searchParams.get("location");
       const status = url.searchParams.get("status");
       const search = url.searchParams.get("search")?.toLowerCase();
 
@@ -2736,6 +2749,15 @@ export default {
           const groupSectors = primarySectors.filter(s => s.group.toLowerCase() === groupLower);
           return groupSectors.some(s => pCat.includes(s.sector.toLowerCase()));
         });
+      }
+
+      if (location && location !== "All Regions" && location !== "Worldwide (Global)" && location !== "all") {
+        const locLower = location.toLowerCase();
+        list = list.filter(p =>
+          [p.country, p.location, p.location_country, p.location_state, p.location_city].some(
+            l => l && l.toLowerCase().includes(locLower)
+          ) || matchesSelectedCountry(p.country || p.location, p.summary, p.canonical_name, location)
+        );
       }
 
       if (status && status !== "All Statuses" && status !== "All Upcoming Statuses") {

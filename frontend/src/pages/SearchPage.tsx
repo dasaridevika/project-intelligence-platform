@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Activity,
@@ -28,7 +28,7 @@ import { ActivityEvent, PrimarySector, QueryTelemetry, SearchResultItem, SearchR
 import { SectorBadge, SectorSelector } from '../components/Sector';
 import { formatProjectDate } from './ProjectsPage';
 
-const GLOBAL_LOCATIONS = [
+export const GLOBAL_LOCATIONS = [
   'Worldwide (Global)',
   'United States',
   'Northern Virginia',
@@ -80,6 +80,26 @@ export const SearchPage: React.FC = () => {
   const [searchHistory, setSearchHistory] = useState<SearchRun[]>([]);
   const [showHistory, setShowHistory] = useState<boolean>(false);
 
+  const pollTimerRef = useRef<any>(null);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
+
+  const cleanupPollingAndSse = () => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+      unsubscribeRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      cleanupPollingAndSse();
+    };
+  }, []);
+
   const loadHistory = async () => {
     try {
       const runs = await api.listSearches(undefined, 10);
@@ -110,6 +130,8 @@ export const SearchPage: React.FC = () => {
     e.preventDefault();
     if (!query.trim() || query.length < 3) return;
 
+    cleanupPollingAndSse();
+
     setIsSubmitting(true);
     setErrorMsg(null);
     setTimelineEvents([]);
@@ -138,8 +160,9 @@ export const SearchPage: React.FC = () => {
         setQueryTelemetry(res.api_telemetry);
       }
 
-      if ((res as any).results && (res as any).results.length > 0) {
-        setDiscoveredResults((res as any).results);
+      if (res.status === 'completed' || Array.isArray((res as any).results)) {
+        const found = (res as any).results || [];
+        setDiscoveredResults(found.map((item: any) => ({ ...item, summary: cleanSummaryText(item.summary) })));
         setSearchProgress(100);
         setSearchStage('Discovery Complete!');
         setSearchCompleted(true);
@@ -150,7 +173,7 @@ export const SearchPage: React.FC = () => {
       setIsSubmitting(false);
 
       // Polling fallback
-      const pollTimer = setInterval(async () => {
+      pollTimerRef.current = setInterval(async () => {
         try {
           const run = await api.getSearchRun(searchId);
           if (run.status === 'completed' || run.status === 'partially_completed') {
@@ -162,11 +185,11 @@ export const SearchPage: React.FC = () => {
             if (resultsData.api_telemetry) {
               setQueryTelemetry(resultsData.api_telemetry);
             }
-            clearInterval(pollTimer);
+            cleanupPollingAndSse();
           } else if (run.status === 'failed') {
             setErrorMsg('Discovery search failed. Check system monitoring.');
             setSearchCompleted(true);
-            clearInterval(pollTimer);
+            cleanupPollingAndSse();
           }
         } catch {
           // ignore transient poll error
@@ -174,7 +197,7 @@ export const SearchPage: React.FC = () => {
       }, 2000);
 
       // Real-time Server-Sent Events (SSE) Stream
-      const unsubscribe = subscribeToSearchEvents(
+      unsubscribeRef.current = subscribeToSearchEvents(
         searchId,
         (msg) => {
           if (msg.data && typeof msg.data === 'object') {
@@ -210,6 +233,8 @@ export const SearchPage: React.FC = () => {
                     canonical_name: pName,
                     company: pDev,
                     developer: pDev,
+                    country: proj.country || 'Not specified',
+                    location: proj.country || 'Not specified',
                     date: formatProjectDate(proj.date),
                     project_url: proj.project_url,
                     category: proj.category || 'Capital Projects',
@@ -229,6 +254,7 @@ export const SearchPage: React.FC = () => {
               setSearchProgress(100);
               setSearchStage('Discovery Complete!');
               setSearchCompleted(true);
+              cleanupPollingAndSse();
               api.getSearchResults(searchId).then((r: any) => {
                 if (r.results && r.results.length > 0) {
                   setDiscoveredResults(r.results.map((item: any) => ({ ...item, summary: cleanSummaryText(item.summary) })));
@@ -244,13 +270,9 @@ export const SearchPage: React.FC = () => {
           // Fallback handled by pollTimer
         }
       );
-
-      return () => {
-        unsubscribe();
-        clearInterval(pollTimer);
-      };
     } catch (err: any) {
       setIsSubmitting(false);
+      cleanupPollingAndSse();
       setErrorMsg(err?.message || 'Failed to dispatch search execution.');
     }
   };
@@ -267,7 +289,8 @@ export const SearchPage: React.FC = () => {
       const st = `"${(p.status || '').replace(/"/g, '""')}"`;
       const http = p.http_status || 200;
       const sum = `"${(p.summary || '').replace(/"/g, '""')}"`;
-      csv += `${p.project_id},${name},${comp},${dt},${u},${cat},${st},${http},${sum}\n`;
+      const pid = p.project_id || (p as any).id || '';
+      csv += `${pid},${name},${comp},${dt},${u},${cat},${st},${http},${sum}\n`;
     }
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);

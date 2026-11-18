@@ -41,6 +41,8 @@ export interface Project {
   project_url: string;
   status: string;
   category: string;
+  country?: string;
+  location?: string;
   date?: string;
   http_status?: number;
   summary?: string;
@@ -55,6 +57,8 @@ export interface SearchResultItem {
   project_url: string;
   category: string;
   status: string;
+  country?: string;
+  location?: string;
   date?: string;
   http_status?: number;
   summary?: string;
