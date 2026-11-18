@@ -892,17 +892,53 @@ function inferCategory(projectName, summary, hintCategory) {
   return hintCategory || "Capital Infrastructure";
 }
 
-function extractStatusFromText(text) {
+function isCompletedOrOperationalFacility(url, title, summary, text) {
+  const u = (url || "").toLowerCase();
+  const t = (title || "").toLowerCase();
+  const s = (summary || "").toLowerCase();
+  const b = (text || "").toLowerCase();
+
+  // 1. URL slug patterns indicating the facility has already opened/completed
+  if (
+    /(?:-|_|\/)(?:is-open|now-open|opens|opened|launches-operations|begins-operations|goes-online|inaugurated|commissioned|completed)(?:-|_|\/|\.|$)/i.test(u)
+  ) {
+    return true;
+  }
+
+  // 2. Title & Headline patterns indicating opened/completed status
+  if (
+    /\b(?:is open|now open|has opened|opens data cent(?:er|re)|opened its|opens new|officially opened|opens megafab|opens plant|inaugurated|inaugurates|commenced commercial operations|now operational|commercial operation started|begins operations|went online|starts operations|has been commissioned|completes construction of)\b/i.test(t)
+  ) {
+    return true;
+  }
+
+  // 3. Summary & content patterns
+  if (
+    /\b(?:is now open|has officially opened|opened its doors|began operations|started commercial operations|is now operational|facility is open|operational since|first data cent(?:er|re) built .* is open)\b/i.test(s)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function extractStatusFromText(text, url) {
   const t = (text || "").toLowerCase();
+  const u = (url || "").toLowerCase();
+
+  // Priority 1: If explicitly completed, opened, or operational, drop it immediately!
+  if (
+    isCompletedOrOperationalFacility(u, "", t, "") ||
+    /\b(?:completed|operational|commissioned|opened|inaugurated|online|in service|commercial operation|is open|now open|has opened|opens data cent(?:er|re)|began operations)\b/i.test(t)
+  ) {
+    return null;
+  }
+
   if (t.includes("under construction") || t.includes("breaks ground") || t.includes("groundbreaking") || t.includes("underway") || t.includes("construction has begun")) {
     return "Under Construction";
   }
   if (t.includes("announced") || t.includes("announces") || t.includes("unveils") || t.includes("proposes") || t.includes("plans to build") || t.includes("secures funding")) {
     return "Announced";
-  }
-  // If explicitly completed or operational, return null
-  if (/\b(?:completed|operational|commissioned|opened|inaugurated|online|in service|commercial operation)\b/i.test(t)) {
-    return null;
   }
   if (/\b(?:planning|permitting|environmental review|feed|designed to|proposed)\b/i.test(t)) {
     return "Planning";
@@ -1477,7 +1513,7 @@ REJECT (MUST NOT EXTRACT):
 - LISTS, ROUNDUPS, COMPILATIONS & LISTICLES: Multi-project rankings, compilations, or roundup articles (e.g. "USA Top 50 Solar Projects", "Top 10 Data Centers", "Largest Solar Plants Roundup", "List of Major Projects"). NEVER extract an entire listicle, ranking, or roundup as a single project!
 - PIPELINES, INVENTORIES & STATISTICAL DATASETS: Industry pipeline overviews, generator rows, project databases, capacity trackers, or national statistics (e.g. "US solar development pipeline", "Solar Photovoltaic generator rows", "Monthly Generator Inventory", "State Energy Capacity Tracker"). These are statistical data tables or aggregate market overviews, NOT individual physical projects!
 - DATA/STATISTICS PUBLISHERS AS DEVELOPER: Candidates where the company is a government statistical agency, market research platform, energy data tracker, or publisher (e.g. EIA, Enerdatics, DMC Education, S&P Global, FERC, Wood Mackenzie, Rystad Energy, Statista) rather than a commercial project owner/developer erecting the facility. If no specific corporate owner/developer is named, REJECT IT.
-- Existing facilities already completed or operational in past years.
+- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING (e.g. "Singapore's first data center ... is open", "Nxera opens data centre", "opens new facility", "began commercial operations", "facility opened today", "now operational", "commissioned"). Even if opened very recently (in 2025 or 2026), ALREADY OPENED or OPERATIONAL facilities MUST BE REJECTED! We ONLY track upcoming pipeline under development (Announced, Planning, Under Construction). NEVER label an already opened or operating facility as "Under Construction"!
 - Tool, equipment, or machinery product launches (e.g. wafer dicing systems, plasma systems, lithography tools, metrology tools). Equipment shipped to customers is NOT a capital project!
 - Material, wafer, or substrate product announcements (e.g. single-crystal diamond wafers, substrate materials).
 - R&D partnerships, industry collaboration initiatives, or technology roadmaps without a physical facility buildout.
@@ -1960,6 +1996,10 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       if (isGenericReportOrDirectory(cleanUrl, projectName, companyName, aiP.summary)) {
         continue;
       }
+      if (isCompletedOrOperationalFacility(cleanUrl, projectName, aiP.summary, matchedCandidate.text || matchedCandidate.snippet)) {
+        addEvent("candidate_filtered", `DROPPED (Completed/Operational Facility): '${projectName}' (URL: ${cleanUrl}) has already opened or commenced operations.`);
+        continue;
+      }
 
       // Resolve project location: do NOT default to requested country
       let projectCountry = null;
@@ -2008,6 +2048,9 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       if (fb && fb.is_project !== false && isValidCompanyEntity(fb.company)) {
         const normDev = normalizeDeveloperName(fb.company, item.cleanUrl);
         if (isGenericReportOrDirectory(item.cleanUrl, fb.canonical_name || item.title, normDev, fb.summary)) {
+          continue;
+        }
+        if (isCompletedOrOperationalFacility(item.cleanUrl, fb.canonical_name || item.title, fb.summary, item.text || item.snippet)) {
           continue;
         }
 
