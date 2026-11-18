@@ -1407,6 +1407,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     const isValidCache = cachedResults.length > 0 && cachedResults.every(r => 
       r.canonical_name && 
       !r.canonical_name.startsWith("Project from") && 
+      !/^(?:none|n\/a|null|unknown|tbd|capital project)$/i.test(r.canonical_name.trim()) &&
+      !/^(?:none|n\/a|null|unknown|tbd|project developer)$/i.test((r.company || r.developer || "").trim()) &&
       !hasNonLatinScript(r.canonical_name) &&
       !hasNonLatinScript(r.summary) &&
       !isForeignLanguageText(r.summary) &&
@@ -1572,9 +1574,12 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         c.canonical_name &&
         !c.canonical_name.startsWith("Project from") &&
         !c.canonical_name.startsWith("Capital Project at") &&
+        !/^(?:none|n\/a|null|unknown|tbd|capital project)$/i.test(c.canonical_name.trim()) &&
+        !/^(?:none|n\/a|null|unknown|tbd|project developer)$/i.test((c.company || c.developer || "").trim()) &&
         !hasNonLatinScript(c.canonical_name) &&
         !hasNonLatinScript(c.summary) &&
         !isForeignLanguageText(c.summary) &&
+        !isGenericReportOrDirectory(cleanUrl, c.canonical_name, c.company || c.developer, c.summary) &&
         isValidCompanyEntity(c.company || c.developer) &&
         ["Announced", "Planning", "Under Construction"].includes(c.status)
       );
