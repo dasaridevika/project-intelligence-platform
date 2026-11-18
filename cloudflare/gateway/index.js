@@ -230,30 +230,27 @@ function isForeignLanguageUrl(parsed) {
     const path = parsed.pathname.toLowerCase();
     
     // Explicit English edition overrides
-    if (path.includes("/en/") || path.includes("/en-") || path.includes("/en_") || path.includes("/english/") || host.startsWith("en.")) {
+    if (path.includes("/en/") || path.includes("/en-") || path.includes("/en_") || path.includes("/english/") || host.startsWith("en.") || host.startsWith("english.")) {
       return false;
     }
     
-    // Non-English ccTLDs that primarily publish in non-English
-    const nonEnglishTlds = [".cn", ".tw", ".ru", ".jp", ".kr", ".vn", ".th", ".ir", ".pl", ".cz", ".fr", ".de", ".it", ".es", ".br", ".nl"];
-    for (const tld of nonEnglishTlds) {
+    // Do NOT block ccTLDs for countries supported in the platform dropdown (.de, .es, .nl, .jp, .br, .tw, .kr, etc.)
+    // Only block ccTLDs from non-supported regions
+    const blockedTlds = [".cn", ".ru", ".ir"];
+    for (const tld of blockedTlds) {
       if (host.endsWith(tld)) return true;
     }
     
-    // Non-English language subpath prefixes: /zh/, /zh-tw/, /zh-cn/, /ja/, /ko/, /ru/, /fr/, /de/, /es/, /it/
-    const foreignPathPrefixes = [/^\/zh\b/i, /^\/zh-[a-z]+\b/i, /^\/ja\b/i, /^\/ko\b/i, /^\/ru\b/i, /^\/fr\b/i, /^\/de\b/i, /^\/es\b/i, /^\/it\b/i];
+    // Non-supported language subpath prefixes
+    const foreignPathPrefixes = [/^\/zh\b/i, /^\/zh-[a-z]+\b/i, /^\/ru\b/i];
     for (const p of foreignPathPrefixes) {
       if (p.test(path)) return true;
     }
     
-    // Known exclusively non-English news domains
+    // Exclusively non-supported state-controlled news domains
     const nonEnglishDomains = [
-      "udn.com", "chinatimes.com", "cna.com.tw", "ettoday.net", "ltn.com.tw",
       "sina.com", "sohu.com", "163.com", "xinhuanet.com", "people.com.cn", "huanqiu.com",
-      "nikkei.com", "asahi.com", "yomiuri.co.jp", "mainichi.jp",
-      "chosun.com", "donga.com", "joins.com", "yna.co.kr",
-      "tass.ru", "ria.ru", "rbc.ru", "lenta.ru", "kommersant.ru",
-      "latribune.fr", "lemonde.fr", "lefigaro.fr", "lesechos.fr", "elpais.com", "elmundo.es"
+      "tass.ru", "ria.ru", "rbc.ru", "lenta.ru", "kommersant.ru"
     ];
     for (const d of nonEnglishDomains) {
       if (host === d || host.endsWith("." + d)) return true;
