@@ -874,6 +874,80 @@ function extractDateFromTextOrUrl(text, url, publishedDate) {
   return "Latest 2026";
 }
 
+const LOCATION_DICTIONARY = {
+  "united states": [
+    "united states", "usa", "u.s.", "u.s.a.", "america", "texas", "california", "virginia", "northern virginia",
+    "arizona", "ohio", "new york", "idaho", "georgia", "north carolina", "michigan", "indiana", "oregon",
+    "illinois", "tennessee", "nevada", "florida", "colorado", "louisiana", "kansas", "wisconsin", "iowa",
+    "minnesota", "missouri", "alabama", "south carolina", "kentucky", "oklahoma", "utah", "new mexico",
+    "nebraska", "arkansas", "mississippi", "dallas", "austin", "houston", "phoenix", "richland parish", "ashburn", "loudoun"
+  ],
+  "texas": ["texas", "dallas", "austin", "houston", "fort worth", "san antonio", "plano", "el paso"],
+  "northern virginia": ["northern virginia", "loudoun", "ashburn", "richmond", "prince william", "fairfax"],
+  "arizona": ["arizona", "phoenix", "mesa", "chandler", "scottsdale", "tucson"],
+  "california": ["california", "silicon valley", "santa clara", "san jose", "los angeles", "san francisco", "sacramento"],
+  "india": [
+    "india", "indian", "gujarat", "karnataka", "bengaluru", "bangalore", "mumbai", "maharashtra",
+    "tamil nadu", "chennai", "telangana", "hyderabad", "noida", "uttar pradesh", "odisha", "assam",
+    "sanand", "dholera", "andhra pradesh", "rajasthan", "madhya pradesh", "kerala", "haryana", "delhi", "punjab"
+  ],
+  "germany": [
+    "germany", "german", "erfurt", "dresden", "munich", "berlin", "frankfurt", "magdeburg",
+    "brandenburg", "saarland", "bavaria", "saxony", "leipzig", "stuttgart", "hessen"
+  ],
+  "united kingdom": [
+    "united kingdom", "england", "scotland", "wales", "northern ireland", "london", "manchester",
+    "birmingham", "cambridge", "oxford", "bristol", "leeds"
+  ],
+  "ireland": ["ireland", "irish", "dublin", "cork", "galway", "limerick"],
+  "netherlands": ["netherlands", "dutch", "amsterdam", "eindhoven", "rotterdam"],
+  "spain": ["spain", "spanish", "madrid", "barcelona", "aragon", "valencia"],
+  "japan": ["japan", "japanese", "tokyo", "hokkaido", "kumamoto", "chitose", "osaka", "yokohama"],
+  "south korea": ["south korea", "korea", "korean", "yongin", "seoul", "gyeonggi", "pyeongtaek", "incheon", "busan"],
+  "taiwan": ["taiwan", "taiwanese", "hsinchu", "taichung", "tainan", "kaohsiung", "taipei"],
+  "singapore": ["singapore"],
+  "malaysia": ["malaysia", "malaysian", "johor", "kuala lumpur", "penang"],
+  "australia": ["australia", "australian", "sydney", "melbourne", "queensland", "brisbane", "perth", "new south wales", "victoria"],
+  "saudi arabia": ["saudi", "arabia", "riyadh", "jeddah", "neom", "dammam"],
+  "united arab emirates": ["united arab emirates", "uae", "dubai", "abu dhabi", "sharjah"],
+  "brazil": ["brazil", "brazilian", "sao paulo", "rio de janeiro"],
+  "canada": ["canada", "canadian", "ontario", "quebec", "british columbia", "alberta", "toronto", "montreal", "vancouver"]
+};
+
+function matchesSelectedCountry(detectedLocation, text, title, selectedCountry) {
+  if (!selectedCountry) return true;
+  const sel = selectedCountry.toLowerCase().trim();
+  if (sel === "worldwide (global)" || sel === "global" || sel === "all regions" || sel === "all" || sel === "") {
+    return true;
+  }
+
+  const combined = ((detectedLocation || "") + " " + (title || "") + " " + (text || "")).toLowerCase();
+  
+  const aliases = LOCATION_DICTIONARY[sel] || [sel];
+  const hasTargetMatch = aliases.some(alias => {
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`\\b${escaped}\\b`, "i");
+    return regex.test(combined);
+  });
+
+  return hasTargetMatch;
+}
+
+function extractLocationFromCandidate(text, title, url) {
+  const combined = ((title ? title + " " : "") + (text ? text.slice(0, 800) : "")).toLowerCase();
+  for (const [canonicalCountry, aliases] of Object.entries(LOCATION_DICTIONARY)) {
+    for (const alias of aliases) {
+      if (alias.length < 3) continue;
+      const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`\\b${escaped}\\b`, "i");
+      if (regex.test(combined)) {
+        return canonicalCountry.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+      }
+    }
+  }
+  return null;
+}
+
 function parseLlmJson(rawOutput) {
   if (!rawOutput || typeof rawOutput !== "string") return null;
   let clean = rawOutput.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
@@ -1643,12 +1717,15 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         ["Announced", "Planning", "Under Construction"].includes(c.status)
       );
       if (validCached.length > 0) {
-        validCached.forEach(p => {
+        for (const p of validCached) {
+          if (requestedLocation && !matchesSelectedCountry(p.country, p.summary, p.canonical_name, requestedLocation)) {
+            continue;
+          }
           const freshCategory = inferCategory(p.canonical_name, p.summary, p.category || targetCategory);
           const updated = { ...p, category: freshCategory, summary: cleanSummaryText(p.summary) };
           extractedProjects.push(updated);
           addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${p.canonical_name}' (Source: ${cleanUrl})`, "ai_worker", { project: updated, canonical_name: p.canonical_name });
-        });
+        }
         continue;
       }
     }
@@ -1706,6 +1783,20 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         continue;
       }
 
+      // Resolve project location: do NOT default to requested country
+      let projectCountry = null;
+      if (aiP.location && !/^(?:not specified|unknown|global|tbd|none|n\/a)$/i.test(aiP.location.trim())) {
+        projectCountry = aiP.location.trim();
+      } else {
+        projectCountry = extractLocationFromCandidate(matchedCandidate.text || matchedCandidate.snippet, matchedCandidate.title, cleanUrl);
+      }
+
+      // Filter results by selected country: drop projects whose location does not match
+      if (requestedLocation && !matchesSelectedCountry(projectCountry, matchedCandidate.text || matchedCandidate.snippet, matchedCandidate.title, requestedLocation)) {
+        addEvent("candidate_filtered", `DROPPED (Location Mismatch): '${projectName}' location '${projectCountry || "Unspecified"}' does not match target country '${requestedLocation}'`);
+        continue;
+      }
+
       let projectDate = aiP.date || matchedCandidate.published_date || "Latest 2026";
       const projId = "proj-" + crypto.randomUUID().slice(0, 8);
       const projectRecord = {
@@ -1716,7 +1807,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         project_url: cleanUrl,
         status: projectStatus,
         category: inferCategory(projectName, aiP.summary, aiP.category || targetCategory),
-        country: aiP.location || targetLocation,
+        country: projectCountry || "Not specified",
         date: projectDate,
         http_status: 200,
         summary: cleanSummaryText(aiP.summary || matchedCandidate.snippet || ""),
@@ -1740,6 +1831,13 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         if (isGenericReportOrDirectory(item.cleanUrl, fb.canonical_name || item.title, normDev, fb.summary)) {
           continue;
         }
+
+        const detectedLocation = extractLocationFromCandidate(item.text || item.snippet, item.title, item.cleanUrl);
+
+        if (requestedLocation && !matchesSelectedCountry(detectedLocation, item.text || item.snippet, item.title, requestedLocation)) {
+          continue;
+        }
+
         const projId = "proj-" + crypto.randomUUID().slice(0, 8);
         const projectRecord = {
           id: projId,
@@ -1749,7 +1847,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           project_url: item.cleanUrl,
           status: fb.status || "Planning",
           category: inferCategory(fb.canonical_name || item.title, fb.summary, fb.category || targetCategory),
-          country: targetLocation,
+          country: detectedLocation || "Not specified",
           date: fb.date || item.published_date || "Latest 2026",
           http_status: 200,
           summary: cleanSummaryText(fb.summary || item.snippet || ""),
@@ -1768,6 +1866,9 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
 
   for (const proj of extractedProjects) {
     if (!proj || !proj.canonical_name) continue;
+    if (requestedLocation && !matchesSelectedCountry(proj.country, proj.summary, proj.canonical_name, requestedLocation)) {
+      continue;
+    }
     if (isGenericReportOrDirectory(proj.project_url, proj.canonical_name, proj.company || proj.developer, proj.summary)) {
       continue;
     }
