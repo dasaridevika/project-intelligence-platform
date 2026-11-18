@@ -760,17 +760,17 @@ function inferCategory(projectName, summary, hintCategory) {
     return "Wind Energy";
   }
 
-  // 5. Hyperscale Data Centers
-  if (/\b(?:data center|data centre|hyperscale|colocation|cloud campus|stargate|ai compute campus|ai data center|technology campus|hyperion campus|colossus)\b/i.test(combined)) {
-    return "Hyperscale Data Center";
-  }
-
-  // 6. Semiconductor Manufacturing
+  // 5. Semiconductor Manufacturing (Checked before Data Center so "Micron DRAM fabs for AI data centers" is Semiconductor)
   if (
-    /\b(?:semiconductor|silicon wafer|wafer fab|megafab|cleanroom|microchip|foundry|tsmc|asml|micron|infineon|intel fab|globalfoundries)\b/i.test(combined) ||
-    (/\bfab\b/i.test(combined) && !/\bbattery\b/i.test(combined))
+    /\b(?:semiconductor|silicon wafer|wafer fab|megafab|cleanroom|microchip|chip factory|memory chip|foundry|tsmc|asml|micron|infineon|intel fab|globalfoundries|sk hynix)\b/i.test(combined) ||
+    (/\bfabs?\b/i.test(combined) && !/\bbattery\b/i.test(combined) && !/\bdata\s*center\s*(?:campus|project|facility)\b/i.test(projectName.toLowerCase()))
   ) {
     return "Semiconductor Manufacturing";
+  }
+
+  // 6. Hyperscale Data Centers
+  if (/\b(?:data center|data centre|hyperscale|colocation|cloud campus|stargate|ai compute campus|ai data center|technology campus|hyperion campus|colossus)\b/i.test(combined)) {
+    return "Hyperscale Data Center";
   }
 
   // 7. Clean Hydrogen
@@ -1624,6 +1624,12 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         companyName = extractCompanyDynamically(matchedCandidate.text || matchedCandidate.snippet, matchedCandidate.title, cleanUrl);
       }
       companyName = normalizeDeveloperName(companyName, cleanUrl);
+      if (!projectName || /^(?:none|n\/a|null|not specified|unknown|tbd|capital project)$/i.test(projectName.trim())) {
+        continue;
+      }
+      if (!companyName || /^(?:none|n\/a|null|not specified|unknown|tbd|project developer|leading developer)$/i.test(companyName.trim())) {
+        continue;
+      }
       if (!isValidCompanyEntity(companyName)) {
         continue;
       }
