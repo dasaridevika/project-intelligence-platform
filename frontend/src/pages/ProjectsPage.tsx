@@ -23,7 +23,7 @@ import {
   Tag,
   X
 } from 'lucide-react';
-import { api, cleanSummaryText } from '../api';
+import { api, cleanSummaryText, validateAndSanitizeProject } from '../api';
 import { PrimarySector, Project, SearchRun } from '../types';
 import { SectorBadge, findPrimarySector } from '../components/Sector';
 import { GLOBAL_LOCATIONS } from './SearchPage';
@@ -131,32 +131,10 @@ export const ProjectsPage: React.FC = () => {
           ]);
           setSearchRun(run);
           const mapped: Project[] = (res.results || [])
-            .filter((r: any) => {
-              const s = (r.status || '').toLowerCase().trim();
-              return s === 'announced' || s === 'planning' || s === 'under construction';
-            })
-            .filter((r: any) => !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(r.canonical_name || r.name || r.title || ''))
-            .map((r: any) => {
-              const s = (r.status || '').toLowerCase().trim();
-              const st = s === 'under construction' ? 'Under Construction' : s === 'announced' ? 'Announced' : 'Planning';
-              return {
-                id: r.project_id || r.id,
-                canonical_name: r.canonical_name || r.name || r.title || r.project?.canonical_name || 'Capital Project',
-                company: r.company || r.developer || r.project?.company || r.project?.developer || 'Leading Developer',
-                developer: r.developer || r.company || r.project?.developer || r.project?.company || 'Leading Developer',
-                country: r.country || r.location || r.project?.country || r.project?.location || 'Not specified',
-                location: r.location || r.country || r.project?.location || r.project?.country || 'Not specified',
-                date: formatProjectDate(r.date || r.project?.date),
-                project_url: r.project_url || r.project?.project_url || '',
-                category: r.category || 'Capital Projects',
-                status: st,
-                http_status: r.http_status || 200,
-                summary: cleanSummaryText(r.summary || r.project?.summary || ''),
-                created_at: new Date().toISOString(),
-              };
-            });
+            .map((r: any) => validateAndSanitizeProject(r.project || r))
+            .filter((p): p is Project => p !== null);
           setProjects(mapped);
-          setTotalCount(res.total_results || mapped.length);
+          setTotalCount(mapped.length);
         } else {
           const res = await api.listProjects({
             search: searchQuery || undefined,
@@ -166,16 +144,8 @@ export const ProjectsPage: React.FC = () => {
             status: statusFilter || undefined,
           });
           const validProjects = (res.projects || [])
-            .map((p: Project) => ({
-              ...p,
-              country: p.country || p.location || 'Not specified',
-              location: p.location || p.country || 'Not specified',
-              summary: cleanSummaryText(p.summary)
-            }))
-            .filter((p: Project) => {
-              const s = (p.status || '').toLowerCase();
-              return !s.includes('operational') && !s.includes('completed') && !s.includes('commissioned');
-            });
+            .map((p: any) => validateAndSanitizeProject(p))
+            .filter((p): p is Project => p !== null);
           setProjects(validProjects);
           setTotalCount(validProjects.length);
         }
