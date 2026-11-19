@@ -384,6 +384,7 @@ export function validateAndSanitizeProject(p: any): Project | null {
   const cleanName = cleanProjectTitle(rawName, rawCompany);
   if (!cleanName || cleanName.length < 3) return null;
   if (/^(?:top\s+\d+|overview|pipeline|generator\s+rows|database|report)\b/i.test(cleanName)) return null;
+  if (/^<.*>$/i.test(cleanName) || /<(?:facility|project|campus|company|developer)\s+name>/i.test(cleanName) || /^(?:<facility\s+name>|<project\s+name>|<campus\s+name>)\b/i.test(cleanName)) return null;
   if (isNonProjectOrReport(rawUrl, cleanName, rawCompany, summary)) return null;
 
   // 6. Infer category

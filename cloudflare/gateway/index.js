@@ -1228,6 +1228,7 @@ function validateAndSanitizeProjectRecord(p) {
   const cleanName = cleanProjectName(rawName, rawCompany);
   if (!cleanName || cleanName.length < 3) return null;
   if (/^(?:top\s+\d+|overview|pipeline|generator\s+rows|database|report)\b/i.test(cleanName)) return null;
+  if (/^<.*>$/i.test(cleanName) || /<(?:facility|project|campus|company|developer)\s+name>/i.test(cleanName) || /^(?:<facility\s+name>|<project\s+name>|<campus\s+name>)\b/i.test(cleanName)) return null;
   if (isGenericReportOrDirectory(rawUrl, cleanName, rawCompany, summary)) return null;
 
   // 6. Infer and validate accurate category
@@ -1281,7 +1282,11 @@ const PROJECT_MATCH_STOPWORDS = new Set([
   "developments", "system", "systems", "solutions", "services", "properties", "property",
   "partners", "partnership", "platform", "platforms", "global", "national", "international", 
   "state", "first", "second", "third", "fourth", "initiative", "rules", "grid", "capacity", 
-  "mega", "strategic", "announces", "plans", "into", "joint", "venture", "market", "markets"
+  "mega", "strategic", "announces", "plans", "into", "joint", "venture", "market", "markets",
+  // Generic industry & sector descriptors:
+  "solar", "storage", "battery", "batteries", "photovoltaic", "wind", "hydrogen", "semiconductor",
+  "manufacturing", "clean", "renewables", "renewable", "electric", "electricity", "generation",
+  "epc", "engineering", "procurement", "consulting", "consultancy", "contractor", "contractors"
 ]);
 
 function candidateMentionsProject(candidate, aiP) {
@@ -1294,14 +1299,33 @@ function candidateMentionsProject(candidate, aiP) {
   const comp = (aiP.company || "").toLowerCase().trim();
   const name = (aiP.canonical_name || "").toLowerCase().trim();
 
-  // 1. Company check with word boundary
+  // 1. Distinctive project tokens (proper names like "Naver", "Sejong", "Gumi", "Paju")
+  const nameTokens = name
+    .split(/[\s\-–—/]+/)
+    .map(t => t.toLowerCase().replace(/[^a-z0-9]/g, ""))
+    .filter(t => t.length >= 4 && !PROJECT_MATCH_STOPWORDS.has(t));
+
+  let nameTokenMatches = 0;
+  for (const tok of nameTokens) {
+    const tokRegex = new RegExp(`\\b${tok}\\b`, 'i');
+    if (tokRegex.test(fullContent)) {
+      nameTokenMatches++;
+    }
+  }
+
+  // If the project has distinctive tokens, at least one MUST be mentioned in the candidate content!
+  // If the candidate content does not mention the project at all (e.g. hallucinated prompt names), REJECT IT!
+  if (nameTokens.length > 0 && nameTokenMatches === 0) {
+    return false;
+  }
+
+  // 2. Company check with word boundary
   let compMatched = false;
   if (comp && comp.length >= 3 && !PROJECT_MATCH_STOPWORDS.has(comp)) {
     const compRegex = new RegExp(`\\b${comp.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
     if (compRegex.test(fullContent)) {
       compMatched = true;
     } else {
-      // Also check core proper noun tokens from company (e.g. "Macquarie", "Gabia", "Samsung", "Digital Edge")
       const compTokens = comp
         .split(/[\s\-–—/]+/)
         .map(t => t.toLowerCase().replace(/[^a-z0-9]/g, ""))
@@ -1316,27 +1340,13 @@ function candidateMentionsProject(candidate, aiP) {
     }
   }
 
-  // 2. Distinctive project tokens (proper names like "Naver", "Sejong", "Gumi", "Paju")
-  const nameTokens = name
-    .split(/[\s\-–—/]+/)
-    .map(t => t.toLowerCase().replace(/[^a-z0-9]/g, ""))
-    .filter(t => t.length >= 4 && !PROJECT_MATCH_STOPWORDS.has(t));
-
-  let nameTokenMatches = 0;
-  for (const tok of nameTokens) {
-    const tokRegex = new RegExp(`\\b${tok}\\b`, 'i');
-    if (tokRegex.test(fullContent)) {
-      nameTokenMatches++;
-    }
-  }
-
-  // If company matched AND at least 1 distinctive project token matched: solid match
-  if (compMatched && (nameTokens.length === 0 || nameTokenMatches >= 1)) {
+  // Both company and distinctive project token matched: solid match
+  if (compMatched && nameTokenMatches >= 1) {
     return true;
   }
 
-  // If company matched and candidate URL or title specifically mentions the company:
-  if (compMatched && (cUrl.includes(comp) || cTitle.includes(comp))) {
+  // Company matched and URL or title specifically mentions company AND at least 1 project token matches
+  if (compMatched && (cUrl.includes(comp) || cTitle.includes(comp)) && (nameTokens.length === 0 || nameTokenMatches >= 1)) {
     return true;
   }
 
@@ -1655,7 +1665,7 @@ ONLY REJECT (set "is_project": false) IF:
 8. The page is purely macroeconomic analysis, market forecast, or paid market research report.
 
 CRITICAL REQUIREMENT - COMPANY ENTITY:
-- The "company" field MUST be the actual corporate developer, operator, or owner entity (e.g. NextEra Energy, Micron Technology, TSMC, Core Scientific, Equinix, Intel).
+- The "company" field MUST be the actual corporate developer, operator, or owner entity (e.g. "<Developer Corp>", "<Energy Company>").
 - NEVER use data publishers or statistics agencies (e.g. EIA, Enerdatics, DMC Education), regulatory commissions (e.g. "Public Service Commission"), author bylines ("Written by..."), or generic terms ("Project Developer", "Understanding").
 
 CRITICAL REQUIREMENT - ACCURATE CATEGORY:
@@ -1677,8 +1687,8 @@ If ONE OR MORE VALID PROJECTS:
   "is_project": true,
   "projects": [
     {
-      "canonical_name": "Official specific name of the project or facility in English",
-      "company": "Specific company, developer, or operator building/investing in the project in English (NOT the media/news outlet)",
+      "canonical_name": "Official specific name of the project or facility in English (e.g. '<Facility Name> Solar Park', '<Campus Name> Data Center'). Extract ONLY real project names from the webpage; NEVER output example placeholder names.",
+      "company": "Specific company, developer, or operator building/investing in the project in English (e.g. '<Developer Corp>', '<Energy Company>'). Extract ONLY the real company from the webpage.",
       "location": "City, State/Region, Country in English",
       "status": "Announced | Planning | Under Construction",
       "category": "Industrial category in English (e.g. Hyperscale Data Center, Semiconductor Megafab, Battery Gigafactory, Solar Farm)",
@@ -1858,8 +1868,8 @@ Examine the numbered candidates. For each candidate that discusses a genuine, re
 Extract the required project parameters in fluent, standard English.
 
 A VALID CAPITAL PROJECT MUST:
-1. Be a concrete, individual physical facility, building, megafab, data center campus, power plant, solar/battery farm, or facility expansion (e.g. "Desert Sunlight Solar Farm", "Vance Data Center Campus"). It must be ONE distinct development, NOT an aggregate industry category, ranking, or multi-project inventory.
-2. Have an identifiable corporate developer, owner, or operator building, financing, or operating it (e.g. NextEra Energy, Duke Energy, Amazon, Microsoft, TSMC, Samsung, Meta). NEVER return a data publisher, research platform, government statistical bureau, or news outlet as the developer (e.g. EIA, Enerdatics, DMC Education, S&P Global, FERC, Wood Mackenzie, Rystad Energy, Statista, Reuters, Bloomberg, ConstructConnect, DCN, Data Center Dynamics).
+1. Be a concrete, individual physical facility, building, megafab, data center campus, power plant, solar/battery farm, or facility expansion (e.g. "<Facility Name> Solar Park", "<Campus Name> Data Center"). It must be ONE distinct development, NOT an aggregate industry category, ranking, or multi-project inventory.
+2. Have an identifiable corporate developer, owner, or operator building, financing, or operating it (e.g. "<Developer Corp>", "<Energy Company>"). NEVER return a data publisher, research platform, government statistical bureau, or news outlet as the developer (e.g. EIA, Enerdatics, DMC Education, S&P Global, FERC, Wood Mackenzie, Rystad Energy, Statista, Reuters, Bloomberg, ConstructConnect, DCN, Data Center Dynamics).
 3. Have a verifiable location (city, state, region, or country).
 4. Be in one of these 3 active development lifecycle stages (ALL 3 ARE VALID):
    - "Announced": Newly announced investments, proposed facilities, capital expansion plans, or financing rounds for buildouts.
@@ -1889,9 +1899,9 @@ Return ONLY a valid JSON object in this exact schema:
     {
       "candidate_index": 1,
       "source_url": "The exact URL copied verbatim from the [Candidate #ID] block above where this project is described",
-      "canonical_name": "Official, clean project or facility name in English (e.g. 'Desert Pine Solar and Storage', 'Panamint Solar Project Phase 1', 'Sequoia Solar Farm'). MUST NOT be a journalistic news headline or sentence, and MUST NOT include action verbs or headlines like 'Secures Loans for', 'Secures Financing for', 'Wins Approval for', 'Breaks Ground on', 'Go Fully Operational', or 'just came online'.",
-      "company": "Specific corporate developer or owner building the project in English",
-      "location": "City, State/Region, Country in English",
+      "canonical_name": "Official, clean project or facility name in English (e.g. '<Facility Name> Solar Park', '<Project Name> Phase 1', '<Campus Name> Data Center'). MUST NOT be a journalistic news headline or sentence, and MUST NOT include action verbs or headlines like 'Secures Loans for', 'Secures Financing for', 'Wins Approval for', 'Breaks Ground on', 'Go Fully Operational', or 'just came online'. DO NOT invent or copy example placeholder names; extract ONLY the actual project name described in the candidate text.",
+      "company": "Specific corporate developer or owner building the project in English (e.g. '<Developer Corp>', '<Energy Company>'). Extract ONLY the real company described in the candidate content.",
+      "location": "City, State/Region, Country in English (e.g. '<City>, <State/Province>, <Country>')",
       "status": "Announced | Planning | Under Construction",
       "category": "Industrial category (e.g. Hyperscale Data Center, Semiconductor Manufacturing, Battery Gigafactory, Utility Solar)",
       "date": "Target start, completion, or announcement date (e.g. 2026, 2027) if explicitly stated in candidate content, or empty string \"\" if not mentioned",
