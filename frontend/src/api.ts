@@ -478,23 +478,13 @@ export function cleanSummaryText(raw?: string): string {
 
 function getStoredProjects(): Project[] {
   try {
-    let raw = localStorage.getItem(STORAGE_PROJECTS_KEY);
-    if (!raw) {
-      const v5Raw = localStorage.getItem('pi_persisted_projects_v5');
-      if (v5Raw) {
-        try {
-          const v5List = JSON.parse(v5Raw);
-          if (Array.isArray(v5List)) {
-            const sanitized = v5List.map(validateAndSanitizeProject).filter((p: Project | null): p is Project => p !== null);
-            localStorage.setItem(STORAGE_PROJECTS_KEY, JSON.stringify(sanitized));
-            localStorage.removeItem('pi_persisted_projects_v5');
-            return sanitized;
-          }
-        } catch {}
-        localStorage.removeItem('pi_persisted_projects_v5');
-      }
-      return [];
-    }
+    // Purge legacy contaminated storage keys so old bad data cannot resurface
+    localStorage.removeItem('pi_persisted_projects_v5');
+    localStorage.removeItem('pi_persisted_projects');
+    localStorage.removeItem('pi_persisted_searches_v5');
+
+    const raw = localStorage.getItem(STORAGE_PROJECTS_KEY);
+    if (!raw) return [];
     const list = JSON.parse(raw);
     return Array.isArray(list)
       ? list.map(validateAndSanitizeProject).filter((p: Project | null): p is Project => p !== null)
@@ -571,17 +561,10 @@ export const api = {
       if (Array.isArray(serverRuns) && serverRuns.length > 0) {
         saveStoredSearches(serverRuns);
       }
-      const stored = getStoredSearches();
-      // If server store is fresh/empty after a redeploy, sync stored searches back to server!
-      if (serverRuns.length === 0 && stored.length > 0) {
-        apiClient.post('/sync', { searches: stored }).catch(() => {});
-        return stored;
-      }
       return serverRuns;
     } catch (err) {
-      const stored = getStoredSearches();
-      if (stored.length > 0) return stored;
-      throw err;
+      console.warn('Failed to fetch searches:', err);
+      return [];
     }
   },
 
@@ -636,32 +619,13 @@ export const api = {
       if (serverProjects.length > 0) {
         saveStoredProjects(serverProjects);
       }
-      const stored = getStoredProjects();
-      // If server store is fresh/empty after a redeploy, sync stored projects back to server!
-      if (serverProjects.length === 0 && stored.length > 0) {
-        apiClient.post('/sync', { projects: stored }).catch(() => {});
-        return {
-          total: stored.length,
-          page: 1,
-          page_size: stored.length,
-          projects: stored,
-        };
-      }
       return {
         ...res.data,
-        total: serverProjects.length,
+        total: res.data?.total !== undefined ? res.data.total : serverProjects.length,
         projects: serverProjects,
       };
     } catch (err) {
-      const stored = getStoredProjects();
-      if (stored.length > 0) {
-        return {
-          total: stored.length,
-          page: 1,
-          page_size: stored.length,
-          projects: stored,
-        };
-      }
+      console.warn('Failed to fetch projects:', err);
       return { total: 0, page: 1, page_size: 50, projects: [] };
     }
   },

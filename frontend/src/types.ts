@@ -18,6 +18,8 @@ export interface QueryTelemetry {
 export interface SearchRun {
   id: string;
   query: string;
+  location?: string;
+  category?: string;
   parsed_query?: {
     category?: string;
     location?: string;

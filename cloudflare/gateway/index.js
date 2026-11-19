@@ -180,19 +180,33 @@ function getQueryCacheKey(query, sector, country) {
   return `${q}::${s}::${c}`;
 }
 
+const KV_PROJECTS_KEY = "projects_v6";
+const KV_SEARCHES_KEY = "searches_v6";
+
 // Durable KV Persistence Layer (Survives worker code changes & redeploys)
 async function hydrateStore(env) {
   if (!env.PROJECT_DATA) return;
   try {
+    // Purge legacy unvalidated KV keys so contaminated records cannot resurrect
+    env.PROJECT_DATA.delete("projects").catch(() => {});
+    env.PROJECT_DATA.delete("searches").catch(() => {});
+    env.PROJECT_DATA.delete("pi_persisted_projects_v5").catch(() => {});
+
     if (store.projects.size === 0) {
-      const savedProjects = await env.PROJECT_DATA.get("projects", "json");
+      const savedProjects = await env.PROJECT_DATA.get(KV_PROJECTS_KEY, "json");
       if (Array.isArray(savedProjects)) {
         for (const rawP of savedProjects) {
           const validated = validateAndSanitizeProjectRecord(rawP);
           if (validated) {
+            if (isCompletedOrOperationalFacility(validated.project_url, validated.canonical_name, validated.summary, validated.text || "")) {
+              continue;
+            }
+            if (validated.date && formatDisplayDate(validated.date) === null) {
+              continue;
+            }
             store.projects.set(validated.id, validated);
             if (validated.project_url) {
-              store.urlCache.set(validated.project_url, validated);
+              store.urlCache.set(validated.project_url, [validated]);
             }
           }
         }
@@ -201,7 +215,11 @@ async function hydrateStore(env) {
       // In-memory store already has projects - sanitize & purge invalid entries
       for (const [id, rawP] of Array.from(store.projects.entries())) {
         const validated = validateAndSanitizeProjectRecord(rawP);
-        if (!validated) {
+        if (
+          !validated ||
+          isCompletedOrOperationalFacility(rawP.project_url, rawP.canonical_name, rawP.summary, rawP.text || "") ||
+          (validated.date && formatDisplayDate(validated.date) === null)
+        ) {
           store.projects.delete(id);
           if (rawP.project_url) store.urlCache.delete(rawP.project_url);
         } else {
@@ -210,7 +228,7 @@ async function hydrateStore(env) {
       }
     }
     if (store.searches.size === 0) {
-      const savedSearches = await env.PROJECT_DATA.get("searches", "json");
+      const savedSearches = await env.PROJECT_DATA.get(KV_SEARCHES_KEY, "json");
       if (Array.isArray(savedSearches)) {
         for (const s of savedSearches) {
           if (s?.id) {
@@ -250,8 +268,8 @@ async function persistStore(env) {
     const projectsList = Array.from(store.projects.values()).slice(-200);
     const searchesList = Array.from(store.searches.values()).slice(-50);
     await Promise.all([
-      env.PROJECT_DATA.put("projects", JSON.stringify(projectsList)),
-      env.PROJECT_DATA.put("searches", JSON.stringify(searchesList)),
+      env.PROJECT_DATA.put(KV_PROJECTS_KEY, JSON.stringify(projectsList)),
+      env.PROJECT_DATA.put(KV_SEARCHES_KEY, JSON.stringify(searchesList)),
       env.PROJECT_DATA.put("api_usage", JSON.stringify(store.apiUsage)),
     ]);
   } catch (err) {
@@ -2276,31 +2294,40 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     if (store.urlCache.has(cleanUrl)) {
       const cached = store.urlCache.get(cleanUrl);
       const cachedArr = Array.isArray(cached) ? cached : [cached];
-      const validCached = cachedArr.filter(c =>
-        c &&
-        c.canonical_name &&
-        !c.canonical_name.startsWith("Project from") &&
-        !c.canonical_name.startsWith("Capital Project at") &&
-        !/^(?:none|n\/a|null|unknown|tbd|capital project)$/i.test(c.canonical_name.trim()) &&
-        !/^(?:none|n\/a|null|unknown|tbd|project developer)$/i.test((c.company || c.developer || "").trim()) &&
-        !hasNonLatinScript(c.canonical_name) &&
-        !hasNonLatinScript(c.summary) &&
-        !isForeignLanguageText(c.summary) &&
-        !isGenericReportOrDirectory(cleanUrl, c.canonical_name, c.company || c.developer, c.summary) &&
-        isValidCompanyEntity(c.company || c.developer) &&
-        ["Announced", "Planning", "Under Construction"].includes(c.status)
-      );
-      if (validCached.length > 0) {
+      const validCached = [];
+      for (const rawC of cachedArr) {
+        // Run stored projects through the exact same comprehensive checks as new ones!
+        const validated = validateAndSanitizeProjectRecord(rawC);
+        if (!validated) continue;
+        if (
+          isCompletedOrOperationalFacility(cleanUrl, validated.canonical_name, validated.summary, validated.text || "") ||
+          isCompletedOrOperationalFacility(cleanUrl, rawC.canonical_name, validated.summary, "")
+        ) {
+          continue;
+        }
+        if (validated.date && formatDisplayDate(validated.date) === null) {
+          continue;
+        }
+        validCached.push(validated);
+      }
+
+      if (validCached.length === 0) {
+        // Stale or invalid cached project: purge completely from urlCache!
+        store.urlCache.delete(cleanUrl);
+      } else {
+        store.urlCache.set(cleanUrl, validCached);
+        let acceptedFromCache = false;
         for (const p of validCached) {
-          if (requestedLocation && !matchesSelectedCountry(p.country, p.summary, p.canonical_name, requestedLocation)) {
+          if (requestedLocation && !matchesSelectedCountry(p.country || p.location, p.summary, p.canonical_name, requestedLocation)) {
             continue;
           }
-          const freshCategory = inferCategory(p.canonical_name, p.summary, p.category || targetCategory);
-          const updated = { ...p, category: freshCategory, summary: cleanSummaryText(p.summary) };
-          extractedProjects.push(updated);
-          addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${p.canonical_name}' (Source: ${cleanUrl})`, "ai_worker", { project: updated, canonical_name: p.canonical_name });
+          extractedProjects.push(p);
+          acceptedFromCache = true;
+          addEvent("candidate_accepted", `ACCEPTED FROM CACHE: '${p.canonical_name}' (Source: ${cleanUrl})`, "ai_worker", { project: p, canonical_name: p.canonical_name });
         }
-        continue;
+        if (acceptedFromCache) {
+          continue;
+        }
       }
     }
     uncachedCandidates.push(item);
@@ -2630,9 +2657,15 @@ export default {
           for (const rawP of body.projects) {
             const p = validateAndSanitizeProjectRecord(rawP);
             if (p?.id) {
+              if (isCompletedOrOperationalFacility(p.project_url, p.canonical_name, p.summary, p.summary)) {
+                continue;
+              }
+              if (p.date && formatDisplayDate(p.date) === null) {
+                continue;
+              }
               store.projects.set(p.id, p);
               if (p.project_url) {
-                store.urlCache.set(p.project_url, p);
+                store.urlCache.set(p.project_url, [p]);
               }
             }
           }
@@ -2656,6 +2689,28 @@ export default {
       } catch (err) {
         return jsonRes({ error: "Sync failed", details: err?.message || String(err) }, 400);
       }
+    }
+
+    // Admin clear endpoint to purge all KV and memory stores
+    if ((url.pathname === "/api/v1/clear-kv" || url.pathname === "/api/clear-kv") && (request.method === "POST" || request.method === "DELETE")) {
+      store.projects.clear();
+      store.urlCache.clear();
+      store.failedUrls.clear();
+      store.searchResults.clear();
+      store.searches.clear();
+      store.queryCache.clear();
+      if (env.PROJECT_DATA) {
+        try {
+          await Promise.all([
+            env.PROJECT_DATA.delete("projects_v6"),
+            env.PROJECT_DATA.delete("searches_v6"),
+            env.PROJECT_DATA.delete("projects"),
+            env.PROJECT_DATA.delete("searches"),
+            env.PROJECT_DATA.delete("pi_persisted_projects_v5")
+          ]);
+        } catch (_) {}
+      }
+      return jsonRes({ success: true, message: "KV and in-memory stores cleared successfully." });
     }
 
     // 2. Health & Readiness Endpoints
@@ -2885,31 +2940,23 @@ export default {
         } catch (_) {}
       }
       if (!results || results.length === 0) {
-        results = Array.from(store.projects.values())
-          .map(p => validateAndSanitizeProjectRecord(p))
-          .filter(Boolean)
-          .slice(-35)
-          .map((p, index) => ({
-            id: "sr-" + (p.id || index),
-            search_run_id: sId,
-            project_id: p.id,
-            project: p,
-            canonical_name: p.canonical_name,
-            company: p.company || p.developer || "Leading Developer",
-            developer: p.developer || p.company || "Leading Developer",
-            project_url: p.project_url,
-            category: p.category,
-            status: p.status,
-            date: p.date && p.date !== "Latest 2026" ? p.date : "",
-            http_status: p.http_status,
-            summary: p.summary,
-            relevance_score: Math.max(0.70, 0.98 - index * 0.05)
-          }));
+        results = [];
       } else {
+        const searchLocation = run?.location || run?.parsed_query?.location;
         results = results
           .map((r, index) => {
             const val = validateAndSanitizeProjectRecord(r.project || r);
             if (!val) return null;
+            if (isCompletedOrOperationalFacility(val.project_url, val.canonical_name, val.summary, val.summary)) {
+              return null;
+            }
+            if (val.date && formatDisplayDate(val.date) === null) {
+              return null;
+            }
+            // Strict country filter on search results: never show foreign projects under a specific country run
+            if (searchLocation && !matchesSelectedCountry(val.country || val.location, val.summary, val.canonical_name, searchLocation)) {
+              return null;
+            }
             return {
               ...r,
               id: r.id || ("sr-" + (val.id || index)),
@@ -2922,6 +2969,8 @@ export default {
               project_url: val.project_url,
               category: val.category,
               status: val.status,
+              country: val.country,
+              location: val.location,
               date: val.date && val.date !== "Latest 2026" ? val.date : "",
               http_status: r.http_status || val.http_status,
               summary: val.summary,

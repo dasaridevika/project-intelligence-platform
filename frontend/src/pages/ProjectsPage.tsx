@@ -130,9 +130,25 @@ export const ProjectsPage: React.FC = () => {
             api.getSearchResults(searchId),
           ]);
           setSearchRun(run);
+          const searchLoc = (run?.location || run?.parsed_query?.location || '').toLowerCase().trim();
           const mapped: Project[] = (res.results || [])
             .map((r: any) => validateAndSanitizeProject(r.project || r))
-            .filter((p): p is Project => p !== null);
+            .filter((p: Project | null): p is Project => p !== null)
+            .filter((p: Project) => {
+              if (searchLoc && searchLoc !== 'all regions' && searchLoc !== 'worldwide (global)') {
+                const pLoc = ((p.location || '') + ' ' + (p.country || '') + ' ' + (p.summary || '')).toLowerCase();
+                const selAliases = [searchLoc];
+                if (searchLoc === 'india') selAliases.push('indian', 'gujarat', 'rajasthan', 'karnataka', 'maharashtra', 'tamil nadu', 'telangana', 'andhra', 'uttar pradesh', 'madhya pradesh', 'odisha', 'haryana', 'punjab', 'kerala');
+                if (searchLoc === 'united states' || searchLoc === 'usa') selAliases.push('us', 'america', 'texas', 'california', 'arizona', 'nevada', 'ohio', 'new york', 'georgia');
+                const hasMatchingAlias = selAliases.some(a => new RegExp(`\\b${a}\\b`, 'i').test(pLoc));
+                // Reject if clearly in another country
+                if (searchLoc === 'india' && /\b(?:texas|california|arizona|ohio|nevada|new york|usa|united states|korea|singapore|japan|germany)\b/i.test(pLoc) && !/\b(?:india|indian)\b/i.test(pLoc)) {
+                  return false;
+                }
+                return hasMatchingAlias;
+              }
+              return true;
+            });
           setProjects(mapped);
           setTotalCount(mapped.length);
         } else {
