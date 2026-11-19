@@ -531,7 +531,7 @@ function isNewsPublisher(name) {
   // Explicit whole-word pattern for known media outlets, publishers, and research/statistics agencies
   // MUST use word boundaries (\b) so real companies like "Tennessee Valley Authority" (containing "ey")
   // or "GlobalFoundries" (containing "global") or "Micron Technology" (containing "technology") are NOT falsely rejected!
-  const publisherPattern = /\b(?:reuters|bloomberg|constructconnect|datacenterdynamics|dcn|associated press|prnewswire|businesswire|globenewswire|cnbc|forbes|financial times|marketwatch|canary media|pv magazine|solar power world|recharge news|mckinsey|gartner|idc|accenture|deloitte|kpmg|ey|ernst\s*&\s*young|ernst\s+and\s+young|pwc|pricewaterhousecoopers|bcg|boston consulting|bain|oxford economics|globaldata|statista|eia|u\.s\.\s*eia|energy information administration|enerdatics|dmc education|wood mackenzie|woodmac|rystad energy|rystad|s&p global|sp global|spglobal|ferc|iea|clean energy associates|levelten)\b/i;
+  const publisherPattern = /\b(?:reuters|bloomberg|constructconnect|datacenterdynamics|dcn|associated press|prnewswire|businesswire|globenewswire|cnbc|forbes|financial times|marketwatch|canary media|pv magazine|solar power world|recharge news|mckinsey|gartner|idc|accenture|deloitte|kpmg|ey|ernst\s*&\s*young|ernst\s+and\s+young|pwc|pricewaterhousecoopers|bcg|boston consulting|bain|oxford economics|globaldata|statista|eia|u\.s\.\s*eia|energy information administration|enerdatics|dmc education|wood mackenzie|woodmac|rystad energy|rystad|s&p global|sp global|spglobal|ferc|iea|clean energy associates|levelten|findepcm|find epcm|electrek|industrial info|industrialinfo|power systems technology|powersystems|channel newsasia|channelnewsasia|renewables now|renewablesnow|energy storage news|techtimes|chosun|korea herald|koreaherald|asia business daily|the asia business daily|semiwiki|cleantechnica)\b/i;
 
   if (publisherPattern.test(n)) {
     return true;
@@ -1271,23 +1271,176 @@ function validateAndSanitizeProjectRecord(p) {
   };
 }
 
-const PROJECT_MATCH_STOPWORDS = new Set([
-  "data", "center", "centre", "project", "facility", "campus", "plant", "farm", "park", 
-  "korea", "south", "expansion", "and", "the", "for", "with", "from", "new", "build", 
-  "building", "announced", "planning", "construction", "power", "energy", "hyperscale",
-  "utility", "ai", "hub", "site", "phase", "stage", "infrastructure", "technologies",
-  "technology", "group", "holdings", "corp", "inc", "ltd", "llc", "gmbh", "co",
-  // Generic corporate & financial words that must NOT corroborate candidate links:
-  "asset", "assets", "management", "investment", "investments", "capital", "development", 
-  "developments", "system", "systems", "solutions", "services", "properties", "property",
-  "partners", "partnership", "platform", "platforms", "global", "national", "international", 
-  "state", "first", "second", "third", "fourth", "initiative", "rules", "grid", "capacity", 
-  "mega", "strategic", "announces", "plans", "into", "joint", "venture", "market", "markets",
-  // Generic industry & sector descriptors:
-  "solar", "storage", "battery", "batteries", "photovoltaic", "wind", "hydrogen", "semiconductor",
-  "manufacturing", "clean", "renewables", "renewable", "electric", "electricity", "generation",
-  "epc", "engineering", "procurement", "consulting", "consultancy", "contractor", "contractors"
+const SECTOR_WORDS = new Set([
+  // Solar & Renewables
+  "solar", "photovoltaic", "pv", "csp", "concentrated", "heliostat", "heliostats", 
+  "inverter", "inverters", "panel", "panels", "module", "modules", "array", "arrays", 
+  "wind", "windfarm", "windfarms", "offshore", "onshore", "turbine", "turbines", 
+  "hydro", "hydroelectric", "hydropower", "geothermal", "biomass", "biogas", "biofuel", "biofuels",
+  "renewable", "renewables", "clean", "green", "cleantech", "cleanenergy", "decarbonization",
+
+  // Energy Storage & Batteries
+  "storage", "battery", "batteries", "bess", "cell", "cells", "pack", "packs", "megapack", "megapacks",
+
+  // Hydrogen & Carbon Management
+  "hydrogen", "electrolyzer", "electrolyser", "electrolyzers", "electrolysers", "ammonia", "methanol",
+  "carbon", "capture", "sequestration", "ccs", "ccus",
+
+  // Power, Electric, Transmission & Grid
+  "power", "energy", "generation", "electric", "electrical", "electricity", "utility", "utilities",
+  "transmission", "grid", "microgrid", "substation", "switchyard", "interconnection",
+  "megawatt", "mw", "gigawatt", "gw", "kilowatt", "kw", "kwh", "mwh", "gwh",
+  "voltage", "highvoltage", "hv", "hvdc",
+
+  // Oil, Gas & Petrochemicals
+  "oil", "gas", "lng", "lpg", "petroleum", "petrochemical", "petrochemicals", "refinery", "refineries",
+  "pipeline", "pipelines", "drilling", "crude", "ethane", "cracker", "feedstock", "chemical", "chemicals",
+  "fertilizer", "fertilizers",
+
+  // Data Centers, Cloud & IT Infrastructure
+  "data", "center", "centre", "centers", "centres", "datacenter", "datacentre", "datacenters", "datacentres",
+  "hyperscale", "hyperscaler", "hyperscalers", "colocation", "colo", "cloud", "compute", "server", "servers",
+  "ai", "gpu", "gpus", "cluster", "clusters", "hpc", "supercomputer", "supercomputing", "telecom", "telecommunications",
+
+  // Semiconductors & Electronics
+  "semiconductor", "semiconductors", "chip", "chips", "wafer", "wafers", "fab", "fabs", "megafab", "megafabs",
+  "foundry", "foundries", "cleanroom", "cleanrooms", "dram", "nand", "silicon",
+
+  // Manufacturing & Industrial Facilities
+  "manufacturing", "gigafactory", "gigafactories", "factory", "factories", "plant", "plants",
+  "facility", "facilities", "mill", "mills", "smelter", "smelters", "assembly", "production", "industrial",
+
+  // Metals & Mining
+  "mining", "mine", "mines", "metal", "metals", "steel", "iron", "aluminum", "aluminium", "copper",
+  "lithium", "nickel", "cobalt", "gold", "smelting", "ore",
+
+  // Real Estate, Logistics & Infrastructure
+  "logistics", "warehouse", "warehouses", "distribution", "fulfillment", "terminal", "terminals",
+  "port", "ports", "harbor", "airport", "rail", "railway", "freight", "park", "parks", "campus", "campuses",
+  "hub", "hubs", "site", "sites", "complex", "complexes", "zone", "estate", "corridor",
+
+  // Project, Engineering & Contracting Generic Words
+  "project", "projects", "development", "developments", "phase", "stage", "unit", "units", "block", "blocks",
+  "expansion", "initiative", "program", "scheme", "build", "building", "buildings", "construction",
+  "erection", "commissioning", "epc", "engineering", "procurement", "contracting", "contractor", "contractors",
+  "consulting", "consultancy", "developer", "developers", "operator", "operators", "operation", "operations",
+  "station", "stations", "system", "systems", "solutions", "services", "infrastructure"
 ]);
+
+const PROJECT_MATCH_STOPWORDS = new Set([
+  "and", "the", "for", "with", "from", "into", "over", "under", "new", "all",
+  "first", "second", "third", "fourth", "announced", "planning", "construction",
+  "group", "holdings", "corp", "corporation", "inc", "incorporated", "ltd", "limited", 
+  "llc", "gmbh", "co", "company", "asset", "assets", "management", "investment", "investments", 
+  "capital", "partners", "partnership", "platform", "platforms", "global", "national", 
+  "international", "state", "rules", "capacity", "mega", "strategic", "announces", "plans", 
+  "joint", "venture", "market", "markets", "north", "south", "east", "west"
+]);
+
+function isWebsiteOwnName(companyName, candidateUrl, candidateTitle) {
+  if (!companyName || !candidateUrl) return false;
+  if (isNewsPublisher(companyName)) return true;
+
+  let host = "";
+  try {
+    const parsed = new URL(candidateUrl);
+    host = parsed.hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+
+  const cleanHost = host.replace(/^(?:www\d*|m|amp|news|blog|press|media|articles)\./i, "");
+  const hostParts = cleanHost.split('.');
+  const rootDomain = hostParts[0] || "";
+
+  const compClean = companyName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const rootClean = rootDomain.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  if (!compClean || !rootClean) return false;
+
+  const isMediaOrDirHost = /(?:news|times|post|journal|daily|tribune|media|press|wire|info|report|research|stat|data|consult|herald|magazine|digest|network|review|tracker|bulletin|monitor|insight|insights|epcm|directory|portal|technology)\b/i.test(cleanHost) || isNewsPublisher(cleanHost);
+
+  if (isMediaOrDirHost) {
+    if (compClean === rootClean || rootClean.includes(compClean) || (compClean.length >= 4 && compClean.includes(rootClean))) {
+      return true;
+    }
+  }
+
+  if (candidateTitle) {
+    const escapedComp = companyName.trim().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const brandSuffixRegex = new RegExp(`(?:[-–—|/•]\\s*${escapedComp}\\s*$|^${escapedComp}\\s*[-–—|/•])`, 'i');
+    if (brandSuffixRegex.test(candidateTitle) && isMediaOrDirHost) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function matchesCompanyName(comp, fullContent) {
+  if (!comp || !fullContent) return false;
+  const cleanComp = comp.toLowerCase().trim();
+  const escaped = cleanComp.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+  if (new RegExp(`\\b${escaped}\\b`, 'i').test(fullContent)) {
+    return true;
+  }
+  const compTokens = cleanComp
+    .split(/[\s\-–—/]+/)
+    .map(t => t.replace(/[^a-z0-9]/g, ""))
+    .filter(t => t.length >= 3 && !SECTOR_WORDS.has(t) && !PROJECT_MATCH_STOPWORDS.has(t));
+  
+  for (const cTok of compTokens) {
+    if (cTok.length >= 4 && new RegExp(`\\b${cTok}\\b`, 'i').test(fullContent)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getSpecificProjectWords(canonicalName, companyName, location) {
+  const specificWords = [];
+  const compTokens = new Set(
+    (companyName || "")
+      .toLowerCase()
+      .split(/[\s\-–—/]+/)
+      .map(t => t.replace(/[^a-z0-9]/g, ""))
+      .filter(t => t.length >= 2)
+  );
+
+  const rawTokens = (canonicalName || "")
+    .toLowerCase()
+    .split(/[\s\-–—/_:;.,()]+/)
+    .map(t => t.replace(/[^a-z0-9]/g, ""))
+    .filter(t => t.length >= 3 && !/^\d+$/.test(t));
+
+  for (const tok of rawTokens) {
+    if (SECTOR_WORDS.has(tok)) continue;
+    if (PROJECT_MATCH_STOPWORDS.has(tok)) continue;
+    if (compTokens.has(tok)) continue;
+    specificWords.push(tok);
+  }
+
+  // If canonicalName had no specific project words (e.g. only company name + sector words),
+  // extract distinctive location tokens (city / county / town)
+  if (specificWords.length === 0 && location) {
+    const BROAD_LOCATIONS = new Set([
+      "usa", "united", "states", "america", "india", "japan", "korea", "south", "germany",
+      "spain", "france", "canada", "australia", "china", "uk", "kingdom", "texas"
+    ]);
+    const locTokens = location
+      .toLowerCase()
+      .split(/[\s\-–—/_:;.,()]+/)
+      .map(t => t.replace(/[^a-z0-9]/g, ""))
+      .filter(t => t.length >= 4 && !/^\d+$/.test(t) && !BROAD_LOCATIONS.has(t) && !SECTOR_WORDS.has(t) && !PROJECT_MATCH_STOPWORDS.has(t));
+    for (const lTok of locTokens) {
+      if (!compTokens.has(lTok)) {
+        specificWords.push(lTok);
+      }
+    }
+  }
+
+  return specificWords;
+}
 
 function candidateMentionsProject(candidate, aiP) {
   if (!candidate || !aiP) return false;
@@ -1296,71 +1449,38 @@ function candidateMentionsProject(candidate, aiP) {
   const cText = (candidate.text || candidate.snippet || "").toLowerCase();
   const fullContent = `${cUrl} ${cTitle} ${cText}`;
 
-  const comp = (aiP.company || "").toLowerCase().trim();
-  const name = (aiP.canonical_name || "").toLowerCase().trim();
+  const comp = (aiP.company || "").trim();
+  const name = (aiP.canonical_name || "").trim();
 
-  // 1. Distinctive project tokens (proper names like "Naver", "Sejong", "Gumi", "Paju")
-  const nameTokens = name
-    .split(/[\s\-–—/]+/)
-    .map(t => t.toLowerCase().replace(/[^a-z0-9]/g, ""))
-    .filter(t => t.length >= 4 && !PROJECT_MATCH_STOPWORDS.has(t));
+  // Condition 1: Require the company name (not the website's own name)
+  if (!comp || comp.length < 2) return false;
+  if (!isValidCompanyEntity(comp)) return false;
+  if (isNewsPublisher(comp)) return false;
+  if (isWebsiteOwnName(comp, cUrl, cTitle)) return false;
+  if (!matchesCompanyName(comp, fullContent)) return false;
 
-  let nameTokenMatches = 0;
-  for (const tok of nameTokens) {
-    const tokRegex = new RegExp(`\\b${tok}\\b`, 'i');
-    if (tokRegex.test(fullContent)) {
-      nameTokenMatches++;
-    }
-  }
-
-  // If the project has distinctive tokens, at least one MUST be mentioned in the candidate content!
-  // If the candidate content does not mention the project at all (e.g. hallucinated prompt names), REJECT IT!
-  if (nameTokens.length > 0 && nameTokenMatches === 0) {
+  // Condition 2: Require a specific project word that isn't a sector word
+  const specificWords = getSpecificProjectWords(name, comp, aiP.location);
+  if (specificWords.length === 0) {
+    // If no specific project word could be determined at all, this is not a verifiable specific project
     return false;
   }
 
-  // 2. Company check with word boundary
-  let compMatched = false;
-  if (comp && comp.length >= 3 && !PROJECT_MATCH_STOPWORDS.has(comp)) {
-    const compRegex = new RegExp(`\\b${comp.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
-    if (compRegex.test(fullContent)) {
-      compMatched = true;
-    } else {
-      const compTokens = comp
-        .split(/[\s\-–—/]+/)
-        .map(t => t.toLowerCase().replace(/[^a-z0-9]/g, ""))
-        .filter(t => t.length >= 4 && !PROJECT_MATCH_STOPWORDS.has(t));
-      for (const cTok of compTokens) {
-        const cTokRegex = new RegExp(`\\b${cTok}\\b`, 'i');
-        if (cTokRegex.test(fullContent)) {
-          compMatched = true;
-          break;
-        }
-      }
+  let specificWordMatched = false;
+  for (const word of specificWords) {
+    const wordRegex = new RegExp(`\\b${word}\\b`, 'i');
+    if (wordRegex.test(fullContent)) {
+      specificWordMatched = true;
+      break;
     }
   }
 
-  // Both company and distinctive project token matched: solid match
-  if (compMatched && nameTokenMatches >= 1) {
-    return true;
+  if (!specificWordMatched) {
+    return false;
   }
 
-  // Company matched and URL or title specifically mentions company AND at least 1 project token matches
-  if (compMatched && (cUrl.includes(comp) || cTitle.includes(comp)) && (nameTokens.length === 0 || nameTokenMatches >= 1)) {
-    return true;
-  }
-
-  // If company did not match, require strong multi-token corroboration
-  if (nameTokens.length === 1 && nameTokenMatches === 1) {
-    const tokRegex = new RegExp(`\\b${nameTokens[0]}\\b`, 'i');
-    return tokRegex.test(cTitle) || tokRegex.test(cUrl);
-  }
-
-  if (nameTokens.length >= 2 && (nameTokenMatches >= 2 || nameTokenMatches / nameTokens.length >= 0.5)) {
-    return true;
-  }
-
-  return false;
+  // Both company name (not website's own name) AND specific project word matched!
+  return true;
 }
 
 function findBestCorroboratingCandidate(candidates, aiP) {
@@ -1368,29 +1488,28 @@ function findBestCorroboratingCandidate(candidates, aiP) {
   let bestCandidate = null;
   let bestScore = 0;
 
-  const comp = (aiP.company || "").toLowerCase().trim();
-  const name = (aiP.canonical_name || "").toLowerCase().trim();
-  const nameTokens = name
-    .split(/[\s\-–—/]+/)
-    .map(t => t.toLowerCase().replace(/[^a-z0-9]/g, ""))
-    .filter(t => t.length >= 4 && !PROJECT_MATCH_STOPWORDS.has(t));
+  const comp = (aiP.company || "").trim();
+  const name = (aiP.canonical_name || "").trim();
+  const specificWords = getSpecificProjectWords(name, comp, aiP.location);
 
   for (const c of candidates) {
+    // Must strictly pass candidateMentionsProject
+    if (!candidateMentionsProject(c, aiP)) {
+      continue;
+    }
+
     let score = 0;
     const cUrl = (c.cleanUrl || "").toLowerCase();
     const cTitle = (c.title || "").toLowerCase();
     const cText = (c.text || c.snippet || "").toLowerCase();
 
     // Check company
-    if (comp && comp.length >= 3 && !PROJECT_MATCH_STOPWORDS.has(comp)) {
-      const compRegex = new RegExp(`\\b${comp.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
-      if (compRegex.test(cUrl)) score += 10;
-      if (compRegex.test(cTitle)) score += 6;
-      if (compRegex.test(cText)) score += 3;
-    }
+    if (comp && matchesCompanyName(comp, cUrl)) score += 10;
+    if (comp && matchesCompanyName(comp, cTitle)) score += 6;
+    if (comp && matchesCompanyName(comp, cText)) score += 3;
 
-    // Check distinctive tokens
-    for (const tok of nameTokens) {
+    // Check specific project words
+    for (const tok of specificWords) {
       const tokRegex = new RegExp(`\\b${tok}\\b`, 'i');
       if (tokRegex.test(cUrl)) score += 8;
       if (tokRegex.test(cTitle)) score += 5;
@@ -1403,7 +1522,7 @@ function findBestCorroboratingCandidate(candidates, aiP) {
     }
   }
 
-  return bestScore >= 4 ? bestCandidate : null;
+  return bestCandidate;
 }
 
 const LOCATION_DICTIONARY = {
@@ -2496,6 +2615,9 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         const fbProjectName = cleanProjectName(fbRawName, normDev);
 
         if (isGenericReportOrDirectory(item.cleanUrl, fbProjectName, normDev, fb.summary) || isGenericReportOrDirectory(item.cleanUrl, fbRawName, normDev, fb.summary)) {
+          continue;
+        }
+        if (isWebsiteOwnName(normDev, item.cleanUrl, item.title)) {
           continue;
         }
         if (
