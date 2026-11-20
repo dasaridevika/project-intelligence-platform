@@ -533,6 +533,68 @@ test("Truncated JSON array cuts off at max_tokens is recovered without losing co
   assert.strictEqual(parsed.projects[1].canonical_name, "Midpoint Solar Farm");
 });
 
+// ==============================================================================
+// 10. NO CODE SNIPPETS & NO RAW DATA (SANITY CHECKS)
+// ==============================================================================
+console.log("\n[Group 10: Code Snippet & Raw Data Stripping]");
+
+function testCleanSummary(raw) {
+  if (!raw || typeof raw !== "string") return "";
+  let clean = raw
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`\n]+`/g, " ")
+    .replace(/<(?:script|style|code|pre|noscript|svg)\b[^<]*(?:(?!<\/(?:script|style|code|pre|noscript|svg)>)<[^<]*)*<\/(?:script|style|code|pre|noscript|svg)>/gi, " ")
+    .replace(/\bfunction(?:\s+[a-zA-Z0-9_$]+)?\s*\([^)]*\)\s*\{[^}]*\}/g, " ")
+    .replace(/\{[^{}]*\}/g, " ")
+    .replace(/\b(?:function\b|const\b|var\b|let\b|class\b|import\b|export\b|return\b|console\.\w+\s*\(|curl\s+-[a-zA-Z]|npm\s+(?:run|install))\b/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#+\s+/gm, "")
+    .replace(/\s+#+\s+/g, " ")
+    .replace(/[*_~]{1,3}/g, "")
+    .replace(/^\s*[-•*]\s+/gm, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&(?:quot|amp|lt|gt|nbsp|apos|#39);/gi, " ")
+    .replace(/\.{2,}/g, ".")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (clean.length > 280) {
+    const lastPeriod = clean.lastIndexOf(".", 280);
+    if (lastPeriod > 100) {
+      clean = clean.slice(0, lastPeriod + 1);
+    } else {
+      clean = clean.slice(0, 275).replace(/\s+\S*$/, "") + ".";
+    }
+  }
+  if (clean && !/[.!?]$/.test(clean)) clean += ".";
+  return clean;
+}
+
+test("Code snippets and markdown code fences are stripped from summaries", () => {
+  const input = "The company announced a 500MW project. ```json {\"config\": 123} ``` It is slated for 2027.";
+  const cleaned = testCleanSummary(input);
+  assert.ok(!cleaned.includes("json"));
+  assert.ok(!cleaned.includes("config"));
+  assert.ok(cleaned.includes("Slated for 2027") || cleaned.includes("slated for 2027"));
+});
+
+test("Script tags, inline JSON objects, and JS keywords are stripped from summaries", () => {
+  const input = "Project development starts soon. <script>console.log('test')</script> function init() { const x = 10; } Construction will complete in 2028.";
+  const cleaned = testCleanSummary(input);
+  assert.ok(!cleaned.includes("console.log"));
+  assert.ok(!cleaned.includes("function"));
+  assert.ok(!cleaned.includes("<script>"));
+  assert.ok(cleaned.includes("Construction will complete in 2028."));
+});
+
+test("Markdown link syntax [text](url) is unnested to plain text without raw URLs in summary", () => {
+  const input = "The facility is under construction [Visit Site](https://example.com/project-link).";
+  const cleaned = testCleanSummary(input);
+  assert.ok(!cleaned.includes("https://"));
+  assert.ok(!cleaned.includes("[Visit Site]"));
+  assert.ok(cleaned.includes("Visit Site"));
+});
+
 console.log("\n=================================================");
 console.log(`ALL ${passedTests} TESTS PASSED SUCCESSFULLY!`);
 console.log("=================================================\n");

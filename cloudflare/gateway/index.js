@@ -550,10 +550,8 @@ function isNewsPublisher(name) {
   if (!name || typeof name !== "string") return false;
   const n = name.toLowerCase().trim();
 
-  // Explicit whole-word pattern for known media outlets, publishers, and research/statistics agencies
-  // MUST use word boundaries (\b) so real companies like "Tennessee Valley Authority" (containing "ey")
-  // or "GlobalFoundries" (containing "global") or "Micron Technology" (containing "technology") are NOT falsely rejected!
-  const publisherPattern = /\b(?:reuters|bloomberg|constructconnect|datacenterdynamics|dcn|associated press|prnewswire|businesswire|globenewswire|cnbc|forbes|financial times|marketwatch|canary media|pv magazine|solar power world|recharge news|mckinsey|gartner|idc|accenture|deloitte|kpmg|ey|ernst\s*&\s*young|ernst\s+and\s+young|pwc|pricewaterhousecoopers|bcg|boston consulting|bain|oxford economics|globaldata|statista|eia|u\.s\.\s*eia|energy information administration|enerdatics|dmc education|wood mackenzie|woodmac|rystad energy|rystad|s&p global|sp global|spglobal|ferc|iea|clean energy associates|levelten|findepcm|find epcm|electrek|industrial info|industrialinfo|power systems technology|powersystems|channel newsasia|channelnewsasia|renewables now|renewablesnow|energy storage news|techtimes|chosun|korea herald|koreaherald|asia business daily|the asia business daily|semiwiki|cleantechnica)\b/i;
+  // Pattern for media outlets, news wires, publishers, and research/statistics agencies
+  const publisherPattern = /\b(?:reuters|bloomberg|constructconnect|datacenterdynamics|dcn|associated press|prnewswire|businesswire|globenewswire|cnbc|forbes|financial times|marketwatch|canary media|pv magazine|solar power world|recharge news|mckinsey|gartner|idc|accenture|deloitte|kpmg|ey|pwc|bcg|bain|oxford economics|globaldata|statista|eia|wood mackenzie|rystad energy|s&p global|ferc|iea|electrek|industrial info|power systems|renewables now|energy storage news|techtimes|chosun|korea herald|asia business daily|semiwiki|cleantechnica)\b/i;
 
   if (publisherPattern.test(n)) {
     return true;
@@ -591,34 +589,22 @@ function isValidCompanyEntity(name) {
     return false;
   }
 
-  // Reject data/statistics publishers, government statistical agencies, or educational blogs
+  // Reject government departments, statistics agencies, or regulatory commissions
   if (
-    lower === "eia" ||
-    lower === "u.s. eia" ||
-    lower === "enerdatics" ||
-    lower.includes("energy information administration") ||
-    lower === "statista" ||
-    lower.includes("wood mackenzie") ||
-    lower.includes("rystad energy") ||
-    lower.includes("s&p global") ||
-    lower.startsWith("government of") ||
-    lower.startsWith("ministry of") ||
-    lower.startsWith("department of") ||
-    lower === "government" ||
-    lower === "federal government" ||
-    lower === "state government"
+    /^(?:government|ministry|department|commission|bureau|agency)\b/i.test(lower) ||
+    /\b(?:government|ministry|department)\s+of\b/i.test(lower) ||
+    /^(?:public service commission|state government|federal government|energy information administration)$/i.test(lower)
   ) {
     return false;
   }
 
-  // Reject placeholder, news headline action clauses, or generic fallback words
+  // Reject placeholder words or headline delay/opinion clauses
   if (
     lower === "project developer" ||
     lower === "leading developer" ||
     lower === "unknown" ||
     lower === "understanding" ||
-    lower.includes("public service commission") ||
-    /\b(?:campus by \d+-\d+ years|chips need the|residents vote|approved a|court approves|secures loan|secures approval|breaks ground)\b/i.test(lower)
+    /\b(?:campus by \d+-\d+ years|delays? by \d+|chips need the|residents vote|approved a|court approves|secures loan|secures approval|breaks ground)\b/i.test(lower)
   ) {
     return false;
   }
@@ -737,20 +723,31 @@ function getProjectDedupKey(name, developer) {
 function cleanSummaryText(raw) {
   if (!raw || typeof raw !== "string") return "";
   let clean = raw
-    // Strip markdown headers (#, ##, ###, ####)
+    // 1. Strip fenced code blocks (```...```) and inline backtick code snippets
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`\n]+`/g, " ")
+    // 2. Strip scripts, styles, code, and pre tags with inner content
+    .replace(/<(?:script|style|code|pre|noscript|svg)\b[^<]*(?:(?!<\/(?:script|style|code|pre|noscript|svg)>)<[^<]*)*<\/(?:script|style|code|pre|noscript|svg)>/gi, " ")
+    // 3. Strip function signatures, curly bracket blocks, and JSON objects
+    .replace(/\bfunction(?:\s+[a-zA-Z0-9_$]+)?\s*\([^)]*\)\s*\{[^}]*\}/g, " ")
+    .replace(/\{[^{}]*\}/g, " ")
+    // 4. Strip programming syntax and script statements
+    .replace(/\b(?:function\b|const\b|var\b|let\b|class\b|import\b|export\b|return\b|console\.\w+\s*\(|curl\s+-[a-zA-Z]|npm\s+(?:run|install))\b/g, " ")
+    // 5. Strip unparsed markdown link syntax: [text](url) -> text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    // 6. Strip markdown headers, bold, italics, bullets
     .replace(/^#+\s+/gm, "")
     .replace(/\s+#+\s+/g, " ")
-    // Strip markdown formatting: bold, italics, backticks, bullet symbols
-    .replace(/[*_`~]{1,3}/g, "")
+    .replace(/[*_~]{1,3}/g, "")
     .replace(/^\s*[-•*]\s+/gm, "")
-    // Strip HTML tags and entities
+    // 7. Strip HTML tags and entities
     .replace(/<[^>]+>/g, " ")
     .replace(/&(?:quot|amp|lt|gt|nbsp|apos|#39);/gi, " ")
-    // Strip common directory / boilerplate / byline phrases
+    // 8. Strip common directory / boilerplate / byline phrases
     .replace(/\b(?:find a data center|search \d+[\d,]* data centers?|click here to read more|read full report|share this article|photo by|written by|author:?)\b/gi, "")
-    // Strip trailing ellipsis and multiple dots
+    // 9. Strip trailing ellipsis and multiple dots
     .replace(/\.{2,}/g, ".")
-    // Normalize whitespace
+    // 10. Normalize whitespace
     .replace(/\s+/g, " ")
     .trim();
 
@@ -803,11 +800,7 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     /\/what-is-/i.test(u) ||
     /\/what-are-/i.test(u) ||
     /\/how-to-/i.test(u) ||
-    /\/how-do-/i.test(u) ||
-    u.includes("statista.com") ||
-    u.includes("semi.org") ||
-    u.includes("mexc.co") ||
-    u.includes("binance.com")
+    /\/how-do-/i.test(u)
   ) {
     return true;
   }
@@ -824,7 +817,7 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     return true;
   }
 
-  // Reject multi-year forecast or listicle date ranges (e.g. "India Solar Power Projects 2026-2030")
+  // Reject multi-year forecast or listicle date ranges (e.g. multi-year projections like 2026-2030)
   if (
     /\b20\d\d\s*[-–—/]\s*20\d\d\b/i.test(n) ||
     /\b20\d\d[-–—]20\d\d\b/i.test(u)
@@ -832,7 +825,7 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     return true;
   }
 
-  // Reject industry pipelines, generator rows, inventories, and market datasets (e.g. "US solar development pipeline", "Solar Photovoltaic generator rows")
+  // Reject industry pipelines, generator rows, inventories, and market datasets
   if (/\b(?:development\s+pipeline|project\s+pipeline|pipeline\s+report|generator\s+rows|generator\s+inventory|generator\s+capacity|capacity\s+tracker|monthly\s+generator|national\s+pipeline|solar\s+pipeline|wind\s+pipeline|data\s+center\s+pipeline)\b/i.test(n)) {
     return true;
   }
@@ -843,7 +836,7 @@ function isGenericReportOrDirectory(url, name, company, summary) {
   }
 
   // Reject data publishers, statistics agencies, or educational organizations as company
-  if (c === "eia" || c === "enerdatics" || isNewsPublisher(c)) {
+  if (isNewsPublisher(c)) {
     return true;
   }
 
@@ -951,14 +944,9 @@ function isGenericReportOrDirectory(url, name, company, summary) {
   if (/\b(?:sues\b|lawsuit\b|residents vote against|controversy|hearing)\b/i.test(n)) {
     return true;
   }
-  // Explanatory guides or operational summaries
+  // Explanatory guides, educational overviews, or operational summaries
   if (
-    s.includes("understanding how data centers impact") ||
-    s.includes("what are data centers?") ||
-    s.includes("exploring the core components, evolving architecture") ||
-    s.includes("how tsmc and other foundries make chips") ||
-    s.includes("find a data center") ||
-    s.includes("guide to understanding its importance") ||
+    /\b(?:understanding how\b|what are\b|how do\b|explaining how\b|how foundries make\b|guide to understanding\b|exploring the core components\b|search \d+.*data centers?\b|find a data center\b)/i.test(s) ||
     /\b(?:currently operates|already operates|primary research and development fab for its advanced nodes)\b/i.test(s)
   ) {
     return true;
@@ -970,8 +958,8 @@ function cleanProjectName(rawName, developer) {
   if (!rawName || typeof rawName !== "string") return "";
   let name = rawName.trim();
 
-  // 1. Remove trailing news publisher / site branding (e.g. ' - The Asia Business Daily', ' | Reuters', ' - Electrek')
-  name = name.replace(/\s*[-–—|]\s*(?:The\s+)?(?:Asia Business Daily|Reuters|Bloomberg|Electrek|PV Magazine|Industrial Info|Power Systems|Renewables Now|Energy Storage News|TechTimes|Korea Herald|Chosun|Data Center Dynamics|Channel NewsAsia|SemiWiki|CleanTechnica).*$/i, "");
+  // 1. Remove trailing news publisher / site branding (any publication name following a separator)
+  name = name.replace(/\s*[-–—|]\s*(?:The\s+)?[A-Z][a-zA-Z0-9\s.&'-]{1,35}$/i, "");
 
   // 2. Strip bracketed leads (e.g. '[Chip Talk] ', '[Exclusive] ', '[Breaking] ')
   name = name.replace(/^\[[^\]]+\]\s*/i, "");
@@ -1293,7 +1281,6 @@ function validateAndSanitizeProjectRecord(p) {
   }
 
   return {
-    ...p,
     id: p.id || `proj_${Math.random().toString(36).slice(2, 9)}`,
     canonical_name: cleanName,
     name: cleanName,
@@ -1301,11 +1288,13 @@ function validateAndSanitizeProjectRecord(p) {
     developer: rawCompany,
     category,
     status,
-    location: location || country,
-    country: country || location,
+    location: location || country || "Not specified",
+    country: country || location || "Not specified",
     date: formattedDate || "",
     project_url: rawUrl,
-    summary: summary
+    http_status: p.http_status || 200,
+    summary: cleanSummaryText(summary),
+    created_at: p.created_at || new Date().toISOString()
   };
 }
 
@@ -1794,7 +1783,7 @@ Determine if the provided webpage discusses one or more SPECIFIC, REAL-WORLD CAP
 
 A VALID CAPITAL PROJECT MUST:
 1. Cover a concrete, individual physical facility, building, plant, megafab, hyperscale data center, power plant, solar/wind farm, transmission line, battery gigafactory, or campus expansion.
-2. Have an identifiable corporate company, developer, owner, or operator building, expanding, or financing it. NEVER return the news site, data publisher, or statistical agency (e.g. EIA, Enerdatics, DMC Education, S&P Global, Wood Mackenzie, Reuters, Bloomberg, ConstructConnect, DCN).
+2. Have an identifiable corporate company, developer, owner, or operator building, expanding, or financing it. NEVER return the news site, media publisher, statistical agency, or market research portal.
 3. Have a verifiable location (city, state, region, or country).
 4. Be in one of these 3 active development lifecycle stages (ALL 3 ARE VALID):
    - "Announced": Newly announced investments, proposed facilities, capital expansion plans, or financing rounds for buildouts.
@@ -1804,18 +1793,18 @@ A VALID CAPITAL PROJECT MUST:
 DO NOT REJECT active construction, site buildouts, or facility expansions!
 
 ONLY REJECT (set "is_project": false) IF:
-1. The candidate is a list, roundup, compilation, or ranking (e.g. "USA Top 50 Solar Projects", "Top 10 Data Centers", "Largest Projects Roundup"). NEVER extract a multi-project listicle as a single project!
-2. The candidate is an industry pipeline report, generator inventory, or statistical dataset (e.g. "US solar development pipeline", "Solar Photovoltaic generator rows", "Monthly Generator Inventory").
-3. The developer/company is a data/statistics publisher, research agency, or government bureau (e.g. EIA, Enerdatics, DMC Education, Wood Mackenzie, Statista) rather than a commercial project developer.
-4. The facility is already completed, commissioned in past years, or existing operational facilities (e.g. English 'came online', 'operational', 'opened', 'commissioned', 'went live', 'energized'; German 'nimmt Betrieb auf', 'in Betrieb', 'ans Netz gegangen', 'Inbetriebnahme'; French 'inauguré', 'mis en service'; Spanish 'en operación', 'puesta en marcha'). For any such operational project, set "is_already_operating": true or set "is_project": false.
-5. The page is an educational article, academic study, field report, technology explainer, or how-to guide (e.g. "Understanding How Data Centers Impact Water", "What is a Data Center", "How Chips Are Made").
-6. The page is a directory of colocation spaces, search engine for capacity, or vendor marketplace (e.g. datacenters.com).
-7. The page is discussing a political protest, zoning dispute, or lawsuit without an actively funded physical development project.
+1. The candidate is a multi-project list, roundup, compilation, or ranking. NEVER extract a multi-project listicle or ranking as a single project!
+2. The candidate is an aggregate industry pipeline report, generator inventory, or statistical dataset.
+3. The developer/company is a media outlet, data/statistics publisher, research agency, or government department rather than a commercial project developer.
+4. The facility is already completed, commissioned in past years, or existing operational facilities (in any language: e.g. English 'came online', 'operational', 'opened', 'commissioned', 'went live'; German 'nimmt Betrieb auf', 'in Betrieb', 'ans Netz gegangen', 'Inbetriebnahme'; French 'inauguré', 'mis en service'; Spanish 'en operación', 'puesta en marcha'). For any operational project, set "is_already_operating": true or set "is_project": false.
+5. The page is an educational article, academic study, technology explainer, or how-to guide.
+6. The page is a colocation directory, search engine for capacity, or vendor marketplace.
+7. The page discusses a political protest, zoning dispute, or lawsuit without an actively funded physical development project.
 8. The page is purely macroeconomic analysis, market forecast, or paid market research report.
 
 CRITICAL REQUIREMENT - COMPANY ENTITY:
-- The "company" field MUST be the actual corporate developer, operator, or owner entity (e.g. "<Developer Corp>", "<Energy Company>").
-- NEVER use data publishers or statistics agencies (e.g. EIA, Enerdatics, DMC Education), regulatory commissions (e.g. "Public Service Commission"), author bylines ("Written by..."), or generic terms ("Project Developer", "Understanding").
+- The "company" field MUST be the actual corporate developer, operator, or owner entity constructing or financing the facility.
+- NEVER use media publishers, statistical agencies, regulatory commissions, author bylines, or generic placeholder terms.
 
 CRITICAL REQUIREMENT - ACCURATE CATEGORY:
 - The "category" field MUST match the project's actual industrial type:
@@ -1836,14 +1825,14 @@ If ONE OR MORE VALID PROJECTS:
   "is_project": true,
   "projects": [
     {
-      "canonical_name": "Official specific name of the project or facility in English (e.g. '<Facility Name> Solar Park', '<Campus Name> Data Center'). Extract ONLY real project names from the webpage; NEVER output example placeholder names.",
-      "company": "Specific company, developer, or operator building/investing in the project in English (e.g. '<Developer Corp>', '<Energy Company>'). Extract ONLY the real company from the webpage.",
+      "canonical_name": "Official canonical name of the individual capital facility or project in English. Extract ONLY the real project name directly stated in the webpage; NEVER output placeholder names or journalistic headlines.",
+      "company": "Specific commercial enterprise, developer, or owner entity constructing or operating the facility. Extract ONLY the real corporate entity from the webpage.",
       "country": "Sovereign country in English (e.g. 'United States', 'India', 'Germany', 'Spain', 'Japan', 'South Korea', 'United Kingdom')",
       "location": "City, State/Province, or Region in English",
       "status": "Announced | Planning | Under Construction",
       "is_already_operating": false,
       "category": "Industrial category in English (e.g. Hyperscale Data Center, Semiconductor Megafab, Battery Gigafactory, Solar Farm)",
-      "date": "Announcement, start, or completion target date (e.g. November 2026, 2026)",
+      "date": "Announcement, start, or completion target date (e.g. 2026, 2027)",
       "summary": "1-2 complete factual sentences in fluent English describing the project, developer, and its development scope."
     }
   ]
@@ -2027,8 +2016,8 @@ Examine the numbered candidates. For each candidate that discusses a genuine, re
 Extract the required project parameters in fluent, standard English.
 
 A VALID CAPITAL PROJECT MUST:
-1. Be a concrete, individual physical facility, building, megafab, data center campus, power plant, solar/battery farm, or facility expansion (e.g. "<Facility Name> Solar Park", "<Campus Name> Data Center"). It must be ONE distinct development, NOT an aggregate industry category, ranking, or multi-project inventory.
-2. Have an identifiable corporate developer, owner, or operator building, financing, or operating it (e.g. "<Developer Corp>", "<Energy Company>"). NEVER return a data publisher, research platform, government statistical bureau, or news outlet as the developer (e.g. EIA, Enerdatics, DMC Education, S&P Global, FERC, Wood Mackenzie, Rystad Energy, Statista, Reuters, Bloomberg, ConstructConnect, DCN, Data Center Dynamics).
+1. Be a concrete, individual physical facility, building, megafab, data center campus, power plant, solar/battery farm, or facility expansion. It must be ONE distinct development, NOT an aggregate industry category, ranking, or multi-project inventory.
+2. Have an identifiable corporate developer, owner, or operator building, financing, or operating it. NEVER return a data publisher, research platform, government statistical bureau, or news outlet as the developer.
 3. Have a verifiable location (city, state, region, or country).
 4. Be in one of these 3 active development lifecycle stages (ALL 3 ARE VALID):
    - "Announced": Newly announced investments, proposed facilities, capital expansion plans, or financing rounds for buildouts.
@@ -2036,20 +2025,20 @@ A VALID CAPITAL PROJECT MUST:
    - "Under Construction": Groundbreaking, foundation work, active construction, or ongoing campus buildout.
 
 REJECT (MUST NOT EXTRACT):
-- LISTS, ROUNDUPS, COMPILATIONS & LISTICLES: Multi-project rankings, compilations, or roundup articles (e.g. "USA Top 50 Solar Projects", "Top 10 Data Centers", "Largest Solar Plants Roundup", "List of Major Projects"). NEVER extract an entire listicle, ranking, or roundup as a single project!
-- PIPELINES, INVENTORIES & STATISTICAL DATASETS: Industry pipeline overviews, generator rows, project databases, capacity trackers, or national statistics (e.g. "US solar development pipeline", "Solar Photovoltaic generator rows", "Monthly Generator Inventory", "State Energy Capacity Tracker"). These are statistical data tables or aggregate market overviews, NOT individual physical projects!
-- DATA/STATISTICS PUBLISHERS AS DEVELOPER: Candidates where the company is a government statistical agency, market research platform, energy data tracker, or publisher (e.g. EIA, Enerdatics, DMC Education, S&P Global, FERC, Wood Mackenzie, Rystad Energy, Statista) rather than a commercial project owner/developer erecting the facility. If no specific corporate owner/developer is named, REJECT IT.
-- NATIONAL MACRO POLICY TARGETS & ROADMAPS: Broad macroeconomic government announcements, national policy initiatives, or multi-year GW targets (e.g. "South Korea announces $919bn investment into three mega projects, plans to build 18.4GW worth of data centers by 2035", "Government of South Korea"). A national government announcing a 10-year policy target or multi-billion funding roadmap is a public policy goal, NOT an individual physical development with a developer!
-- REGULATORY & GRID REVIEW ARTICLES: Articles primarily discussing power supply rules, grid reviews, zoning regulations, or regulatory hurdles (e.g. "Korea data center power rules raise Seoul area bar... sites under 10 MW skip grid review"). These are regulatory news reports, NOT project announcements!
-- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING in ANY language (e.g. English 'came online', 'operational', 'opened', 'commissioned', 'went live', 'energized'; German 'nimmt Betrieb auf', 'in Betrieb', 'in Betrieb genommen', 'Inbetriebnahme', 'ans Netz gegangen'; French 'inauguré', 'mis en service', 'en exploitation'; Spanish 'en operación', 'puesta en marcha', 'inaugurado'). Also REJECT facilities described as 'launches data center', 'launches its third data center in [city]', 'launches new plant', or 'marking its entry into [country]'. You MUST set "is_already_operating": true if the facility is already operating, active, or completed. NEVER label an operating plant as 'Under Construction'! We ONLY track upcoming pipeline under development (Announced, Planning, Under Construction).
-- Tool, equipment, or machinery product launches (e.g. wafer dicing systems, plasma systems, lithography tools, metrology tools). Equipment shipped to customers is NOT a capital project!
-- Material, wafer, or substrate product announcements (e.g. single-crystal diamond wafers, substrate materials).
+- LISTS, ROUNDUPS, COMPILATIONS & LISTICLES: Multi-project rankings, compilations, or roundup articles. NEVER extract an entire listicle, ranking, or roundup as a single project!
+- PIPELINES, INVENTORIES & STATISTICAL DATASETS: Industry pipeline overviews, generator rows, project databases, capacity trackers, or national statistics tables.
+- DATA/STATISTICS PUBLISHERS AS DEVELOPER: Candidates where the company is a government statistical agency, market research platform, energy data tracker, or publisher rather than a commercial project owner/developer erecting the facility.
+- NATIONAL MACRO POLICY TARGETS & ROADMAPS: Broad macroeconomic government announcements, national policy initiatives, or multi-year capacity targets without an individual physical development project.
+- REGULATORY & GRID REVIEW ARTICLES: Articles primarily discussing power supply rules, grid reviews, zoning regulations, or regulatory hurdles without a specific development project.
+- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING in ANY language (e.g. English 'came online', 'operational', 'opened', 'commissioned', 'went live'; German 'nimmt Betrieb auf', 'in Betrieb', 'in Betrieb genommen', 'Inbetriebnahme', 'ans Netz gegangen'; French 'inauguré', 'mis en service'; Spanish 'en operación', 'puesta en marcha'). You MUST set "is_already_operating": true if the facility is already operating, active, or completed. NEVER label an operating plant as 'Under Construction'!
+- Tool, equipment, or machinery product launches. Equipment shipped to customers is NOT a capital project!
+- Material, wafer, or substrate product announcements.
 - R&D partnerships, industry collaboration initiatives, or technology roadmaps without a physical facility buildout.
-- Macroeconomic equipment spending reports or capex forecasts (e.g. SEMI $374B equipment spending report).
-- Educational guides, explainer articles, technology overviews, academic reports, or crypto/finance learn blogs (e.g. mexc.co/learn).
-- Colocation marketplaces or vendor directories (e.g. datacenters.com).
-- Technology, equipment, control system, cooling, or software platform R&D developments without an actual physical facility buildout (e.g. "developing a floating data center power and control technology"). Developing a technology or concept is NOT a capital project!
-- Any candidate where developer is an author byline ("Written by..."), regulatory commission, or sentence fragment.
+- Macroeconomic equipment spending reports or capex forecasts.
+- Educational guides, explainer articles, technology overviews, academic reports, or finance learn blogs.
+- Colocation marketplaces or vendor directories.
+- Concept design, equipment development, or technology licensing agreements without an actual physical facility buildout.
+- Any candidate where developer is an author byline, regulatory commission, or sentence fragment.
 
 RESPONSE FORMAT:
 Return ONLY a valid JSON object in this exact schema:
@@ -2058,10 +2047,10 @@ Return ONLY a valid JSON object in this exact schema:
     {
       "candidate_index": 1,
       "source_url": "The exact URL copied verbatim from the [Candidate #ID] block above where this project is described",
-      "canonical_name": "Official, clean project or facility name in English (e.g. '<Facility Name> Solar Park', '<Project Name> Phase 1', '<Campus Name> Data Center'). MUST NOT be a journalistic news headline or sentence, and MUST NOT include action verbs or headlines like 'Secures Loans for', 'Secures Financing for', 'Wins Approval for', 'Breaks Ground on', 'Go Fully Operational', or 'just came online'. DO NOT invent or copy example placeholder names; extract ONLY the actual project name described in the candidate text.",
-      "company": "Specific corporate developer or owner building the project in English (e.g. '<Developer Corp>', '<Energy Company>'). Extract ONLY the real company described in the candidate content.",
+      "canonical_name": "Official canonical name of the individual capital facility or project in English. MUST NOT be a journalistic news headline or sentence, and MUST NOT include action verbs like 'Secures Loans for', 'Wins Approval for', 'Breaks Ground on', or 'came online'. Extract ONLY the actual project name described in the candidate text.",
+      "company": "Specific corporate developer or owner building the project in English. Extract ONLY the real company described in the candidate content.",
       "country": "Sovereign country name in English (e.g. 'United States', 'India', 'Germany', 'Spain', 'Japan', 'South Korea', 'United Kingdom')",
-      "location": "Specific city, state/province, or region in English (e.g. 'Andhra Pradesh', 'Callahan County, Texas', 'Lower Saxony')",
+      "location": "Specific city, state/province, or region in English",
       "status": "Announced | Planning | Under Construction",
       "is_already_operating": false,
       "category": "Industrial category (e.g. Hyperscale Data Center, Semiconductor Manufacturing, Battery Gigafactory, Utility Solar)",

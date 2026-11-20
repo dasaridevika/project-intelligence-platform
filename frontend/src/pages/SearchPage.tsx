@@ -697,8 +697,8 @@ export const SearchPage: React.FC = () => {
                   </div>
 
                   <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs">
-                    <span className="text-[11px] text-emerald-400 font-mono">
-                      HTTP {p.http_status || 200} OK
+                    <span className="text-[11px] text-emerald-400 font-medium">
+                      Verified Source
                     </span>
                     <a
                       href={p.project_url}

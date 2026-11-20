@@ -84,7 +84,7 @@ export const SystemPage: React.FC = () => {
             System & Operations Hub
           </h1>
           <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            Real-time status of Cloudflare Workers AI (@cf/meta/llama-3.1-8b-instruct), Edge Discovery Engine, Pre-LLM Cache, and API analytics.
+            Real-time status of Cloudflare Workers AI ({health?.workers_ai_model || '@cf/meta/llama-3.2-3b-instruct'}), Edge Discovery Engine, Pre-LLM Cache, and API analytics.
           </p>
         </div>
 
@@ -308,7 +308,7 @@ export const SystemPage: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-slate-400">
             <div className="p-3.5 rounded-lg bg-slate-950/60 border border-slate-800 space-y-1">
               <span className="text-slate-200 font-semibold block">100% Serverless Edge AI</span>
-              <p>Meta Llama 3.1 8B Instruct (@cf/meta/llama-3.1-8b-instruct) executing directly at Cloudflare edge nodes with 0ms cold starts.</p>
+              <p>Meta Llama 3.2 3B Instruct (@cf/meta/llama-3.2-3b-instruct) executing directly at Cloudflare edge nodes with 0ms cold starts.</p>
             </div>
             <div className="p-3.5 rounded-lg bg-slate-950/60 border border-slate-800 space-y-1">
               <span className="text-slate-200 font-semibold block">Pre-LLM Deduplication & Cache</span>

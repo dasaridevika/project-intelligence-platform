@@ -159,17 +159,35 @@ export function getProjectDedupKey(name?: string, developer?: string): string {
 export function cleanSummaryText(raw?: string): string {
   if (!raw || typeof raw !== 'string') return '';
   let clean = raw
+    // 1. Strip fenced code blocks and inline backtick code snippets
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`\n]+`/g, ' ')
+    // 2. Strip scripts, styles, code, and pre tags with inner content
+    .replace(/<(?:script|style|code|pre|noscript|svg)\b[^<]*(?:(?!<\/(?:script|style|code|pre|noscript|svg)>)<[^<]*)*<\/(?:script|style|code|pre|noscript|svg)>/gi, ' ')
+    // 3. Strip function signatures, curly bracket blocks, and JSON objects
+    .replace(/\bfunction(?:\s+[a-zA-Z0-9_$]+)?\s*\([^)]*\)\s*\{[^}]*\}/g, ' ')
+    .replace(/\{[^{}]*\}/g, ' ')
+    // 4. Strip programming syntax and script statements
+    .replace(/\b(?:function\b|const\b|var\b|let\b|class\b|import\b|export\b|return\b|console\.\w+\s*\(|curl\s+-[a-zA-Z]|npm\s+(?:run|install))\b/g, ' ')
+    // 5. Strip unparsed markdown link syntax: [text](url) -> text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // 6. Strip markdown headers, bold, italics, bullets
     .replace(/^#+\s+/gm, '')
     .replace(/\s+#+\s+/g, ' ')
-    .replace(/[*_`~]{1,3}/g, '')
+    .replace(/[*_~]{1,3}/g, '')
     .replace(/^\s*[-•*]\s+/gm, '')
+    // 7. Strip HTML tags and entities
     .replace(/<[^>]+>/g, ' ')
     .replace(/&(?:quot|amp|lt|gt|nbsp|apos|#39);/gi, ' ')
+    // 8. Strip common directory / boilerplate / byline phrases
     .replace(/\b(?:find a data center|search \d+[\d,]* data centers?|click here to read more|read full report|share this article|photo by|written by|author:?)\b/gi, '')
+    // 9. Strip trailing ellipsis and multiple dots
     .replace(/\.{2,}/g, '.')
+    // 10. Normalize whitespace
     .replace(/\s+/g, ' ')
     .trim();
 
+  // If text is excessively long or truncated, neatly end at sentence boundary
   if (clean.length > 280) {
     const lastPeriod = clean.lastIndexOf('.', 280);
     if (lastPeriod > 100) {

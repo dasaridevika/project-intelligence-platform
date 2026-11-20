@@ -136,16 +136,14 @@ export const ProjectsPage: React.FC = () => {
             .filter((p: Project | null): p is Project => p !== null)
             .filter((p: Project) => {
               if (searchLoc && searchLoc !== 'all regions' && searchLoc !== 'worldwide (global)') {
-                const pLoc = ((p.location || '') + ' ' + (p.country || '') + ' ' + (p.summary || '')).toLowerCase();
-                const selAliases = [searchLoc];
-                if (searchLoc === 'india') selAliases.push('indian', 'gujarat', 'rajasthan', 'karnataka', 'maharashtra', 'tamil nadu', 'telangana', 'andhra', 'uttar pradesh', 'madhya pradesh', 'odisha', 'haryana', 'punjab', 'kerala');
-                if (searchLoc === 'united states' || searchLoc === 'usa') selAliases.push('us', 'america', 'texas', 'california', 'arizona', 'nevada', 'ohio', 'new york', 'georgia');
-                const hasMatchingAlias = selAliases.some(a => new RegExp(`\\b${a}\\b`, 'i').test(pLoc));
-                // Reject if clearly in another country
-                if (searchLoc === 'india' && /\b(?:texas|california|arizona|ohio|nevada|new york|usa|united states|korea|singapore|japan|germany)\b/i.test(pLoc) && !/\b(?:india|indian)\b/i.test(pLoc)) {
-                  return false;
+                const ctry = (p.country || '').toLowerCase().trim();
+                const loc = (p.location || '').toLowerCase().trim();
+                const combined = `${ctry} ${loc}`.trim();
+                const normSearch = searchLoc.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+                if (normSearch === 'united states' || normSearch === 'usa' || normSearch === 'us') {
+                  return ctry === 'united states' || combined.includes('united states') || combined.includes('usa');
                 }
-                return hasMatchingAlias;
+                return ctry === normSearch || combined.includes(normSearch);
               }
               return true;
             });
@@ -215,21 +213,8 @@ export const ProjectsPage: React.FC = () => {
         );
         if (s) {
           const sName = s.sector.toLowerCase();
-          // Exact or substring match
           if (pCat.includes(sName) || sName.includes(pCat)) return true;
-
-          // Semantic aliases across 462 sectors
-          if (sName === 'data center' && (pCat.includes('data center') || pCat.includes('hyperscale') || pName.includes('data center'))) return true;
-          if (sName === 'semiconductor plant' && (pCat.includes('semiconductor') || pCat.includes('wafer') || pCat.includes('fab') || pCat.includes('megafab'))) return true;
-          if (sName === 'semiconductor chemicals plant' && (pCat.includes('semiconductor chemical') || pSum.includes('semiconductor chemical'))) return true;
-          if (sName === 'battery energy storage' && (pCat.includes('energy storage') || pCat.includes('bess') || pSum.includes('bess') || pName.includes('bess'))) return true;
-          if (sName === 'lithium-ion (li-ion) battery production plant' && (pCat.includes('gigafactory') || pCat.includes('battery cell') || pCat.includes('battery fab') || pCat.includes('battery plant') || pCat.includes('lfp battery'))) return true;
-          if (sName.includes('solar') && (pCat.includes('solar') || pName.includes('solar') || pCat.includes('pv'))) return true;
-          if (sName.includes('wind') && (pCat.includes('wind') || pName.includes('wind'))) return true;
-          if (sName.includes('hydrogen') && (pCat.includes('hydrogen') || pName.includes('hydrogen'))) return true;
-
-          // Keyword match
-          if (s.keywords && s.keywords.some((k) => k.length > 3 && (pCat.includes(k) || pName.includes(k) || pSum.includes(k)))) {
+          if (s.keywords && s.keywords.some((k) => k.length > 3 && (pCat.includes(k.toLowerCase()) || pName.includes(k.toLowerCase())))) {
             return true;
           }
           return false;
@@ -238,26 +223,12 @@ export const ProjectsPage: React.FC = () => {
 
       // 4. Taxonomy Group Filter (15 Groups)
       if (selectedGroup && selectedGroup !== 'All Groups') {
-        if (selectedGroup === 'Technology & Data Infrastructure') {
-          if (pCat.includes('data center') || pCat.includes('semiconductor') || pCat.includes('technology') || pCat.includes('hyperscale')) return true;
-        } else if (selectedGroup === 'Batteries & Energy Storage') {
-          if (pCat.includes('battery') || pCat.includes('energy storage') || pCat.includes('bess') || pCat.includes('gigafactory')) return true;
-        } else if (selectedGroup === 'Power & Renewable Energy') {
-          if (pCat.includes('solar') || pCat.includes('wind') || pCat.includes('renewable') || pCat.includes('hydrogen')) return true;
-        } else if (selectedGroup === 'Chemicals & Petrochemicals') {
-          if (pCat.includes('chemical') || pCat.includes('petrochemical') || pSum.includes('chemical')) return true;
-        } else if (selectedGroup === 'Industrial Manufacturing') {
-          if (pCat.includes('manufacturing') || pCat.includes('fab') || pCat.includes('factory')) return true;
-        }
-
-        // Check against sectors belonging to this group
         const groupSectors = ALL_SECTORS.filter((s) => s.group === selectedGroup);
         const hasGroupSector = groupSectors.some((gs) => {
           const gsName = gs.sector.toLowerCase();
-          return pCat.includes(gsName) || pSum.includes(gsName);
+          return pCat.includes(gsName) || pName.includes(gsName) || (gs.keywords && gs.keywords.some(k => k.length > 3 && pCat.includes(k.toLowerCase())));
         });
         if (hasGroupSector) return true;
-
         return false;
       }
 
@@ -641,7 +612,7 @@ export const ProjectsPage: React.FC = () => {
           </div>
 
           <span className="text-[11px] text-slate-500">
-            HTTP 200 OK • Non-Operational Only
+            Verified Development Pipeline
           </span>
         </div>
       </div>
@@ -713,9 +684,6 @@ export const ProjectsPage: React.FC = () => {
                         <span>{formatProjectDate(p.date)}</span>
                       </span>
                     ) : null}
-                    <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded">
-                      HTTP {p.http_status || 200} OK
-                    </span>
                     <span className="text-[10px] text-slate-500 font-mono">
                       {new Date(p.created_at).toLocaleDateString()}
                     </span>
