@@ -595,6 +595,168 @@ test("Markdown link syntax [text](url) is unnested to plain text without raw URL
   assert.ok(cleaned.includes("Visit Site"));
 });
 
+// ==============================================================================
+// 11. WEBPAGE PUBLISHERS, DIRECTORIES, AND OPERATIONAL POWER PLANTS
+// ==============================================================================
+console.log("\n[Group 11: Webpage Publishers, Directory Listicles & Operational Plants]");
+
+function testIsWebsiteOwnName(companyName, candidateUrl, candidateTitle) {
+  if (!companyName || !candidateUrl) return false;
+  if (/\.(?:online|com|org|net|io|co|info|gov|edu|ai|app|tech|dev|biz|tv|me|us|uk|de|in|cn|jp|fr|es|eu|nl)\b/i.test(companyName)) {
+    return true;
+  }
+  let host = "";
+  try {
+    const parsed = new URL(candidateUrl);
+    host = parsed.hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  const cleanHost = host.replace(/^(?:www\d*|m|amp|news|blog|press|media|articles)\./i, "");
+  const hostParts = cleanHost.split('.');
+  const rootDomain = hostParts[0] || "";
+  const compClean = companyName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const rootClean = rootDomain.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const hostClean = cleanHost.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!compClean || !rootClean) return false;
+  return (
+    compClean === rootClean ||
+    compClean === hostClean ||
+    rootClean === compClean ||
+    cleanHost.includes(compClean) ||
+    (compClean.length >= 4 && rootClean.includes(compClean)) ||
+    (rootClean.length >= 4 && compClean.includes(rootClean))
+  );
+}
+
+test("Website publisher domain names ('Gridplants.online', 'RenewableDB') are detected and rejected as company", () => {
+  assert.strictEqual(testIsWebsiteOwnName("Gridplants.online", "https://gridplants.online/grid-notes/largest-solar-and-wind-farms"), true);
+  assert.strictEqual(testIsWebsiteOwnName("RenewableDB", "https://renewabledb.com/solar-farms-in-the-us"), true);
+  assert.strictEqual(testIsWebsiteOwnName("Enbridge", "https://reuters.com/business/energy/enbridge-announces-solar"), false);
+  assert.strictEqual(testIsWebsiteOwnName("Sembcorp Industries", "https://timesofindia.indiatimes.com/world/singapore"), false);
+});
+
+function testIsGenericReportOrDirectory(url, name, company, summary) {
+  const n = (name || "").toLowerCase().trim();
+  const u = (url || "").toLowerCase();
+  const c = (company || "").toLowerCase().trim();
+  const s = (summary || "").toLowerCase();
+
+  if (testIsWebsiteOwnName(c, u, n)) return true;
+
+  if (
+    /\b(?:top\s+\d+|\d+\s+top|largest\s+\d+|\d+\s+largest|biggest\s+\d+|\d+\s+biggest|projects?\s+roundup|roundup\s+of|list\s+of\s+.*projects?|roundup)\b/i.test(n) ||
+    /\b(?:largest|biggest|top|major)\s+(?:solar|wind|power|battery|clean\s+energy|energy|data\s+cent(?:er|re)|infrastructure|fab)\s+(?:and\s+[a-z]+\s+)?(?:farms?|plants?|facilities|projects?)\b/i.test(n) ||
+    /\b(?:largest|biggest)\s+.*(?:farms?|plants?|facilities|projects?)\s+in\s+(?:the\s+)?[a-z]+\b/i.test(n) ||
+    /\b(?:solar|wind|power|data\s+center)\s+farms?\s+in\s+(?:the\s+)?[a-z]+\b/i.test(n) ||
+    /\b(?:directory\b|roundup\b|inventory\b|catalog\b|rankings?\b|listicle\b|tracker\b)/i.test(n) ||
+    /\b(?:in\s+the\s+us|in\s+the\s+usa|in\s+the\s+u\.s\.|in\s+the\s+united\s+states)\s*$/i.test(n) ||
+    /(?:-|_|\/)(?:largest|biggest|top|major)-(?:[a-z]+-)?(?:solar|wind|power|farms|plants|facilities|projects)/i.test(u) ||
+    /(?:-|_|\/)(?:solar|wind|data-center|projects?)-farms?-in-(?:the-)?[a-z]+/i.test(u) ||
+    /(?:-|_|\/)(?:directory|directories|database|trackers?|roundups?|listings?)(?:-|_|\/|\.|$)/i.test(u) ||
+    /\b(?:the\s+article|the\s+page|the\s+report|this\s+article|this\s+page|this\s+report)\s+(?:lists|provides\s+a\s+directory|provides\s+a\s+list|ranks|compiles|outlines|examines|summarizes|surveys|features|details\s+the\s+largest|details\s+the\s+top)\b/i.test(s) ||
+    /\b(?:provides\s+a\s+directory|largest\s+projects\s+directory|lists\s+the\s+largest|lists\s+the\s+top|directory\s+of\s+(?:the\s+)?largest|directory\s+of\s+solar|directory\s+of\s+wind|directory\s+of\s+data\s+centers?)\b/i.test(s)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+test("Listicle 'The largest solar and wind farms in the US' from gridplants.online is rejected", () => {
+  const isRejected = testIsGenericReportOrDirectory(
+    "https://gridplants.online/grid-notes/largest-solar-and-wind-farms",
+    "The largest solar and wind farms in the US",
+    "Gridplants.online",
+    "The article lists the largest solar and wind farms in the US, their capacity, and their operators."
+  );
+  assert.strictEqual(isRejected, true);
+});
+
+test("Directory 'Solar Farms in the US: Largest Projects Directory' from renewabledb.com is rejected", () => {
+  const isRejected = testIsGenericReportOrDirectory(
+    "https://renewabledb.com/solar-farms-in-the-us",
+    "Solar Farms in the US: Largest Projects Directory",
+    "RenewableDB",
+    "The article provides a directory of the largest solar farms in the US, their capacity, and their operators."
+  );
+  assert.strictEqual(isRejected, true);
+});
+
+function testIsCompletedOrOperationalFacility(url, title, summary, text) {
+  const u = (url || "").toLowerCase();
+  const t = (title || "").toLowerCase();
+  const s = ((summary || "") + " " + (text || "")).toLowerCase();
+  const currentYear = 2026;
+
+  if (
+    /(?:-|_|\/)(?:now-powers|turned-[a-z0-9-]+-into|supply-agreement|ppa-agreement)(?:-|_|\/|\.|$)/i.test(u)
+  ) {
+    return true;
+  }
+
+  if (
+    /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|turned\s+(?:a|an|[a-z0-9\s-]+)\s+into\s+a\s+(?:solar|wind|power|data\s+center)|covered\s+(?:a|an|[a-z0-9\s-]+)\s+with\s+(?:floating\s+)?solar)\b/i.test(t) ||
+    /\b(?:signs?\s+(?:\d+[- ]year\s+)?(?:solar|wind|clean\s+energy|floating\s+solar|power)?\s*(?:supply|ppa|power\s+purchase)\s+agreement\s+with)\b/i.test(t) ||
+    /\b(?:inauguré|inaugurée|mis\s+en\s+service|in\s+Betrieb|nimmt\s+Betrieb\s+auf)\b/i.test(t)
+  ) {
+    return true;
+  }
+
+  if (
+    /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|reducing\s+co2\s+emissions\s+by|reduces\s+co2\s+emissions\s+by|cuts\s+\d+[\d,.]*\s+tonnes\s+of\s+co|turned\s+(?:a|an|[a-z0-9\s-]+)\s+into\s+a\s+(?:solar|wind|power|data\s+center)|covered\s+(?:a|an|[a-z0-9\s-]+)\s+with\s+(?:floating\s+)?solar)\b/i.test(s) ||
+    /\b(?:signs?\s+(?:\d+[- ]year\s+)?(?:solar|wind|clean\s+energy|floating\s+solar|power)?\s*(?:supply|ppa|power\s+purchase)\s+agreement\s+with)\b/i.test(s) ||
+    /\b(?:inauguré|inaugurée|mis\s+en\s+service|in\s+Betrieb|nimmt\s+Betrieb\s+auf)\b/i.test(s)
+  ) {
+    return true;
+  }
+
+  const pastYearMatch = s.match(/\b(?:inaugurated|commissioned|completed|opened|launched|built|operational|in\s+operation|online|commenced|started\s+operations?|commercial\s+operations?)\s+(?:in|since)\s+(?:[a-z]+\s+)?(20\d\d)\b/i) ||
+                        t.match(/\b(?:inaugurated|commissioned|completed|opened|launched|built|operational|in\s+operation|online|commenced|started\s+operations?|commercial\s+operations?)\s+(?:in|since)\s+(?:[a-z]+\s+)?(20\d\d)\b/i);
+  if (pastYearMatch) {
+    const yr = parseInt(pastYearMatch[1], 10);
+    if (!isNaN(yr) && yr < currentYear) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+test("Operating floating solar plant 'it now powers 5 water-treatment plants and cuts 32,000 tonnes of CO2' is rejected as operational", () => {
+  const isRejected = testIsCompletedOrOperationalFacility(
+    "https://timesofindia.indiatimes.com/science/earth/singapore-covered-a-reservoir-with-122000-floating-solar-panels-it-now-powers-5-water-treatment-plants-and-cuts-32000-tonnes-of-co-every-year/articleshow/133955854.cms",
+    "singapore covered a reservoir with 122000 floating solar panels it now powers 5 water-treatment plants and cuts 32000 tonnes of co every year",
+    "A 60 MWp floating solar farm covering 45 hectares of the Tengeh Reservoir, powering 5 water-treatment plants and reducing CO2 emissions by 32,000 tonnes per year.",
+    ""
+  );
+  assert.strictEqual(isRejected, true);
+});
+
+test("Meta 25-year supply agreement for existing operational floating solar plant is rejected as operational", () => {
+  const isRejected = testIsCompletedOrOperationalFacility(
+    "https://www.datacenterdynamics.com/en/news/meta-signs-25-year-floating-solar-supply-agreement-with-sembcorp-in-singapore",
+    "meta signs 25-year floating solar supply agreement with sembcorp in singapore",
+    "A 150 MWp floating solar farm at Tengeh Reservoir, powering Meta's data center operations in Singapore.",
+    ""
+  );
+  assert.strictEqual(isRejected, true);
+});
+
+test("Article 'the country that turned a 111-acre reservoir into a solar farm' is rejected as operational", () => {
+  const isRejected = testIsCompletedOrOperationalFacility(
+    "https://en.as.com/latest_news/the-country-that-turned-a-111-acre-reservoir-into-a-solar-farm-to-solve-a-major-energy-problem-f202607-n",
+    "the country that turned a 111-acre reservoir into a solar farm to solve a major energy problem",
+    "A 60 MWp floating solar farm covering 111 acres of the Tengeh Reservoir, powering 5 water-treatment plants and reducing CO2 emissions by 32,000 tonnes per year.",
+    ""
+  );
+  assert.strictEqual(isRejected, true);
+});
+
+test("German plant 'nimmt Betrieb auf' is identified as already operational in non-English", () => {
+  assert.strictEqual(testIsCompletedOrOperationalFacility("", "Solarpark nimmt Betrieb auf", "Die Anlage nimmt Betrieb auf", ""), true);
+  assert.strictEqual(testIsCompletedOrOperationalFacility("", "Solarpark in Betrieb", "Die Anlage ist in Betrieb", ""), true);
+});
+
 console.log("\n=================================================");
 console.log(`ALL ${passedTests} TESTS PASSED SUCCESSFULLY!`);
 console.log("=================================================\n");

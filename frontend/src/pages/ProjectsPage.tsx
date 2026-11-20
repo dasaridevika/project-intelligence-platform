@@ -23,7 +23,7 @@ import {
   Tag,
   X
 } from 'lucide-react';
-import { api, cleanSummaryText, validateAndSanitizeProject } from '../api';
+import { api, cleanSummaryText, validateAndSanitizeProject, getProjectDedupKey } from '../api';
 import { PrimarySector, Project, SearchRun } from '../types';
 import { SectorBadge, findPrimarySector } from '../components/Sector';
 import { GLOBAL_LOCATIONS } from './SearchPage';
@@ -147,8 +147,17 @@ export const ProjectsPage: React.FC = () => {
               }
               return true;
             });
-          setProjects(mapped);
-          setTotalCount(mapped.length);
+          // Deduplicate mapped search run results
+          const dedupMap = new Map<string, Project>();
+          for (const p of mapped) {
+            const k = getProjectDedupKey(p.canonical_name, p.company || p.developer);
+            if (!dedupMap.has(k)) {
+              dedupMap.set(k, p);
+            }
+          }
+          const uniqueMapped = Array.from(dedupMap.values());
+          setProjects(uniqueMapped);
+          setTotalCount(uniqueMapped.length);
         } else {
           const res = await api.listProjects({
             search: searchQuery || undefined,
@@ -160,8 +169,18 @@ export const ProjectsPage: React.FC = () => {
           const validProjects = (res.projects || [])
             .map((p: any) => validateAndSanitizeProject(p))
             .filter((p): p is Project => p !== null);
-          setProjects(validProjects);
-          setTotalCount(validProjects.length);
+
+          // Deduplicate listed repository projects
+          const dedupMap = new Map<string, Project>();
+          for (const p of validProjects) {
+            const k = getProjectDedupKey(p.canonical_name, p.company || p.developer);
+            if (!dedupMap.has(k)) {
+              dedupMap.set(k, p);
+            }
+          }
+          const uniqueValid = Array.from(dedupMap.values());
+          setProjects(uniqueValid);
+          setTotalCount(uniqueValid.length);
         }
       } catch (err) {
         console.error('Failed to load project records:', err);

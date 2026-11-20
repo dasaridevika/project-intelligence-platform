@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { api, subscribeToSearchEvents, isProductOrEquipment, getProjectDedupKey, cleanSummaryText } from '../api';
+import { api, subscribeToSearchEvents, isProductOrEquipment, getProjectDedupKey, cleanSummaryText, validateAndSanitizeProject } from '../api';
 import { ActivityEvent, PrimarySector, QueryTelemetry, SearchResultItem, SearchRun } from '../types';
 import { formatProjectDate } from '../pages/ProjectsPage';
 
@@ -246,30 +246,27 @@ export const SearchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               setSearchProgress((p) => Math.min(p + 5, 85));
               setSearchStage(`Candidate Identified: ${ev.metadata?.canonical_name || (ev.metadata?.project as any)?.canonical_name || 'Project'}`);
               const proj = ev.metadata?.project || (ev as any).project;
-              const pStatus = (proj?.status || '').toLowerCase().trim();
-              const isUpcoming = pStatus === 'announced' || pStatus === 'planning' || pStatus === 'under construction';
-              const isProduct = isProductOrEquipment(proj?.canonical_name || proj?.title, proj?.summary);
-              if (proj && isUpcoming && !isProduct && !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(proj.canonical_name || proj.title || '')) {
-                const st = pStatus === 'under construction' ? 'Under Construction' : pStatus === 'announced' ? 'Announced' : 'Planning';
+              const validated = validateAndSanitizeProject(proj);
+              if (validated && !isProductOrEquipment(validated.canonical_name, validated.summary) && !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(validated.canonical_name)) {
                 setDiscoveredResults((prev) => {
-                  const pName = proj.canonical_name || proj.name || proj.title || '';
-                  const pDev = proj.company || proj.developer || '';
+                  const pName = validated.canonical_name;
+                  const pDev = validated.company || validated.developer || '';
                   if (!pName) return prev;
                   const dedupKey = getProjectDedupKey(pName, pDev);
-                  const exists = prev.some(item => getProjectDedupKey(item.canonical_name, item.company || item.developer) === dedupKey || item.project_url === proj.project_url);
+                  const exists = prev.some(item => getProjectDedupKey(item.canonical_name, item.company || item.developer) === dedupKey || item.project_url === validated.project_url);
                   return exists ? prev : [...prev, {
-                    project_id: proj.id,
+                    project_id: validated.id,
                     canonical_name: pName,
                     company: pDev,
                     developer: pDev,
-                    country: proj.country || 'Not specified',
-                    location: proj.country || 'Not specified',
-                    date: formatProjectDate(proj.date),
-                    project_url: proj.project_url,
-                    category: proj.category || 'Capital Projects',
-                    status: st,
-                    http_status: proj.http_status || 200,
-                    summary: cleanSummaryText(proj.summary || ''),
+                    country: validated.country || 'Not specified',
+                    location: validated.location || validated.country || 'Not specified',
+                    date: formatProjectDate(validated.date),
+                    project_url: validated.project_url,
+                    category: validated.category || 'Capital Projects',
+                    status: validated.status,
+                    http_status: validated.http_status || 200,
+                    summary: cleanSummaryText(validated.summary || ''),
                     relevance_score: 0.95
                   }];
                 });

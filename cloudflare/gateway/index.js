@@ -180,7 +180,7 @@ function getQueryCacheKey(query, sector, country) {
   return `${q}::${s}::${c}`;
 }
 
-const KV_PROJECTS_KEY = "projects_v6";
+const KV_PROJECTS_KEY = "projects_v7";
 const KV_SEARCHES_KEY = "searches_v6";
 
 // Durable KV Persistence Layer (Survives worker code changes & redeploys)
@@ -808,11 +808,26 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     return true;
   }
 
-  // Reject listicles, rankings, and multi-project roundups (checked across name, URL, and summary)
+  // Reject website domain name extracted as developer
+  if (isWebsiteOwnName(c, u, n)) {
+    return true;
+  }
+
+  // Reject listicles, rankings, directories, and multi-project roundups (checked across name, URL, and summary)
   if (
     /\b(?:top\s+\d+|\d+\s+top|largest\s+\d+|\d+\s+largest|biggest\s+\d+|\d+\s+biggest|projects?\s+roundup|roundup\s+of|list\s+of\s+.*projects?|roundup)\b/i.test(n) ||
+    /\b(?:largest|biggest|top|major)\s+(?:solar|wind|power|battery|clean\s+energy|energy|data\s+cent(?:er|re)|infrastructure|fab)\s+(?:and\s+[a-z]+\s+)?(?:farms?|plants?|facilities|projects?)\b/i.test(n) ||
+    /\b(?:largest|biggest)\s+.*(?:farms?|plants?|facilities|projects?)\s+in\s+(?:the\s+)?[a-z]+\b/i.test(n) ||
+    /\b(?:solar|wind|power|data\s+center)\s+farms?\s+in\s+(?:the\s+)?[a-z]+\b/i.test(n) ||
+    /\b(?:directory\b|roundup\b|inventory\b|catalog\b|rankings?\b|listicle\b|tracker\b)/i.test(n) ||
+    /\b(?:in\s+the\s+us|in\s+the\s+usa|in\s+the\s+u\.s\.|in\s+the\s+united\s+states)\s*$/i.test(n) ||
     /\b(?:top\s+\d+|\d+\s+top|largest\s+\d+|\d+\s+largest|biggest\s+\d+|\d+\s+biggest|projects?-roundup|roundup-of|top-\d+|\d+-top)\b/i.test(u) ||
-    /\b(?:top\s+\d+|\d+\s+top|projects?\s+roundup|roundup\s+of|list\s+of\s+.*projects?)\b/i.test(s)
+    /(?:-|_|\/)(?:largest|biggest|top|major)-(?:[a-z]+-)?(?:solar|wind|power|farms|plants|facilities|projects)/i.test(u) ||
+    /(?:-|_|\/)(?:solar|wind|data-center|projects?)-farms?-in-(?:the-)?[a-z]+/i.test(u) ||
+    /(?:-|_|\/)(?:directory|directories|database|trackers?|roundups?|listings?)(?:-|_|\/|\.|$)/i.test(u) ||
+    /\b(?:top\s+\d+|\d+\s+top|projects?\s+roundup|roundup\s+of|list\s+of\s+.*projects?)\b/i.test(s) ||
+    /\b(?:the\s+article|the\s+page|the\s+report|this\s+article|this\s+page|this\s+report)\s+(?:lists|provides\s+a\s+directory|provides\s+a\s+list|ranks|compiles|outlines|examines|summarizes|surveys|features|details\s+the\s+largest|details\s+the\s+top)\b/i.test(s) ||
+    /\b(?:provides\s+a\s+directory|largest\s+projects\s+directory|lists\s+the\s+largest|lists\s+the\s+top|directory\s+of\s+(?:the\s+)?largest|directory\s+of\s+solar|directory\s+of\s+wind|directory\s+of\s+data\s+centers?)\b/i.test(s)
   ) {
     return true;
   }
@@ -1077,38 +1092,54 @@ function isCompletedOrOperationalFacility(url, title, summary, text) {
   const u = (url || "").toLowerCase();
   const t = (title || "").toLowerCase();
   const s = ((summary || "") + " " + (text || "")).toLowerCase();
+  const currentYear = new Date().getFullYear();
 
   // 1. URL slug patterns indicating the facility has already opened/completed or launched
   if (
     /(?:-|_|\/)(?:is-open|now-open|opens|opened|launches-operations|begins-operations|goes-online|inaugurated|commissioned|completed|entry-into)(?:-|_|\/|\.|$)/i.test(u) ||
     /(?:-|_|\/)(?:came-online|comes-online|just-came-online|goes-online|go-fully-operational|goes-fully-operational|went-fully-operational|fully-operational|go-operational|goes-operational|went-operational)(?:-|_|\/|\.|$)/i.test(u) ||
     /(?:-|_|\/)(?:launches|launched)(?:-[a-z0-9-]+)?-(?:data-cent(?:er|re)|fab|plant|facility|campus|hub|solar|farm)(?:-|_|\/|\.|$)/i.test(u) ||
-    /(?:-|_|\/)(?:opens|opened)-(?:[a-z0-9-]+-)?(?:data-cent(?:er|re)|fab|plant|facility|campus|hub|solar|farm)(?:-|_|\/|\.|$)/i.test(u)
+    /(?:-|_|\/)(?:opens|opened)-(?:[a-z0-9-]+-)?(?:data-cent(?:er|re)|fab|plant|facility|campus|hub|solar|farm)(?:-|_|\/|\.|$)/i.test(u) ||
+    /(?:-|_|\/)(?:now-powers|turned-[a-z0-9-]+-into|supply-agreement|ppa-agreement)(?:-|_|\/|\.|$)/i.test(u)
   ) {
     return true;
   }
 
-  // 2. Title & Headline patterns indicating opened/completed status or commercial operation
+  // 2. Title & Headline patterns indicating opened/completed status, commercial operation, or active powering
   if (
     /\b(?:is open|now open|has opened|opens data cent(?:er|re)|opened its|opens new|officially opened|opens megafab|opens plant|inaugurated|inaugurates|commenced commercial operations|now operational|commercial operation started|begins operations|went online|starts operations|has been commissioned|completes construction of)\b/i.test(t) ||
     /\b(?:came online|just came online|comes online|go fully operational|goes fully operational|went fully operational|go operational|goes operational|went operational|fully operational|now fully operational|is fully operational)\b/i.test(t) ||
+    /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|turned\s+(?:a|an|[a-z0-9\s-]+)\s+into\s+a\s+(?:solar|wind|power|data\s+center)|covered\s+(?:a|an|[a-z0-9\s-]+)\s+with\s+(?:floating\s+)?solar)\b/i.test(t) ||
+    /\b(?:signs?\s+(?:\d+[- ]year\s+)?(?:solar|wind|clean\s+energy|floating\s+solar|power)?\s*(?:supply|ppa|power\s+purchase)\s+agreement\s+with)\b/i.test(t) ||
     /\b(?:launches|launched|is launching|launching)\s+(?:(?:third|fourth|second|first|new|its|another|\d+(?:st|nd|rd|th)?)\s+)*(?:data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(t) ||
     /\b(?:launches\s+data\s*cent(?:er|re)|launched\s+data\s*cent(?:er|re))\b/i.test(t) ||
-    /\bmarking\s+its\s+entry\s+into\b/i.test(t)
+    /\bmarking\s+its\s+entry\s+into\b/i.test(t) ||
+    /\b(?:inauguré|inaugurée|mis\s+en\s+service|in\s+Betrieb|nimmt\s+Betrieb\s+auf|ha\s+inaugurado|ha\s+entrado\s+en\s+operación|entró\s+en\s+operación)\b/i.test(t)
   ) {
     return true;
   }
 
-  // 3. Summary & content patterns
+  // 3. Summary & content patterns indicating operational status
   if (
     /\b(?:is now open|has officially opened|opened its doors|opened its factory|opened its fab|opened its plant|opened its facility|began operations|started commercial operations|is now operational|facility is open|operational since|first data cent(?:er|re) built .* is open)\b/i.test(s) ||
     /\b(?:came online|just came online|comes online|go fully operational|goes fully operational|went fully operational|go operational|goes operational|went operational|fully operational|now fully operational|is fully operational)\b/i.test(s) ||
+    /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|reducing\s+co2\s+emissions\s+by|reduces\s+co2\s+emissions\s+by|cuts\s+\d+[\d,.]*\s+tonnes\s+of\s+co|turned\s+(?:a|an|[a-z0-9\s-]+)\s+into\s+a\s+(?:solar|wind|power|data\s+center)|covered\s+(?:a|an|[a-z0-9\s-]+)\s+with\s+(?:floating\s+)?solar)\b/i.test(s) ||
+    /\b(?:signs?\s+(?:\d+[- ]year\s+)?(?:solar|wind|clean\s+energy|floating\s+solar|power)?\s*(?:supply|ppa|power\s+purchase)\s+agreement\s+with)\b/i.test(s) ||
     /\b(?:launches|launched|is launching|launching)\s+(?:(?:third|fourth|second|first|new|its|another|\d+(?:st|nd|rd|th)?)\s+)*(?:data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(s) ||
     /\bmarking\s+its\s+entry\s+into\b/i.test(s) ||
-    /\b(?:opened (?:its\s+)?(?:factory|fab|plant|facility).*?\b(?:202[0-4]|201\d)|opened\s+in\s+(?:[a-z]+\s+)?(?:202[0-4]|201\d))\b/i.test(s) ||
-    /\b(?:opened in (?:202[0-4]|201\d) and is planning to expand)\b/i.test(s)
+    /\b(?:inauguré|inaugurée|mis\s+en\s+service|in\s+Betrieb|nimmt\s+Betrieb\s+auf|ha\s+inaugurado|ha\s+entrado\s+en\s+operación|entró\s+en\s+operación)\b/i.test(s)
   ) {
     return true;
+  }
+
+  // 4. Past year completions: any facility opened, completed, inaugurated, or operational in past years
+  const pastYearMatch = s.match(/\b(?:inaugurated|commissioned|completed|opened|launched|built|operational|in\s+operation|online|commenced|started\s+operations?|commercial\s+operations?)\s+(?:in|since)\s+(?:[a-z]+\s+)?(20\d\d)\b/i) ||
+                        t.match(/\b(?:inaugurated|commissioned|completed|opened|launched|built|operational|in\s+operation|online|commenced|started\s+operations?|commercial\s+operations?)\s+(?:in|since)\s+(?:[a-z]+\s+)?(20\d\d)\b/i);
+  if (pastYearMatch) {
+    const yr = parseInt(pastYearMatch[1], 10);
+    if (!isNaN(yr) && yr < currentYear) {
+      return true;
+    }
   }
 
   return false;
@@ -1233,6 +1264,7 @@ function validateAndSanitizeProjectRecord(p) {
   // 1. Company entity validation
   if (!isValidCompanyEntity(rawCompany)) return null;
   if (isNewsPublisher(rawCompany)) return null;
+  if (isWebsiteOwnName(rawCompany, rawUrl, rawName)) return null;
 
   // 2. Reject generic reports, listicles, directories, macro outlooks, or non-project lead
   if (isGenericReportOrDirectory(rawUrl, rawName, rawCompany, summary)) return null;
@@ -1255,6 +1287,8 @@ function validateAndSanitizeProjectRecord(p) {
   if (!cleanName || cleanName.length < 3) return null;
   if (/^(?:top\s+\d+|overview|pipeline|generator\s+rows|database|report)\b/i.test(cleanName)) return null;
   if (/^<.*>$/i.test(cleanName) || /<(?:facility|project|campus|company|developer)\s+name>/i.test(cleanName) || /^(?:<facility\s+name>|<project\s+name>|<campus\s+name>)\b/i.test(cleanName)) return null;
+  if (isWebsiteOwnName(rawCompany, rawUrl, cleanName)) return null;
+  if (isCompletedOrOperationalFacility(rawUrl, cleanName, summary, summary)) return null;
   if (isGenericReportOrDirectory(rawUrl, cleanName, rawCompany, summary)) return null;
 
   // 6. Infer and validate accurate category
@@ -1361,12 +1395,18 @@ const PROJECT_MATCH_STOPWORDS = new Set([
   "llc", "gmbh", "co", "company", "asset", "assets", "management", "investment", "investments", 
   "capital", "partners", "partnership", "platform", "platforms", "global", "national", 
   "international", "state", "rules", "capacity", "mega", "strategic", "announces", "plans", 
-  "joint", "venture", "market", "markets", "north", "south", "east", "west"
+  "joint", "venture", "market", "markets", "north", "south", "east", "west",
+  "largest", "biggest", "directory", "roundup", "list", "listing", "top", "major", "article", "overview", "report", "summary"
 ]);
 
 function isWebsiteOwnName(companyName, candidateUrl, candidateTitle) {
   if (!companyName || !candidateUrl) return false;
   if (isNewsPublisher(companyName)) return true;
+
+  // 1. Any company name containing a web domain TLD (e.g. "Gridplants.online", "renewabledb.com")
+  if (/\.(?:online|com|org|net|io|co|info|gov|edu|ai|app|tech|dev|biz|tv|me|us|uk|de|in|cn|jp|fr|es|eu|nl)\b/i.test(companyName)) {
+    return true;
+  }
 
   let host = "";
   try {
@@ -1382,21 +1422,26 @@ function isWebsiteOwnName(companyName, candidateUrl, candidateTitle) {
 
   const compClean = companyName.toLowerCase().replace(/[^a-z0-9]/g, "");
   const rootClean = rootDomain.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const hostClean = cleanHost.toLowerCase().replace(/[^a-z0-9]/g, "");
 
   if (!compClean || !rootClean) return false;
 
-  const isMediaOrDirHost = /(?:news|times|post|journal|daily|tribune|media|press|wire|info|report|research|stat|data|consult|herald|magazine|digest|network|review|tracker|bulletin|monitor|insight|insights|epcm|directory|portal|technology)\b/i.test(cleanHost) || isNewsPublisher(cleanHost);
-
-  if (isMediaOrDirHost) {
-    if (compClean === rootClean || rootClean.includes(compClean) || (compClean.length >= 4 && compClean.includes(rootClean))) {
-      return true;
-    }
+  // 2. Exact or substring match between company and URL root domain or full hostname
+  if (
+    compClean === rootClean ||
+    compClean === hostClean ||
+    rootClean === compClean ||
+    cleanHost.includes(compClean) ||
+    (compClean.length >= 4 && rootClean.includes(compClean)) ||
+    (rootClean.length >= 4 && compClean.includes(rootClean))
+  ) {
+    return true;
   }
 
   if (candidateTitle) {
     const escapedComp = companyName.trim().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
     const brandSuffixRegex = new RegExp(`(?:[-–—|/•]\\s*${escapedComp}\\s*$|^${escapedComp}\\s*[-–—|/•])`, 'i');
-    if (brandSuffixRegex.test(candidateTitle) && isMediaOrDirHost) {
+    if (brandSuffixRegex.test(candidateTitle)) {
       return true;
     }
   }
@@ -1793,10 +1838,10 @@ A VALID CAPITAL PROJECT MUST:
 DO NOT REJECT active construction, site buildouts, or facility expansions!
 
 ONLY REJECT (set "is_project": false) IF:
-1. The candidate is a multi-project list, roundup, compilation, or ranking. NEVER extract a multi-project listicle or ranking as a single project!
-2. The candidate is an aggregate industry pipeline report, generator inventory, or statistical dataset.
-3. The developer/company is a media outlet, data/statistics publisher, research agency, or government department rather than a commercial project developer.
-4. The facility is already completed, commissioned in past years, or currently operational in any language. For any operating or completed facility, set "is_already_operating": true or set "is_project": false.
+1. The candidate is a multi-project list, roundup, directory, database, compilation, or ranking (e.g. "largest solar and wind farms", "solar farms in the US"). NEVER extract a multi-project listicle or directory as a single project!
+2. The developer/company is a website domain name, URL, media outlet, data directory (e.g. ending in .online/.com), data/statistics publisher, research agency, or government department rather than a commercial project developer.
+3. The facility is already completed, commissioned in past years, or currently operational/powering facilities in any language. For any operating, active, or completed facility, set "is_already_operating": true or set "is_project": false.
+4. The candidate is an aggregate industry pipeline report, generator inventory, or statistical dataset.
 5. The page is an educational article, academic study, technology explainer, or how-to guide.
 6. The page is a colocation directory, search engine for capacity, or vendor marketplace.
 7. The page discusses a political protest, zoning dispute, or lawsuit without an actively funded physical development project.
@@ -1804,7 +1849,7 @@ ONLY REJECT (set "is_project": false) IF:
 
 CRITICAL REQUIREMENT - COMPANY ENTITY:
 - The "company" field MUST be the actual corporate developer, operator, or owner entity constructing or financing the facility.
-- NEVER use media publishers, statistical agencies, regulatory commissions, author bylines, or generic placeholder terms.
+- NEVER use website domain names (e.g. ending in .online, .com), media publishers, statistical agencies, regulatory commissions, author bylines, or generic placeholder terms.
 
 CRITICAL REQUIREMENT - ACCURATE CATEGORY:
 - The "category" field MUST reflect the specific primary industrial sector of the facility, honoring the Category Hint provided in the prompt when applicable.
@@ -1826,7 +1871,7 @@ If ONE OR MORE VALID PROJECTS:
       "country": "Sovereign nation in English where the facility is physically located.",
       "location": "Specific city, state, province, or local administrative region in English.",
       "status": "Announced | Planning | Under Construction",
-      "is_already_operating": false,
+      "is_already_operating": true | false,
       "category": "Primary industrial sector of the facility in English.",
       "date": "Target start, completion, or announcement year or date if explicitly stated in the text, or empty string if not mentioned.",
       "summary": "1-2 complete factual sentences in fluent English describing the project, developer, and its development scope."
@@ -2021,12 +2066,13 @@ A VALID CAPITAL PROJECT MUST:
    - "Under Construction": Groundbreaking, foundation work, active construction, or ongoing campus buildout.
 
 REJECT (MUST NOT EXTRACT):
-- LISTS, ROUNDUPS, COMPILATIONS & LISTICLES: Multi-project rankings, compilations, or roundup articles. NEVER extract an entire listicle, ranking, or roundup as a single project!
+- LISTS, ROUNDUPS, COMPILATIONS & DIRECTORIES: Articles listing "largest solar and wind farms", "solar farms in the US", multi-project directories, databases, or project rankings. NEVER extract an entire listicle, ranking, directory, or roundup as a single project!
+- WEBSITE DOMAIN NAMES AS DEVELOPER: NEVER return a website domain name, URL, or data directory (e.g. "Gridplants.online", "RenewableDB", or names ending in .online/.com/.org) as the developer company.
 - PIPELINES, INVENTORIES & STATISTICAL DATASETS: Industry pipeline overviews, generator rows, project databases, capacity trackers, or national statistics tables.
 - DATA/STATISTICS PUBLISHERS AS DEVELOPER: Candidates where the company is a government statistical agency, market research platform, energy data tracker, or publisher rather than a commercial project owner/developer erecting the facility.
 - NATIONAL MACRO POLICY TARGETS & ROADMAPS: Broad macroeconomic government announcements, national policy initiatives, or multi-year capacity targets without an individual physical development project.
 - REGULATORY & GRID REVIEW ARTICLES: Articles primarily discussing power supply rules, grid reviews, zoning regulations, or regulatory hurdles without a specific development project.
-- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING in ANY language. You MUST set "is_already_operating": true if the facility is already operating, active, or completed. NEVER label an operating plant as 'Under Construction'!
+- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING / POWERING FACILITIES in ANY language (including facilities that "now power water-treatment plants", "generate power", "cut CO2", "turned a reservoir into a solar farm", or signed a supply/PPA agreement for an existing facility). You MUST set "is_already_operating": true if the facility is already operating, active, generating power, or completed. NEVER label an operating plant as 'Under Construction'!
 - Tool, equipment, or machinery product launches. Equipment shipped to customers is NOT a capital project!
 - Material, wafer, or substrate product announcements.
 - R&D partnerships, industry collaboration initiatives, or technology roadmaps without a physical facility buildout.
@@ -2048,7 +2094,7 @@ Return ONLY a valid JSON object in this exact schema:
       "country": "Sovereign nation name in English where the facility is located.",
       "location": "Specific city, state, province, or region in English.",
       "status": "Announced | Planning | Under Construction",
-      "is_already_operating": false,
+      "is_already_operating": true | false,
       "category": "Primary industrial sector of the facility in English.",
       "date": "Target start, completion, or announcement date if explicitly stated in candidate content, or empty string \"\" if not mentioned",
       "summary": "1-2 complete factual sentences in fluent English describing the project and buildout scope."
@@ -2583,6 +2629,10 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       if (!isValidCompanyEntity(companyName)) {
         continue;
       }
+      if (isWebsiteOwnName(companyName, cleanUrl, matchedCandidate.title)) {
+        addEvent("candidate_filtered", `DROPPED (Website Name as Developer): '${companyName}' matches website domain.`);
+        continue;
+      }
       if (hasNonLatinScript(projectName) || hasNonLatinScript(companyName) || hasNonLatinScript(aiP.summary) || isForeignLanguageText(aiP.summary)) {
         continue;
       }
@@ -2637,24 +2687,50 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         addEvent("candidate_filtered", `DROPPED (Historical/Past Project Date): '${projectName}' date '${rawDate}' is prior to current active pipeline.`);
         continue;
       }
-      const projId = "proj-" + crypto.randomUUID().slice(0, 8);
-      const projectRecord = {
-        id: projId,
-        canonical_name: projectName,
-        company: companyName,
-        developer: companyName,
-        project_url: cleanUrl,
-        status: projectStatus,
-        category: inferCategory(projectName, aiP.summary, aiP.category || targetCategory),
-        country: projectCountry || "Not specified",
-        location: projectLocation || projectCountry || "Not specified",
-        date: projectDate,
-        http_status: 200,
-        summary: cleanSummaryText(aiP.summary || matchedCandidate.snippet || ""),
-        created_at: new Date().toISOString()
-      };
 
-      store.projects.set(projId, projectRecord);
+      // Deduplicate against existing records in store.projects
+      const dedupKey = getProjectDedupKey(projectName, companyName);
+      let existingEntry = null;
+      for (const [id, p] of store.projects.entries()) {
+        if (getProjectDedupKey(p.canonical_name, p.company || p.developer) === dedupKey) {
+          existingEntry = { id, project: p };
+          break;
+        }
+      }
+
+      let projId;
+      let projectRecord;
+
+      if (existingEntry) {
+        projId = existingEntry.id;
+        const prev = existingEntry.project;
+        projectRecord = {
+          ...prev,
+          summary: (aiP.summary?.length || 0) > (prev.summary?.length || 0) ? cleanSummaryText(aiP.summary) : prev.summary,
+          project_url: prev.project_url || cleanUrl,
+          date: projectDate || prev.date
+        };
+        store.projects.set(projId, projectRecord);
+      } else {
+        projId = "proj-" + crypto.randomUUID().slice(0, 8);
+        projectRecord = {
+          id: projId,
+          canonical_name: projectName,
+          company: companyName,
+          developer: companyName,
+          project_url: cleanUrl,
+          status: projectStatus,
+          category: inferCategory(projectName, aiP.summary, aiP.category || targetCategory),
+          country: projectCountry || "Not specified",
+          location: projectLocation || projectCountry || "Not specified",
+          date: projectDate,
+          http_status: 200,
+          summary: cleanSummaryText(aiP.summary || matchedCandidate.snippet || ""),
+          created_at: new Date().toISOString()
+        };
+        store.projects.set(projId, projectRecord);
+      }
+
       store.urlCache.set(cleanUrl, [projectRecord]);
       extractedProjects.push(projectRecord);
 
@@ -3234,14 +3310,21 @@ export default {
       const status = url.searchParams.get("status");
       const search = url.searchParams.get("search")?.toLowerCase();
 
-      // Validate, sanitize, and filter projects
+      // Validate, sanitize, deduplicate, and filter projects
       const validProjects = [];
+      const seenDedupKeys = new Set();
       for (const [id, rawP] of Array.from(store.projects.entries())) {
         const sanitized = validateAndSanitizeProjectRecord(rawP);
         if (!sanitized) {
           store.projects.delete(id);
           if (rawP.project_url) store.urlCache.delete(rawP.project_url);
         } else {
+          const k = getProjectDedupKey(sanitized.canonical_name, sanitized.company || sanitized.developer);
+          if (seenDedupKeys.has(k)) {
+            store.projects.delete(id);
+            continue;
+          }
+          seenDedupKeys.add(k);
           store.projects.set(id, sanitized);
           validProjects.push(sanitized);
         }
@@ -3334,14 +3417,21 @@ export default {
       const status = url.searchParams.get("status");
       const search = url.searchParams.get("search")?.toLowerCase();
 
-      // Validate, sanitize, and filter projects
+      // Validate, sanitize, deduplicate, and filter projects
       const validProjects = [];
+      const seenDedupKeys = new Set();
       for (const [id, rawP] of Array.from(store.projects.entries())) {
         const sanitized = validateAndSanitizeProjectRecord(rawP);
         if (!sanitized) {
           store.projects.delete(id);
           if (rawP.project_url) store.urlCache.delete(rawP.project_url);
         } else {
+          const k = getProjectDedupKey(sanitized.canonical_name, sanitized.company || sanitized.developer);
+          if (seenDedupKeys.has(k)) {
+            store.projects.delete(id);
+            continue;
+          }
+          seenDedupKeys.add(k);
           store.projects.set(id, sanitized);
           validProjects.push(sanitized);
         }
