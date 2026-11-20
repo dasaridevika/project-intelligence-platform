@@ -670,6 +670,17 @@ function testIsGenericReportOrDirectory(url, name, company, summary) {
   ) {
     return true;
   }
+
+  // Reject multi-state, multi-region, or multi-site portfolio aggregations (e.g. "Arizona and Texas Data Center Campuses")
+  if (
+    /\b(?:multi-state|multi-region|multi-site|nationwide)\s+(?:portfolio|footprint|build-?out|facilities|campuses|projects?)\b/i.test(n) ||
+    /\b[a-z]+\s+(?:and|&)\s+[a-z]+\s+(?:.*?\s+)?(?:campuses|data\s*cent(?:er|re)s|facilities|farms|build-?outs?|portfolios?)\b/i.test(n) ||
+    /(?:-|_|\/)data-center-build-out-(?:[a-z]+-[a-z]+)/i.test(u) ||
+    /\bunveils\s+(?:\$[\d.]+[bm]?\s+)?(?:data\s*cent(?:er|re)|capex|infrastructure)\s+build-?out\b/i.test(s)
+  ) {
+    return true;
+  }
+
   return false;
 }
 
@@ -700,6 +711,8 @@ function testIsCompletedOrOperationalFacility(url, title, summary, text) {
   const currentYear = 2026;
 
   if (
+    /(?:-|_|\/)(?:launches|launched)(?:-[a-z0-9-]+)?-(?:cloud-region|data-cent(?:er|re)|fab|plant|facility|campus|hub|solar|farm)(?:-|_|\/|\.|$)/i.test(u) ||
+    /(?:-|_|\/)(?:opens|opened)-(?:[a-z0-9-]+-)?(?:data-cent(?:er|re)|fab|plant|facility|campus|hub|solar|farm)(?:-|_|\/|\.|$)/i.test(u) ||
     /(?:-|_|\/)(?:now-powers|turned-[a-z0-9-]+-into|supply-agreement|ppa-agreement)(?:-|_|\/|\.|$)/i.test(u)
   ) {
     return true;
@@ -710,6 +723,8 @@ function testIsCompletedOrOperationalFacility(url, title, summary, text) {
     /\b(?:came online|just came online|comes online|go fully operational|goes fully operational|went fully operational|go operational|goes operational|went operational|fully operational|now fully operational|is fully operational|already\s+operating|is\s+already\s+operating|powers\s+up)\b/i.test(t) ||
     /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|turned\s+(?:a|an|[a-z0-9\s-]+)\s+into\s+a\s+(?:solar|wind|power|data\s+center)|covered\s+(?:a|an|[a-z0-9\s-]+)\s+with\s+(?:floating\s+)?solar)\b/i.test(t) ||
     /\b(?:signs?\s+(?:\d+[- ]year\s+)?(?:solar|wind|clean\s+energy|floating\s+solar|power)?\s*(?:supply|ppa|power\s+purchase)\s+agreement\s+with)\b/i.test(t) ||
+    /\b(?:launches|launched|is launching|launching)\s+(?:(?:third|fourth|second|first|new|its|another|\d+(?:st|nd|rd|th)?)\s+)*(?:cloud\s+region|data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(t) ||
+    /\b(?:launches\s+data\s*cent(?:er|re)|launched\s+data\s*cent(?:er|re)|launches\s+cloud\s+region|launched\s+cloud\s+region)\b/i.test(t) ||
     /\b(?:inauguré|inaugurée|mis\s+en\s+service|in\s+Betrieb|nimmt\s+Betrieb\s+auf)\b/i.test(t)
   ) {
     return true;
@@ -720,6 +735,8 @@ function testIsCompletedOrOperationalFacility(url, title, summary, text) {
     /\b(?:commenced\s+(?:commercial\s+)?operations|has\s+commenced\s+operations|commences\s+operations)\b/i.test(s) ||
     /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|reducing\s+co2\s+emissions\s+by|reduces\s+co2\s+emissions\s+by|cuts\s+\d+[\d,.]*\s+tonnes\s+of\s+co|turned\s+(?:a|an|[a-z0-9\s-]+)\s+into\s+a\s+(?:solar|wind|power|data\s+center)|covered\s+(?:a|an|[a-z0-9\s-]+)\s+with\s+(?:floating\s+)?solar)\b/i.test(s) ||
     /\b(?:signs?\s+(?:\d+[- ]year\s+)?(?:solar|wind|clean\s+energy|floating\s+solar|power)?\s*(?:supply|ppa|power\s+purchase)\s+agreement\s+with)\b/i.test(s) ||
+    /\b(?:launches|launched|is launching|launching)\s+(?:(?:third|fourth|second|first|new|its|another|\d+(?:st|nd|rd|th)?)\s+)*(?:cloud\s+region|data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(s) ||
+    /\b(?:launches\s+cloud\s+region|launched\s+cloud\s+region)\b/i.test(s) ||
     /\b(?:inauguré|inaugurée|mis\s+en\s+service|in\s+Betrieb|nimmt\s+Betrieb\s+auf)\b/i.test(s)
   ) {
     return true;
@@ -885,6 +902,114 @@ test("Query already containing project intent 'Upcoming green hydrogen plant in 
 test("Query already containing 'under construction' is preserved as-is", () => {
   const q = buildProviderSearchQueryTest("Data centers under construction in Virginia");
   assert.strictEqual(q, "Data centers under construction in Virginia");
+});
+
+// ==============================================================================
+// 14. MULTI-STATE PORTFOLIO REJECTION, OPERATIONAL CLOUD LAUNCHES & STRICT LOCATION
+// ==============================================================================
+console.log("\n[Group 14: Multi-State Portfolio Rejection, Operational Cloud Launches & Strict Location]");
+
+test("Multi-state portfolio 'Arizona and Texas Data Center Campuses' is rejected", () => {
+  const isRejected = testIsGenericReportOrDirectory(
+    "https://www.bisnow.com/news/national/data-center-development/elon-musk-spacex-unveils-74b-data-center-build-out-texas-arizona",
+    "Arizona and Texas Data Center Campuses",
+    "SpaceX",
+    "SpaceX has unveiled plans for a multi-state $74 billion data center build out across Texas and Arizona."
+  );
+  assert.strictEqual(isRejected, true);
+});
+
+test("Operational cloud region launch 'AWS launches Taiwan cloud region' is rejected as operational", () => {
+  const isOperational = testIsCompletedOrOperationalFacility(
+    "https://www.datacenterdynamics.com/en/news/aws-launches-taiwan-cloud-region-will-invest-5bn-in-data-centers-in-country",
+    "AWS launches Taiwan cloud region, will invest $5bn in data centers in country",
+    "AWS has launched a new cloud region in Taiwan and plans to invest $5 billion in the country over 15 years.",
+    ""
+  );
+  assert.strictEqual(isOperational, true);
+});
+
+test("Genuine single facility 'Starbase Data Center and Power Plant' is accepted", () => {
+  const isRejected = testIsGenericReportOrDirectory(
+    "https://www.texastribune.org/2026/11/10/texas-spacex-data-center-power-plant",
+    "Starbase Data Center and Power Plant",
+    "SpaceX",
+    "SpaceX plans to build a new data center and dedicated power plant at Starbase in Cameron County, Texas."
+  );
+  assert.strictEqual(isRejected, false);
+
+  const isOperational = testIsCompletedOrOperationalFacility(
+    "https://www.texastribune.org/2026/11/10/texas-spacex-data-center-power-plant",
+    "Starbase Data Center and Power Plant",
+    "SpaceX plans to build a new data center and dedicated power plant at Starbase in Cameron County, Texas.",
+    ""
+  );
+  assert.strictEqual(isOperational, false);
+});
+
+test("Genuine single facility 'Paducah Data Center Campus' is accepted", () => {
+  const isRejected = testIsGenericReportOrDirectory(
+    "https://www.bloomberg.com/news/articles/2026-07-29/nextera-brookfield-to-build-100-billion-kentucky-data-campus",
+    "Paducah Data Center Campus",
+    "Brookfield and NextEra Energy",
+    "Brookfield and NextEra Energy plan to develop a $100 billion data center campus at the Paducah site in Kentucky."
+  );
+  assert.strictEqual(isRejected, false);
+});
+
+test("Genuine single facility 'Red Clay Technology Center Campus' is accepted", () => {
+  const isRejected = testIsGenericReportOrDirectory(
+    "https://www.cloverleafinfra.com/newsroom/lambda-to-build-new-data-center-in-lowndes-county-alabama-investing-more-than-33-billion-in-state",
+    "Red Clay Technology Center Campus",
+    "Lambda, Inc.",
+    "Lambda is set to construct the Red Clay Technology Center Campus in Lowndes County, Alabama."
+  );
+  assert.strictEqual(isRejected, false);
+});
+
+test("Genuine single facility 'Project Cannoli' is accepted", () => {
+  const isRejected = testIsGenericReportOrDirectory(
+    "https://www.mlive.com/detroit/2026/11/aerial-images-show-construction-of-googles-massive-michigan-data-center.html",
+    "Project Cannoli",
+    "Google",
+    "Aerial photos show ongoing construction work on Google's massive Project Cannoli data center in Michigan."
+  );
+  assert.strictEqual(isRejected, false);
+});
+
+function testNormalizeCountry(str) {
+  if (!str) return "";
+  let s = str.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (s === "usa" || s === "u s a" || s === "u s" || s === "us" || s === "america" || s === "the united states") return "united states";
+  if (s === "uk" || s === "great britain" || s === "britain" || s === "england") return "united kingdom";
+  return s;
+}
+
+function testMatchesTargetCountry(projectCountry, projectLocation, targetLocation) {
+  if (!targetLocation) return true;
+  const target = targetLocation.toLowerCase().trim();
+  if (target === "worldwide (global)" || target === "global" || target === "all regions" || target === "all" || target === "") return true;
+  const pCountry = (projectCountry || "").toLowerCase().trim();
+  const pLocation = (projectLocation || "").toLowerCase().trim();
+  const combined = `${pCountry} ${pLocation}`.trim();
+  const normTarget = testNormalizeCountry(target);
+  const normCountry = testNormalizeCountry(pCountry);
+  if (normCountry) {
+    if (normCountry === normTarget || normCountry.includes(normTarget) || normTarget.includes(normCountry)) return true;
+    return false;
+  }
+  if (combined) {
+    return testNormalizeCountry(combined).includes(normTarget);
+  }
+  return false;
+}
+
+test("Strict country filter keeps US projects and rejects foreign projects when location is United States", () => {
+  assert.strictEqual(testMatchesTargetCountry("United States", "Alabama", "United States"), true);
+  assert.strictEqual(testMatchesTargetCountry("United States", "Cameron County, Texas", "United States"), true);
+  assert.strictEqual(testMatchesTargetCountry("Taiwan", "Taoyuan", "United States"), false);
+  assert.strictEqual(testMatchesTargetCountry("Singapore", "Tengeh Reservoir", "United States"), false);
+  assert.strictEqual(testMatchesTargetCountry("Germany", "Lower Saxony", "United States"), false);
 });
 
 console.log("\n=================================================");

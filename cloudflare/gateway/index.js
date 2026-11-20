@@ -837,6 +837,16 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     return true;
   }
 
+  // Reject multi-state, multi-region, or multi-site portfolio aggregations (e.g. "Arizona and Texas Data Center Campuses")
+  if (
+    /\b(?:multi-state|multi-region|multi-site|nationwide)\s+(?:portfolio|footprint|build-?out|facilities|campuses|projects?)\b/i.test(n) ||
+    /\b[a-z]+\s+(?:and|&)\s+[a-z]+\s+(?:.*?\s+)?(?:campuses|data\s*cent(?:er|re)s|facilities|farms|build-?outs?|portfolios?)\b/i.test(n) ||
+    /(?:-|_|\/)data-center-build-out-(?:[a-z]+-[a-z]+)/i.test(u) ||
+    /\bunveils\s+(?:\$[\d.]+[bm]?\s+)?(?:data\s*cent(?:er|re)|capex|infrastructure)\s+build-?out\b/i.test(s)
+  ) {
+    return true;
+  }
+
   // Reject multi-year forecast or listicle date ranges (e.g. multi-year projections like 2026-2030)
   if (
     /\b20\d\d\s*[-–—/]\s*20\d\d\b/i.test(n) ||
@@ -1103,7 +1113,7 @@ function isCompletedOrOperationalFacility(url, title, summary, text) {
   if (
     /(?:-|_|\/)(?:is-open|now-open|opens|opened|launches-operations|begins-operations|goes-online|inaugurated|commissioned|completed|entry-into)(?:-|_|\/|\.|$)/i.test(u) ||
     /(?:-|_|\/)(?:came-online|comes-online|just-came-online|goes-online|go-fully-operational|goes-fully-operational|went-fully-operational|fully-operational|go-operational|goes-operational|went-operational)(?:-|_|\/|\.|$)/i.test(u) ||
-    /(?:-|_|\/)(?:launches|launched)(?:-[a-z0-9-]+)?-(?:data-cent(?:er|re)|fab|plant|facility|campus|hub|solar|farm)(?:-|_|\/|\.|$)/i.test(u) ||
+    /(?:-|_|\/)(?:launches|launched)(?:-[a-z0-9-]+)?-(?:cloud-region|data-cent(?:er|re)|fab|plant|facility|campus|hub|solar|farm)(?:-|_|\/|\.|$)/i.test(u) ||
     /(?:-|_|\/)(?:opens|opened)-(?:[a-z0-9-]+-)?(?:data-cent(?:er|re)|fab|plant|facility|campus|hub|solar|farm)(?:-|_|\/|\.|$)/i.test(u) ||
     /(?:-|_|\/)(?:now-powers|turned-[a-z0-9-]+-into|supply-agreement|ppa-agreement)(?:-|_|\/|\.|$)/i.test(u)
   ) {
@@ -1117,8 +1127,8 @@ function isCompletedOrOperationalFacility(url, title, summary, text) {
     /\b(?:powers\s+up|powered\s+up|powering\s+up)\b/i.test(t) ||
     /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|turned\s+(?:a|an|[a-z0-9\s-]+)\s+into\s+a\s+(?:solar|wind|power|data\s+center)|covered\s+(?:a|an|[a-z0-9\s-]+)\s+with\s+(?:floating\s+)?solar)\b/i.test(t) ||
     /\b(?:signs?\s+(?:\d+[- ]year\s+)?(?:solar|wind|clean\s+energy|floating\s+solar|power)?\s*(?:supply|ppa|power\s+purchase)\s+agreement\s+with)\b/i.test(t) ||
-    /\b(?:launches|launched|is launching|launching)\s+(?:(?:third|fourth|second|first|new|its|another|\d+(?:st|nd|rd|th)?)\s+)*(?:data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(t) ||
-    /\b(?:launches\s+data\s*cent(?:er|re)|launched\s+data\s*cent(?:er|re))\b/i.test(t) ||
+    /\b(?:launches|launched|is launching|launching)\s+(?:(?:third|fourth|second|first|new|its|another|\d+(?:st|nd|rd|th)?)\s+)*(?:cloud\s+region|data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(t) ||
+    /\b(?:launches\s+data\s*cent(?:er|re)|launched\s+data\s*cent(?:er|re)|launches\s+cloud\s+region|launched\s+cloud\s+region)\b/i.test(t) ||
     /\bmarking\s+its\s+entry\s+into\b/i.test(t) ||
     /\b(?:inauguré|inaugurée|mis\s+en\s+service|in\s+Betrieb|nimmt\s+Betrieb\s+auf|ha\s+inaugurado|ha\s+entrado\s+en\s+operación|entró\s+en\s+operación)\b/i.test(t)
   ) {
@@ -1132,7 +1142,8 @@ function isCompletedOrOperationalFacility(url, title, summary, text) {
     /\b(?:commenced\s+(?:commercial\s+)?operations|has\s+commenced\s+operations|commences\s+operations)\b/i.test(s) ||
     /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|reducing\s+co2\s+emissions\s+by|reduces\s+co2\s+emissions\s+by|cuts\s+\d+[\d,.]*\s+tonnes\s+of\s+co|turned\s+(?:a|an|[a-z0-9\s-]+)\s+into\s+a\s+(?:solar|wind|power|data\s+center)|covered\s+(?:a|an|[a-z0-9\s-]+)\s+with\s+(?:floating\s+)?solar)\b/i.test(s) ||
     /\b(?:signs?\s+(?:\d+[- ]year\s+)?(?:solar|wind|clean\s+energy|floating\s+solar|power)?\s*(?:supply|ppa|power\s+purchase)\s+agreement\s+with)\b/i.test(s) ||
-    /\b(?:launches|launched|is launching|launching)\s+(?:(?:third|fourth|second|first|new|its|another|\d+(?:st|nd|rd|th)?)\s+)*(?:data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(s) ||
+    /\b(?:launches|launched|is launching|launching)\s+(?:(?:third|fourth|second|first|new|its|another|\d+(?:st|nd|rd|th)?)\s+)*(?:cloud\s+region|data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(s) ||
+    /\b(?:launches\s+cloud\s+region|launched\s+cloud\s+region)\b/i.test(s) ||
     /\bmarking\s+its\s+entry\s+into\b/i.test(s) ||
     /\b(?:inauguré|inaugurée|mis\s+en\s+service|in\s+Betrieb|nimmt\s+Betrieb\s+auf|ha\s+inaugurado|ha\s+entrado\s+en\s+operación|entró\s+en\s+operación)\b/i.test(s)
   ) {
@@ -1839,7 +1850,7 @@ TASK:
 Determine if the provided webpage discusses one or more SPECIFIC, REAL-WORLD CAPITAL PROJECTS in development.
 
 A VALID CAPITAL PROJECT MUST:
-1. Cover a concrete, individual physical facility, building, plant, megafab, hyperscale data center, power plant, solar/wind farm, transmission line, battery gigafactory, or campus expansion.
+1. Cover a concrete, individual physical facility, building, plant, megafab, hyperscale data center, power plant, solar/wind farm, transmission line, battery gigafactory, or campus expansion. It must be ONE distinct development, NOT an aggregate multi-state or multi-region portfolio.
 2. Have an identifiable corporate company, developer, owner, or operator building, expanding, or financing it. NEVER return the news site, media publisher, statistical agency, or market research portal.
 3. Have a verifiable location (city, state, region, or country).
 4. Be in one of these 3 active development lifecycle stages (ALL 3 ARE VALID):
@@ -1858,6 +1869,7 @@ ONLY REJECT (set "is_project": false) IF:
 6. The page is a colocation directory, search engine for capacity, or vendor marketplace.
 7. The page discusses a political protest, zoning dispute, or lawsuit without an actively funded physical development project.
 8. The page is purely macroeconomic analysis, market forecast, or paid market research report.
+9. The candidate is a multi-state or multi-region aggregate portfolio bundling multiple distinct facilities across different states or territories into one record.
 
 CRITICAL REQUIREMENT - COMPANY ENTITY:
 - The "company" field MUST be the actual corporate developer, operator, or owner entity constructing or financing the facility.
@@ -2069,7 +2081,7 @@ Examine the numbered candidates. For each candidate that discusses a genuine, re
 Extract the required project parameters in fluent, standard English.
 
 A VALID CAPITAL PROJECT MUST:
-1. Be a concrete, individual physical facility, building, megafab, data center campus, power plant, solar/battery farm, or facility expansion. It must be ONE distinct development, NOT an aggregate industry category, ranking, or multi-project inventory.
+1. Be a concrete, individual physical facility, building, megafab, data center campus, power plant, solar/battery farm, or facility expansion. It must be ONE distinct development, NOT an aggregate industry category, ranking, multi-project inventory, or multi-state/multi-region portfolio buildout across multiple states or sites.
 2. Have an identifiable corporate developer, owner, or operator building, financing, or operating it. NEVER return a data publisher, research platform, government statistical bureau, or news outlet as the developer.
 3. Have a verifiable location (city, state, region, or country).
 4. Be in one of these 3 active development lifecycle stages (ALL 3 ARE VALID):
@@ -2078,6 +2090,7 @@ A VALID CAPITAL PROJECT MUST:
    - "Under Construction": Groundbreaking, foundation work, active construction, or ongoing campus buildout.
 
 REJECT (MUST NOT EXTRACT):
+- MULTI-STATE / MULTI-REGION PORTFOLIO AGGREGATIONS: News reporting broad multi-state buildout programs combining multiple states or regions into a collective portfolio. Only extract an individual, distinct facility project located in a single verifiable state/location, never an aggregate multi-site portfolio!
 - LISTS, ROUNDUPS, COMPILATIONS & DIRECTORIES: Articles listing multiple facilities, regional directories, multi-project databases, inventories, or project rankings. NEVER extract an entire listicle, ranking, directory, or roundup as a single project!
 - WEBSITE DOMAIN NAMES AS DEVELOPER: NEVER return a website domain name, URL, or data directory (e.g. names containing web domain TLDs such as .online, .com, .org, .net) as the developer company.
 - PIPELINES, INVENTORIES & STATISTICAL DATASETS: Industry pipeline overviews, generator rows, project databases, capacity trackers, or national statistics tables.

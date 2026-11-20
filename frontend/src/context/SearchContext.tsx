@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { api, subscribeToSearchEvents, isProductOrEquipment, getProjectDedupKey, cleanSummaryText, validateAndSanitizeProject } from '../api';
+import { api, subscribeToSearchEvents, isProductOrEquipment, getProjectDedupKey, cleanSummaryText, validateAndSanitizeProject, matchesTargetCountry } from '../api';
 import { ActivityEvent, PrimarySector, QueryTelemetry, SearchResultItem, SearchRun } from '../types';
 import { formatProjectDate } from '../pages/ProjectsPage';
 
@@ -190,7 +190,10 @@ export const SearchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
       if (res.status === 'completed' || Array.isArray((res as any).results)) {
         const found = (res as any).results || [];
-        setDiscoveredResults(found.map((item: any) => ({ ...item, summary: cleanSummaryText(item.summary) })));
+        const validFound = (selectedLocation !== 'Worldwide (Global)' && selectedLocation !== 'All Regions')
+          ? found.filter((item: any) => matchesTargetCountry(item.country || (item.project as any)?.country, item.location || (item.project as any)?.location, selectedLocation))
+          : found;
+        setDiscoveredResults(validFound.map((item: any) => ({ ...item, summary: cleanSummaryText(item.summary) })));
         setSearchProgress(100);
         setSearchStage('Discovery Complete!');
         setSearchCompleted(true);
@@ -209,7 +212,11 @@ export const SearchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             setSearchStage('Discovery Complete!');
             setSearchCompleted(true);
             const resultsData = await api.getSearchResults(searchId);
-            setDiscoveredResults(resultsData.results || []);
+            const found = resultsData.results || [];
+            const validFound = (selectedLocation !== 'Worldwide (Global)' && selectedLocation !== 'All Regions')
+              ? found.filter((item: any) => matchesTargetCountry(item.country || (item.project as any)?.country, item.location || (item.project as any)?.location, selectedLocation))
+              : found;
+            setDiscoveredResults(validFound.map((item: any) => ({ ...item, summary: cleanSummaryText(item.summary) })));
             if (resultsData.api_telemetry) {
               setQueryTelemetry(resultsData.api_telemetry);
             }
@@ -248,6 +255,9 @@ export const SearchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               const proj = ev.metadata?.project || (ev as any).project;
               const validated = validateAndSanitizeProject(proj);
               if (validated && !isProductOrEquipment(validated.canonical_name, validated.summary) && !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(validated.canonical_name)) {
+                if (selectedLocation !== 'Worldwide (Global)' && selectedLocation !== 'All Regions' && !matchesTargetCountry(validated.country, validated.location, selectedLocation)) {
+                  return;
+                }
                 setDiscoveredResults((prev) => {
                   const pName = validated.canonical_name;
                   const pDev = validated.company || validated.developer || '';
@@ -283,7 +293,10 @@ export const SearchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               cleanupPollingAndSse();
               api.getSearchResults(searchId).then((r: any) => {
                 if (r.results && r.results.length > 0) {
-                  setDiscoveredResults(r.results.map((item: any) => ({ ...item, summary: cleanSummaryText(item.summary) })));
+                  const validFound = (selectedLocation !== 'Worldwide (Global)' && selectedLocation !== 'All Regions')
+                    ? r.results.filter((item: any) => matchesTargetCountry(item.country || (item.project as any)?.country, item.location || (item.project as any)?.location, selectedLocation))
+                    : r.results;
+                  setDiscoveredResults(validFound.map((item: any) => ({ ...item, summary: cleanSummaryText(item.summary) })));
                 }
                 if (r.api_telemetry) {
                   setQueryTelemetry(r.api_telemetry);

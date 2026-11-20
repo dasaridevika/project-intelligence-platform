@@ -37,8 +37,8 @@ apiClient.interceptors.response.use(
 // DURABLE PERSISTENCE LAYER (Saves data across code updates & redeploys)
 // ==============================================================================
 
-const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v7';
-const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v7';
+const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v8';
+const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v8';
 
 export function hasNonLatin(str?: string): boolean {
   if (!str) return false;
@@ -88,6 +88,60 @@ export function inferCategoryClient(projectName?: string, summary?: string, hint
 
 export function formatProjectDate(rawDate?: string): string {
   return (rawDate || '').trim();
+}
+
+export function normalizeCountryName(str?: string): string {
+  if (!str || typeof str !== 'string') return '';
+  let s = str.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (s === 'usa' || s === 'u s a' || s === 'u s' || s === 'us' || s === 'america' || s === 'the united states') return 'united states';
+  if (s === 'uk' || s === 'u k' || s === 'great britain' || s === 'britain' || s === 'england' || s === 'scotland' || s === 'wales') return 'united kingdom';
+  if (s === 'uae' || s === 'u a e' || s === 'the uae') return 'united arab emirates';
+  if (s === 'south korea' || s === 'korea' || s === 'republic of korea' || s === 'rok') return 'south korea';
+  if (s === 'deutschland') return 'germany';
+  if (s === 'espana') return 'spain';
+  return s;
+}
+
+export function matchesTargetCountry(projectCountry?: string, projectLocation?: string, targetLocation?: string): boolean {
+  if (!targetLocation) return true;
+  const target = targetLocation.toLowerCase().trim();
+  if (target === 'worldwide (global)' || target === 'global' || target === 'all regions' || target === 'all' || target === '') {
+    return true;
+  }
+
+  const pCountry = (projectCountry || '').toLowerCase().trim();
+  const pLocation = (projectLocation || '').toLowerCase().trim();
+  const combined = `${pCountry} ${pLocation}`.trim();
+
+  const normTarget = normalizeCountryName(target);
+  const normCountry = normalizeCountryName(pCountry);
+
+  // 1. Sovereign country comparison
+  if (normCountry) {
+    if (normCountry === normTarget || normCountry.includes(normTarget) || normTarget.includes(normCountry)) {
+      // If target is a specific US state/region (Texas, Northern Virginia, Arizona, California), also require location match
+      if (normTarget === 'texas' || normTarget === 'northern virginia' || normTarget === 'arizona' || normTarget === 'california') {
+        return combined.includes(normTarget) || (normTarget === 'northern virginia' && (combined.includes('loudoun') || combined.includes('ashburn') || combined.includes('richmond')));
+      }
+      return true;
+    }
+    // If target is a US state and project is in United States, check if location matches the state
+    if (normCountry === 'united states' && (normTarget === 'texas' || normTarget === 'northern virginia' || normTarget === 'arizona' || normTarget === 'california')) {
+      return combined.includes(normTarget) || (normTarget === 'northern virginia' && (combined.includes('loudoun') || combined.includes('ashburn') || combined.includes('richmond')));
+    }
+    // Country was identified and clearly does NOT match target
+    return false;
+  }
+
+  // 2. Fallback: if country was not explicitly parsed, check combined location string
+  if (combined) {
+    const normCombined = normalizeCountryName(combined);
+    if (normCombined.includes(normTarget)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function validateAndSanitizeProject(p: any): Project | null {
@@ -143,6 +197,16 @@ export function validateAndSanitizeProject(p: any): Project | null {
     /\b(?:has\s+launched|launches|launched)\s+(?:a\s+new\s+)?(?:cloud\s+region|data\s*cent(?:er|re))\b/i.test(summary) ||
     /\b(?:launches|launched)\s+(?:.*?\s+)?cloud\s+region\b/i.test(rawName) ||
     /(?:-|_|\/)(?:launches|launched)-(?:[a-z0-9-]+-)?cloud-region/i.test(rawUrl)
+  ) {
+    return null;
+  }
+
+  // 4. Reject multi-state, multi-region, or multi-site portfolio aggregations (e.g. "Arizona and Texas Data Center Campuses")
+  if (
+    /\b(?:multi-state|multi-region|multi-site|nationwide)\s+(?:portfolio|footprint|build-?out|facilities|campuses|projects?)\b/i.test(rawName) ||
+    /\b[a-z]+\s+(?:and|&)\s+[a-z]+\s+(?:.*?\s+)?(?:campuses|data\s*cent(?:er|re)s|facilities|farms|build-?outs?|portfolios?)\b/i.test(rawName) ||
+    /(?:-|_|\/)data-center-build-out-(?:[a-z]+-[a-z]+)/i.test(rawUrl) ||
+    /\bunveils\s+(?:\$[\d.]+[bm]?\s+)?(?:data\s*cent(?:er|re)|capex|infrastructure)\s+build-?out\b/i.test(summary)
   ) {
     return null;
   }
@@ -254,9 +318,11 @@ export function cleanSummaryText(raw?: string): string {
 function getStoredProjects(): Project[] {
   try {
     // Purge legacy contaminated storage keys so old bad data cannot resurface
+    localStorage.removeItem('pi_persisted_projects_v7');
     localStorage.removeItem('pi_persisted_projects_v6');
     localStorage.removeItem('pi_persisted_projects_v5');
     localStorage.removeItem('pi_persisted_projects');
+    localStorage.removeItem('pi_persisted_searches_v7');
     localStorage.removeItem('pi_persisted_searches_v6');
     localStorage.removeItem('pi_persisted_searches_v5');
 

@@ -23,7 +23,7 @@ import {
   Tag,
   X
 } from 'lucide-react';
-import { api, cleanSummaryText, validateAndSanitizeProject, getProjectDedupKey } from '../api';
+import { api, cleanSummaryText, validateAndSanitizeProject, getProjectDedupKey, matchesTargetCountry } from '../api';
 import { PrimarySector, Project, SearchRun } from '../types';
 import { SectorBadge, findPrimarySector } from '../components/Sector';
 import { GLOBAL_LOCATIONS } from './SearchPage';
@@ -136,14 +136,7 @@ export const ProjectsPage: React.FC = () => {
             .filter((p: Project | null): p is Project => p !== null)
             .filter((p: Project) => {
               if (searchLoc && searchLoc !== 'all regions' && searchLoc !== 'worldwide (global)') {
-                const ctry = (p.country || '').toLowerCase().trim();
-                const loc = (p.location || '').toLowerCase().trim();
-                const combined = `${ctry} ${loc}`.trim();
-                const normSearch = searchLoc.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-                if (normSearch === 'united states' || normSearch === 'usa' || normSearch === 'us') {
-                  return ctry === 'united states' || combined.includes('united states') || combined.includes('usa');
-                }
-                return ctry === normSearch || combined.includes(normSearch);
+                return matchesTargetCountry(p.country, p.location, searchLoc);
               }
               return true;
             });
