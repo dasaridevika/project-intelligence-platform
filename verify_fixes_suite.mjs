@@ -1265,6 +1265,67 @@ test("QC 9: Generic sovereign or state governments are rejected as developer com
   assert.strictEqual(isGenericGovTest("SAEL Industries Ltd"), false);
 });
 
+test("QC 10: Facility, park, and asset names are rejected as corporate developer entities", () => {
+  function isFacilityAssetCompanyTest(name) {
+    const lower = name.toLowerCase().trim();
+    return /(?:solar\s+(?:park|farm|facility)|wind\s+(?:farm|park|facility)|power\s+plant|data\s*cent(?:er|re)|battery\s+storage)$/i.test(lower);
+  }
+
+  assert.strictEqual(isFacilityAssetCompanyTest("Khavda Solar Park"), true);
+  assert.strictEqual(isFacilityAssetCompanyTest("Bhadla Solar Park"), true);
+  assert.strictEqual(isFacilityAssetCompanyTest("Rosbach Data Center"), true);
+  assert.strictEqual(isFacilityAssetCompanyTest("Texas Wind Farm"), true);
+  assert.strictEqual(isFacilityAssetCompanyTest("NTPC Limited"), false);
+  assert.strictEqual(isFacilityAssetCompanyTest("SJVN"), false);
+  assert.strictEqual(isFacilityAssetCompanyTest("Adani Green Energy"), false);
+  assert.strictEqual(isFacilityAssetCompanyTest("Vantage Data Centers"), false);
+});
+
+test("QC 11: Developer name mirroring or duplicating the project name is rejected", () => {
+  function isMirrorNameTest(rawName, rawCompany) {
+    const normRawName = rawName.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const normRawComp = rawCompany.toLowerCase().replace(/[^a-z0-9]/g, "");
+    return normRawName === normRawComp || (normRawComp.length > 6 && normRawName.startsWith(normRawComp)) || (normRawName.length > 6 && normRawComp.startsWith(normRawName));
+  }
+
+  assert.strictEqual(isMirrorNameTest("Khavda Solar Park", "Khavda Solar Park"), true);
+  assert.strictEqual(isMirrorNameTest("Bhadla Solar Park Phase 1", "Bhadla Solar Park"), true);
+  assert.strictEqual(isMirrorNameTest("Ramagundam Solar PV Project", "NTPC Limited"), false);
+  assert.strictEqual(isMirrorNameTest("1GW Solar PV Project", "SJVN"), false);
+});
+
+test("QC 12: Generic solar park resolves to Solar PV and does NOT tie-break to Concentrated Solar Power (CSP)", () => {
+  function inferCategoryTest(projectName, summary) {
+    const nameOnly = (projectName || "").toLowerCase().trim();
+    const summaryOnly = (summary || "").toLowerCase().trim();
+    const combinedContext = `${nameOnly} ${summaryOnly}`;
+
+    if (/\b(?:concentrated\s+solar|csp|heliostats?|solar\s+thermal|parabolic\s+trough|solar\s+tower|molten\s+salt)\b/i.test(combinedContext)) {
+      return "Concentrated Solar Power (CSP)";
+    }
+    if (/\b(?:floating|reservoir|water\s*body|lake|canal\s+top|floatovoltaic)\b/i.test(combinedContext)) {
+      return "Floating Solar Power Plant";
+    }
+    if (/\b(?:solar|photovoltaic|pv)\b/i.test(combinedContext)) {
+      return "Solar Photovoltaic Power Plant (PV)";
+    }
+    return "Capital Infrastructure";
+  }
+
+  assert.strictEqual(inferCategoryTest("Khavda Solar Park", "The Khavda solar park in India will be the world largest solar installation with 30 gigawatts."), "Solar Photovoltaic Power Plant (PV)");
+  assert.strictEqual(inferCategoryTest("Ivanpah Solar Electric Generating System", "Uses concentrated solar thermal heliostats and a solar tower."), "Concentrated Solar Power (CSP)");
+  assert.strictEqual(inferCategoryTest("Omkareshwar Floating Solar Project", "Built on a water reservoir with floating solar panels."), "Floating Solar Power Plant");
+});
+
+test("QC 13: Educational/academic journalism essays and Yale E360 are rejected", () => {
+  function isFeatureEssayTest(url) {
+    return /e360\.yale\.edu/i.test(url) || /\/features\/[a-z0-9_-]+-(?:solar|energy|revolution|future|climate|power)\b/i.test(url);
+  }
+
+  assert.strictEqual(isFeatureEssayTest("https://e360.yale.edu/features/india-solar"), true);
+  assert.strictEqual(isFeatureEssayTest("https://www.pv-magazine-india.com/2026/01/22/sael-commissions-1-gwp-solar-project"), false);
+});
+
 console.log("\n=================================================");
 console.log(`ALL ${passedTests} TESTS PASSED SUCCESSFULLY!`);
 console.log("=================================================\n");

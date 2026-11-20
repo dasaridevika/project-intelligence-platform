@@ -37,8 +37,8 @@ apiClient.interceptors.response.use(
 // DURABLE PERSISTENCE LAYER (Saves data across code updates & redeploys)
 // ==============================================================================
 
-const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v11';
-const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v11';
+const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v12';
+const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v12';
 
 const WORLD_COUNTRIES_SET = new Set([
   'afghanistan', 'albania', 'algeria', 'angola', 'argentina', 'armenia', 'australia', 'austria', 'azerbaijan',
@@ -86,6 +86,10 @@ export function isValidCompany(name?: string): boolean {
   }
   // Reject standalone single sector nouns as company
   if (/^(?:solar|wind|power|energy|battery|data\s*cent(?:er|re)|hydrogen|semiconductor|infrastructure|clean\s*energy)$/i.test(lower)) {
+    return false;
+  }
+  // Reject facility, asset, or park names posing as corporate developer entities
+  if (/(?:solar\s+(?:park|farm|facility)|wind\s+(?:farm|park|facility)|power\s+plant|data\s*cent(?:er|re)|battery\s+storage)$/i.test(lower)) {
     return false;
   }
   // Reject comma-separated multi-company lists
@@ -323,6 +327,16 @@ export function validateAndSanitizeProject(p: any): Project | null {
     }
   } catch (_) {}
 
+  // Reject hallucinated company names where the project name was simply mirrored into the developer field
+  const normRawName = rawName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normRawComp = rawCompany.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (normRawName === normRawComp || (normRawComp.length > 6 && normRawName.startsWith(normRawComp)) || (normRawName.length > 6 && normRawComp.startsWith(normRawName))) {
+    return null;
+  }
+  if (/e360\.yale\.edu/i.test(rawUrl) || /\/features\/[a-z0-9_-]+-(?:solar|energy|revolution|future|climate)\b/i.test(rawUrl)) {
+    return null;
+  }
+
   // 2. Reject listicles, directories, macro overviews, hardware chip procurement
   if (
     /\b(?:directory|largest\s+solar|largest\s+wind|largest\s+projects\s+directory|top\s+\d+|largest\s+\d+|in\s+the\s+us)\b/i.test(rawName) ||
@@ -477,6 +491,7 @@ export function cleanSummaryText(raw?: string): string {
 function getStoredProjects(): Project[] {
   try {
     // Purge legacy contaminated storage keys so old bad data cannot resurface
+    localStorage.removeItem('pi_persisted_projects_v11');
     localStorage.removeItem('pi_persisted_projects_v10');
     localStorage.removeItem('pi_persisted_projects_v9');
     localStorage.removeItem('pi_persisted_projects_v8');
@@ -484,6 +499,7 @@ function getStoredProjects(): Project[] {
     localStorage.removeItem('pi_persisted_projects_v6');
     localStorage.removeItem('pi_persisted_projects_v5');
     localStorage.removeItem('pi_persisted_projects');
+    localStorage.removeItem('pi_persisted_searches_v11');
     localStorage.removeItem('pi_persisted_searches_v10');
     localStorage.removeItem('pi_persisted_searches_v9');
     localStorage.removeItem('pi_persisted_searches_v8');

@@ -73,7 +73,7 @@ const BLOCKED_DOMAINS = [
   // Academic journals, research papers & scientific repositories (never host capital development projects)
   "springer.com", "link.springer.com", "sciencedirect.com", "nature.com",
   "ieeexplore.ieee.org", "mdpi.com", "wiley.com", "arxiv.org", "researchgate.net",
-  "frontiersin.org", "tandfonline.com", "cell.com",
+  "frontiersin.org", "tandfonline.com", "cell.com", "e360.yale.edu",
   // Aggregator portals, marketing blogs, educational explainers, marketplaces
   "datacenters.com", "chipsupplychain.org", "patentpc.com", "poynter.org",
   // Statistics agencies, market research databases & legal/consulting advisory portals
@@ -116,6 +116,8 @@ const JUNK_PATH_PATTERNS = [
   /\/what-is\b/i, /\/what-are\b/i, /\/how-to\b/i, /\/how-do\b/i, /\/how-data-centers\b/i,
   /\/guides?\b/i, /\/glossary\b/i, /\/faq\b/i, /\/fact-check/i, /\/fact-checking/i,
   /\/resources\/blog\b/i, /\/top-10\b/i, /\/top-5\b/i, /\/rankings?\b/i,
+  // Long-form feature essays / magazine roundups (not project news)
+  /\/features\/[a-z0-9_-]+-(?:solar|energy|revolution|future|climate)\b/i,
   // Commercial store / market research reports
   /\/store\/report\b/i, /\/market-analysis\b/i, /\/market-reports?\b/i,
   // Search engines / directories
@@ -220,8 +222,8 @@ function getQueryCacheKey(query, sector, country) {
   return `${q}::${s}::${c}`;
 }
 
-const KV_PROJECTS_KEY = "projects_v11";
-const KV_SEARCHES_KEY = "searches_v11";
+const KV_PROJECTS_KEY = "projects_v12";
+const KV_SEARCHES_KEY = "searches_v12";
 
 // Durable KV Persistence Layer (Survives worker code changes & redeploys)
 async function hydrateStore(env) {
@@ -234,12 +236,14 @@ async function hydrateStore(env) {
     env.PROJECT_DATA.delete("projects_v8").catch(() => {});
     env.PROJECT_DATA.delete("projects_v9").catch(() => {});
     env.PROJECT_DATA.delete("projects_v10").catch(() => {});
+    env.PROJECT_DATA.delete("projects_v11").catch(() => {});
     env.PROJECT_DATA.delete("searches").catch(() => {});
     env.PROJECT_DATA.delete("searches_v6").catch(() => {});
     env.PROJECT_DATA.delete("searches_v7").catch(() => {});
     env.PROJECT_DATA.delete("searches_v8").catch(() => {});
     env.PROJECT_DATA.delete("searches_v9").catch(() => {});
     env.PROJECT_DATA.delete("searches_v10").catch(() => {});
+    env.PROJECT_DATA.delete("searches_v11").catch(() => {});
     env.PROJECT_DATA.delete("pi_persisted_projects_v5").catch(() => {});
 
     if (store.projects.size === 0) {
@@ -650,6 +654,11 @@ function isValidCompanyEntity(name) {
     return false;
   }
 
+  // Reject facility, asset, or park names posing as corporate developer entities (e.g. "Khavda Solar Park", "Rosbach Data Center")
+  if (/(?:solar\s+(?:park|farm|facility)|wind\s+(?:farm|park|facility)|power\s+plant|data\s*cent(?:er|re)|battery\s+storage)$/i.test(lower)) {
+    return false;
+  }
+
   // Reject comma-separated multi-company lists (e.g. "Amazon, Google", "Google, EdgeConnex, Maincubes", "AWS, Microsoft, Google, Adani, Reliance")
   if (n.includes(",")) {
     const isLegalSuffixOnly = /^[^,]+,\s*(?:inc|llc|ltd|corp|corporation|co|company|gmbh|ag|kg|bv|nv|plc|sl|srl|pty|lp|sa)\.?$/i.test(n);
@@ -894,7 +903,9 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     /\/blogs\/(?:solar|wind|power|data-center|clean-energy|hydrogen)-power-plant/i.test(u) ||
     /\/article\/10\.\d{4}\//i.test(u) ||
     /\/doi\/10\.\d{4}\//i.test(u) ||
-    /\/resources\/.*project-report/i.test(u)
+    /\/resources\/.*project-report/i.test(u) ||
+    /\/features\/[a-z0-9_-]+-(?:solar|energy|revolution|future|climate|power)\b/i.test(u) ||
+    /e360\.yale\.edu/i.test(u)
   ) {
     return true;
   }
@@ -1185,7 +1196,31 @@ function inferCategory(projectName, summary, hintCategory) {
   let bestSector = null;
   let maxScore = 0;
 
+  const combinedContext = `${nameOnly} ${summaryOnly}`;
+
   for (const s of sectorIndex) {
+    // Gate niche specialized sub-sectors that require explicit qualifier tokens
+    if (s.sector === "Concentrated Solar Power (CSP)") {
+      if (!/\b(?:concentrated\s+solar|csp|heliostats?|solar\s+thermal|parabolic\s+trough|solar\s+tower|molten\s+salt)\b/i.test(combinedContext)) {
+        continue;
+      }
+    }
+    if (s.sector === "Floating Solar Power Plant") {
+      if (!/\b(?:floating|reservoir|water\s*body|lake|canal\s+top|floatovoltaic)\b/i.test(combinedContext)) {
+        continue;
+      }
+    }
+    if (s.sector === "Solar PV Panel Recycling Facility") {
+      if (!/\b(?:recycl(?:e|ing)|waste|recovery|decommissioning)\b/i.test(combinedContext)) {
+        continue;
+      }
+    }
+    if (s.sector === "Solar PV Cells & Modules Manufacturing Plant") {
+      if (!/\b(?:manufactur(?:e|ing|er)|assembly|fabricat(?:e|ion)|factory|cell\s+making|module\s+assembly)\b/i.test(combinedContext)) {
+        continue;
+      }
+    }
+
     let score = 0;
     for (const t of nameTokens) {
       if (s.tokens.includes(t)) score += 15;
@@ -1354,6 +1389,13 @@ function validateAndSanitizeProjectRecord(p) {
   if (isNewsPublisher(rawCompany)) return null;
   if (isWebsiteOwnName(rawCompany, rawUrl, rawName)) return null;
 
+  // Reject hallucinated developer entities where the project name was simply mirrored into the company field
+  const normRawName = rawName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const normRawComp = rawCompany.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (normRawName === normRawComp || (normRawComp.length > 6 && normRawName.startsWith(normRawComp)) || (normRawName.length > 6 && normRawComp.startsWith(normRawName))) {
+    return null;
+  }
+
   // 2. Reject generic reports, listicles, directories, macro outlooks, or non-project lead
   if (isGenericReportOrDirectory(rawUrl, rawName, rawCompany, summary)) return null;
 
@@ -1369,6 +1411,10 @@ function validateAndSanitizeProjectRecord(p) {
   // 5. Clean name
   const cleanName = cleanProjectName(rawName, rawCompany);
   if (!cleanName || cleanName.length < 3) return null;
+  const normCleanName = cleanName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (normCleanName === normRawComp || (normRawComp.length > 6 && normCleanName.startsWith(normRawComp)) || (normCleanName.length > 6 && normRawComp.startsWith(normCleanName))) {
+    return null;
+  }
   if (/^(?:top\s+\d+|overview|pipeline|generator\s+rows|database|report)\b/i.test(cleanName)) return null;
   if (/^<.*>$/i.test(cleanName) || /<(?:facility|project|campus|company|developer)\s+name>/i.test(cleanName) || /^(?:<facility\s+name>|<project\s+name>|<campus\s+name>)\b/i.test(cleanName)) return null;
   if (isWebsiteOwnName(rawCompany, rawUrl, cleanName)) return null;
@@ -2340,7 +2386,31 @@ function classifyQuery(queryStr) {
   let bestSector = null;
   let maxScore = 0;
 
+  const queryContext = qClean;
+
   for (const s of sectorIndex) {
+    // Gate niche specialized sub-sectors that require explicit qualifier tokens
+    if (s.sector === "Concentrated Solar Power (CSP)") {
+      if (!/\b(?:concentrated\s+solar|csp|heliostats?|solar\s+thermal|parabolic\s+trough|solar\s+tower|molten\s+salt)\b/i.test(queryContext)) {
+        continue;
+      }
+    }
+    if (s.sector === "Floating Solar Power Plant") {
+      if (!/\b(?:floating|reservoir|water\s*body|lake|canal\s+top|floatovoltaic)\b/i.test(queryContext)) {
+        continue;
+      }
+    }
+    if (s.sector === "Solar PV Panel Recycling Facility") {
+      if (!/\b(?:recycl(?:e|ing)|waste|recovery|decommissioning)\b/i.test(queryContext)) {
+        continue;
+      }
+    }
+    if (s.sector === "Solar PV Cells & Modules Manufacturing Plant") {
+      if (!/\b(?:manufactur(?:e|ing|er)|assembly|fabricat(?:e|ion)|factory|cell\s+making|module\s+assembly)\b/i.test(queryContext)) {
+        continue;
+      }
+    }
+
     let score = 0;
     for (const w of qWords) {
       if (s.tokens.includes(w)) {
@@ -2414,8 +2484,12 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   const searchParts = [query.trim()];
 
   if (requestedCategory && requestedCategory !== "All Categories" && requestedCategory !== "all") {
-    if (!query.toLowerCase().includes(requestedCategory.toLowerCase())) {
-      searchParts.push(requestedCategory);
+    const cleanCat = requestedCategory.replace(/\s*\([^)]*\)/g, "").trim();
+    const qLower = query.toLowerCase();
+    const catWords = cleanCat.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    const hasSharedSectorWord = catWords.some(w => qLower.includes(w));
+    if (!qLower.includes(cleanCat.toLowerCase()) && !hasSharedSectorWord) {
+      searchParts.push(cleanCat);
     }
   }
 
