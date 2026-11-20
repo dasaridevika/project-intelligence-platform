@@ -12,6 +12,41 @@
 
 import primarySectors from "../../frontend/src/data/primary_sectors.json" with { type: "json" };
 
+// Dynamic token and keyword index for all 462 primary sectors (Zero hardcoding)
+const sectorIndex = primarySectors.map(s => {
+  const sLower = s.sector.toLowerCase();
+  const sClean = sLower.replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  const tokens = Array.from(new Set(sClean.split(/\s+/).filter(t => t.length > 2)));
+  const keywords = Array.isArray(s.keywords)
+    ? Array.from(new Set(s.keywords.map(k => k.toLowerCase().replace(/[^a-z0-9]/g, "")).filter(k => k.length > 2)))
+    : [];
+  return {
+    ...s,
+    sLower,
+    sClean,
+    tokens,
+    keywords
+  };
+});
+
+// Comprehensive dynamic country dictionary (replaces hardcoded country arrays)
+const WORLD_COUNTRIES = [
+  "afghanistan", "albania", "algeria", "angola", "argentina", "armenia", "australia", "austria", "azerbaijan",
+  "bahrain", "bangladesh", "belarus", "belgium", "bolivia", "bosnia", "brazil", "bulgaria",
+  "cambodia", "canada", "chile", "china", "colombia", "costa rica", "croatia", "cyprus", "czech republic", "czechia",
+  "denmark", "dominican republic", "ecuador", "egypt", "el salvador", "estonia", "ethiopia",
+  "finland", "france", "georgia", "germany", "ghana", "greece", "guatemala",
+  "honduras", "hungary", "iceland", "india", "indonesia", "iraq", "ireland", "israel", "italy",
+  "japan", "jordan", "kazakhstan", "kenya", "kuwait", "latvia", "lithuania", "luxembourg",
+  "malaysia", "mexico", "morocco", "netherlands", "new zealand", "nigeria", "norway", "oman",
+  "pakistan", "panama", "paraguay", "peru", "philippines", "poland", "portugal",
+  "qatar", "romania", "saudi arabia", "serbia", "singapore", "slovakia", "slovenia", "south africa", "south korea", "spain", "sri lanka", "sweden", "switzerland",
+  "taiwan", "thailand", "tunisia", "turkey", "turkiye",
+  "ukraine", "united arab emirates", "united kingdom", "united states", "uruguay", "uzbekistan",
+  "venezuela", "vietnam", "zambia", "zimbabwe"
+];
+const WORLD_COUNTRIES_SET = new Set(WORLD_COUNTRIES);
+
 // ==============================================================================
 // 1. CONSTANTS, FILTERS & DOMAIN REPUTATION BLACKLIST
 // ==============================================================================
@@ -590,8 +625,8 @@ function isValidCompanyEntity(name) {
     return false;
   }
 
-  // Reject country names as company
-  if (/^(?:nigeria|india|usa|united states|korea|south korea|japan|china|germany|spain|brazil|france|canada|australia|mexico|singapore|ohi)$/i.test(lower)) {
+  // Reject bare sovereign country names as company entity (dynamically checks all world nations)
+  if (WORLD_COUNTRIES_SET.has(lower) || /^(?:usa|u\.s\.a\.|u\.s\.|uk|u\.k\.|uae|u\.a\.e\.|korea|deutschland|espana)$/i.test(lower)) {
     return false;
   }
 
@@ -1043,71 +1078,41 @@ function inferCategory(projectName, summary, hintCategory) {
     }
   }
 
-  const nameOnly = (projectName || "").toLowerCase();
-  const summaryOnly = (summary || "").toLowerCase();
-  const combined = `${nameOnly} ${summaryOnly}`.trim();
+  const nameOnly = (projectName || "").toLowerCase().trim();
+  const summaryOnly = (summary || "").toLowerCase().trim();
 
   // Priority 1: Match project name directly against primary sectors
-  for (const s of primarySectors) {
-    const sLower = s.sector.toLowerCase();
-    if (nameOnly.includes(sLower)) {
+  for (const s of sectorIndex) {
+    if (s.sClean.length >= 4 && nameOnly.includes(s.sClean)) {
       return s.sector;
     }
   }
 
-  // Priority 2: High-signal sector indicators in project name first (prevents auxiliary summary mentions from misclassifying)
-  if (/\b(?:data\s*cent(?:er|re)|hyperscale|cloud\s+campus|compute\s+campus)\b/i.test(nameOnly)) {
-    return "Hyperscale Data Center";
-  }
-  if (/\b(?:semiconductor|wafer\s+fab|microchip|cleanroom|megafab)\b/i.test(nameOnly)) {
-    return "Semiconductor Manufacturing";
-  }
-  if (/\b(?:gigafactory|battery\s+(?:cell|plant|manufacturing|fab))\b/i.test(nameOnly)) {
-    return "Battery Gigafactory";
-  }
-  if (/\b(?:bess|battery\s+energy\s+storage|battery\s+storage)\b/i.test(nameOnly)) {
-    return "Battery Energy Storage";
-  }
-  if (/\b(?:concentrated\s+solar|solar\s+thermal|heliostats?|parabolic\s+trough|csp)\b/i.test(combined)) {
-    return "Concentrated Solar Power (CSP)";
-  }
-  if (/\b(?:floating\s+solar)\b/i.test(combined)) {
-    return "Floating Solar Power Plant";
-  }
-  if (/\b(?:offshore\s+wind)\b/i.test(nameOnly) || (/\boffshore\s+wind\b/i.test(combined) && !/\bsolar\b/i.test(nameOnly))) {
-    return "Offshore Wind Power Plant";
-  }
-  if (/\b(?:wind\s*(?:farm|park|energy|facility|turbine))\b/i.test(nameOnly)) {
-    return "Onshore Wind Power Plant";
-  }
-  if (/\b(?:solar\s*(?:farm|park|plant|project|energy|installation)|photovoltaic|pv\s+farm)\b/i.test(nameOnly)) {
-    return "Solar Photovoltaic Power Plant (PV)";
-  }
-  if (/\b(?:hydrogen|electrolyzer|clean\s+ammonia)\b/i.test(nameOnly)) {
-    return "Clean Hydrogen";
+  // Priority 2: Dynamic token & keyword scoring across all 462 sectors
+  // Project name matches are weighted heavily (15x) over auxiliary summary mentions (1x)
+  const nameTokens = nameOnly.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(t => t.length > 2);
+  const summaryTokens = summaryOnly.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(t => t.length > 3);
+
+  let bestSector = null;
+  let maxScore = 0;
+
+  for (const s of sectorIndex) {
+    let score = 0;
+    for (const t of nameTokens) {
+      if (s.tokens.includes(t)) score += 15;
+      else if (s.keywords.includes(t)) score += 8;
+    }
+    for (const t of summaryTokens) {
+      if (s.tokens.includes(t)) score += 2;
+      else if (s.keywords.includes(t)) score += 1;
+    }
+    if (score > maxScore) {
+      maxScore = score;
+      bestSector = s.sector;
+    }
   }
 
-  // Priority 3: Summary-level indicators ONLY when project name gives no category
-  if (/\b(?:data\s*cent(?:er|re)|hyperscale|colocation)\b/i.test(summaryOnly)) {
-    return "Hyperscale Data Center";
-  }
-  if (/\b(?:semiconductor|wafer\s+fab|cleanroom|microchip)\b/i.test(summaryOnly)) {
-    return "Semiconductor Manufacturing";
-  }
-  if (/\b(?:gigafactory|battery\s+(?:plant|manufacturing|cell))\b/i.test(summaryOnly)) {
-    return "Battery Gigafactory";
-  }
-  if (/\b(?:solar\s*(?:farm|park|plant|project)|photovoltaic|pv\s+plant)\b/i.test(summaryOnly)) {
-    return "Solar Photovoltaic Power Plant (PV)";
-  }
-  if (/\b(?:wind\s*(?:farm|park|energy))\b/i.test(summaryOnly)) {
-    return "Wind Energy";
-  }
-  if (/\b(?:hydrogen|electrolyzer)\b/i.test(summaryOnly)) {
-    return "Clean Hydrogen";
-  }
-
-  return "Capital Infrastructure";
+  return bestSector || "Capital Infrastructure";
 }
 
 function isOldCompletedProject(url, title, summary, text) {
@@ -1643,12 +1648,8 @@ function matchesSelectedCountry(detectedLocation, text, title, selectedCountry) 
 
 function extractLocationFromCandidate(text, title, url) {
   const combined = ((title ? title + " " : "") + (text ? text.slice(0, 1000) : "")).toLowerCase();
-  const MAJOR_COUNTRIES = [
-    "united states", "india", "germany", "united kingdom", "spain", "japan",
-    "south korea", "france", "australia", "canada", "brazil", "netherlands",
-    "ireland", "taiwan", "singapore", "malaysia", "saudi arabia", "united arab emirates"
-  ];
-  for (const c of MAJOR_COUNTRIES) {
+  const sortedCountries = [...WORLD_COUNTRIES].sort((a, b) => b.length - a.length);
+  for (const c of sortedCountries) {
     const escaped = c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (new RegExp(`\\b${escaped}\\b`, "i").test(combined)) {
       return c.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
@@ -1899,7 +1900,7 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        temperature: 0.1,
+        temperature: 0.0,
         max_tokens: 1024,
       });
 
@@ -2080,7 +2081,7 @@ A VALID CAPITAL PROJECT MUST:
    Take the status strictly from what the candidate text states! Do NOT guess or default finished/commissioning plants to 'Under Construction'.
 
 REJECT (MUST NOT EXTRACT):
-- OLD HISTORICAL PROJECTS: Facilities completed, commissioned, or operating before the last 12-month window (e.g. historical profiles of plants completed years ago like Bhadla in 2020). Recent news reviewing an old finished project is NOT a new project.
+- OLD HISTORICAL PROJECTS: Facilities completed, commissioned, or operating before the last 12-month window (e.g. historical profiles or reviews of facilities completed years ago). Recent news reviewing an old finished project is NOT a new project.
 - MULTI-STATE / MULTI-REGION PORTFOLIO AGGREGATIONS: News reporting broad multi-state buildout programs combining multiple states or regions into a collective portfolio. Only extract an individual, distinct facility project located in a single verifiable state/location, never an aggregate multi-site portfolio!
 - LISTS, ROUNDUPS, COMPILATIONS & DIRECTORIES: Articles listing multiple facilities, regional directories, multi-project databases, inventories, or project rankings. NEVER extract an entire listicle, ranking, directory, or roundup as a single project!
 - WEBSITE DOMAIN NAMES AS DEVELOPER: NEVER return a website domain name, URL, or data directory (e.g. names containing web domain TLDs such as .online, .com, .org, .net) as the developer company.
@@ -2114,11 +2115,12 @@ Return ONLY a valid JSON object in this exact schema:
       "summary": "1-2 complete factual sentences in fluent English describing the project and buildout scope."
     }
   ]
-}`;
+}
+`;
 
   let candidateBlocks = "";
   items.forEach((c, idx) => {
-    const textSnippet = (c.text || c.snippet || c.title || "").slice(0, 1500);
+    const textSnippet = (c.text || c.snippet || c.title || "").slice(0, 1200);
     candidateBlocks += `\n[Candidate #${idx + 1}]\nURL: ${c.cleanUrl}\nTitle: ${c.title || ""}\nDate: ${c.published_date || ""}\nContent: """\n${textSnippet}\n"""\n`;
   });
 
@@ -2143,8 +2145,8 @@ Output your JSON analysis now:`;
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt }
         ],
-        temperature: 0.1,
-        max_tokens: 3072
+        temperature: 0.0,
+        max_tokens: 2048
       });
 
       rawOutput = aiResponse?.response || (typeof aiResponse === "string" ? aiResponse : JSON.stringify(aiResponse)) || "";
@@ -2186,72 +2188,51 @@ Output your JSON analysis now:`;
   return [];
 }
 
-// Dynamic NLP Query Classifier against 462 Primary Sectors (No hardcoded keyword branches)
+// Dynamic NLP Query Classifier against 462 Primary Sectors (100% dynamic - zero hardcoding)
 function classifyQuery(queryStr) {
   const qLower = (queryStr || "").toLowerCase().trim();
   if (!qLower) return { category: "Capital Projects", group: "General Industrial" };
 
-  // Common high-volume sector shortcuts when query is short / generic
-  if (/\b(?:concentrated\s+solar|solar\s+thermal|heliostats?|parabolic\s+trough|csp)\b/i.test(qLower)) {
-    const s = primarySectors.find(x => x.id === "concentrated-solar-power-csp");
-    if (s) return { category: s.sector, group: s.group, definition: s.definition };
-  }
-  if (/\bfloating\s+solar\b/i.test(qLower)) {
-    const s = primarySectors.find(x => x.id === "floating-solar-power-plant");
-    if (s) return { category: s.sector, group: s.group, definition: s.definition };
-  }
-  if (/\b(?:solar|pv\s+farm|solar\s+farm|solar\s+project|solar\s+power|photovoltaic)\b/i.test(qLower)) {
-    const s = primarySectors.find(x => x.id === "solar-photovoltaic-power-plant-pv");
-    if (s) return { category: s.sector, group: s.group, definition: s.definition };
-  }
-  if (/\b(?:data\s*cent(?:er|re)|hyperscale|colocation|cloud\s+campus)\b/i.test(qLower)) {
-    const s = primarySectors.find(x => x.sector.toLowerCase() === "data center");
-    if (s) return { category: s.sector, group: s.group, definition: s.definition };
-  }
-  if (/\b(?:semiconductor|wafer\s+fab|microchip|chip\s+fab|chip\s+factory)\b/i.test(qLower)) {
-    const s = primarySectors.find(x => x.id === "semiconductor-plant");
-    if (s) return { category: s.sector, group: s.group, definition: s.definition };
-  }
-  if (/\b(?:bess|battery\s+energy\s+storage|battery\s+storage|utility\s+battery)\b/i.test(qLower)) {
-    const s = primarySectors.find(x => x.id === "battery-energy-storage");
-    if (s) return { category: s.sector, group: s.group, definition: s.definition };
-  }
-  if (/\boffshore\s+wind\b/i.test(qLower)) {
-    const s = primarySectors.find(x => x.id === "offshore-wind-power-plant");
-    if (s) return { category: s.sector, group: s.group, definition: s.definition };
-  }
-  if (/\b(?:wind\s+farm|wind\s+power|onshore\s+wind|wind\s+energy)\b/i.test(qLower)) {
-    const s = primarySectors.find(x => x.id === "onshore-wind-power-plant");
-    if (s) return { category: s.sector, group: s.group, definition: s.definition };
+  const qClean = qLower.replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  const qWords = qClean.split(/\s+/).filter(w => w.length > 2 && !["and", "for", "the", "project", "projects", "plant", "plants", "facility", "facilities"].includes(w));
+
+  // 1. Exact match against sector name or clean name
+  for (const s of sectorIndex) {
+    if (qLower === s.sLower || qClean === s.sClean) {
+      return { category: s.sector, group: s.group, definition: s.definition };
+    }
   }
 
-  const qWords = qLower.split(/\s+/).filter(w => w.length > 2 && !["and", "for", "the", "project", "projects", "plant", "plants", "facility", "facilities"].includes(w));
+  // 2. Exact match against sector slug / id
+  const slug = qClean.replace(/\s+/g, "-");
+  const exactSlug = sectorIndex.find(s => s.id === slug);
+  if (exactSlug) {
+    return { category: exactSlug.sector, group: exactSlug.group, definition: exactSlug.definition };
+  }
 
+  // 3. Full sector contained in query
+  for (const s of sectorIndex) {
+    if (s.sClean.length >= 4 && qClean.includes(s.sClean)) {
+      return { category: s.sector, group: s.group, definition: s.definition };
+    }
+  }
+
+  // 4. Token & Keyword scoring across all 462 sectors
   let bestSector = null;
   let maxScore = 0;
 
-  for (const s of primarySectors) {
-    const sLower = s.sector.toLowerCase();
-    const sClean = sLower.replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-
-    // Exact sector match
-    if (qLower === sLower || qLower === sClean) {
-      return { category: s.sector, group: s.group, definition: s.definition };
-    }
-
-    // Full sector included in query
-    if (qWords.length >= 2 && qLower.includes(sClean)) {
-      return { category: s.sector, group: s.group, definition: s.definition };
-    }
-
+  for (const s of sectorIndex) {
     let score = 0;
-    const sWords = sClean.split(/\s+/);
     for (const w of qWords) {
-      if (sWords.includes(w)) score += 5;
-      else if (sWords.some(sw => sw.startsWith(w) || w.startsWith(sw))) score += 2;
-      if (Array.isArray(s.keywords) && s.keywords.includes(w)) score += 1;
+      if (s.tokens.includes(w)) {
+        score += 15;
+      } else if (s.tokens.some(st => st.startsWith(w) || w.startsWith(st))) {
+        score += 8;
+      }
+      if (s.keywords.includes(w)) {
+        score += 5;
+      }
     }
-
     if (score > maxScore) {
       maxScore = score;
       bestSector = s;

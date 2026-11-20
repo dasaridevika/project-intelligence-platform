@@ -40,6 +40,22 @@ apiClient.interceptors.response.use(
 const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v9';
 const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v9';
 
+const WORLD_COUNTRIES_SET = new Set([
+  'afghanistan', 'albania', 'algeria', 'angola', 'argentina', 'armenia', 'australia', 'austria', 'azerbaijan',
+  'bahrain', 'bangladesh', 'belarus', 'belgium', 'bolivia', 'bosnia', 'brazil', 'bulgaria',
+  'cambodia', 'canada', 'chile', 'china', 'colombia', 'costa rica', 'croatia', 'cyprus', 'czech republic', 'czechia',
+  'denmark', 'dominican republic', 'ecuador', 'egypt', 'el salvador', 'estonia', 'ethiopia',
+  'finland', 'france', 'georgia', 'germany', 'ghana', 'greece', 'guatemala',
+  'honduras', 'hungary', 'iceland', 'india', 'indonesia', 'iraq', 'ireland', 'israel', 'italy',
+  'japan', 'jordan', 'kazakhstan', 'kenya', 'kuwait', 'latvia', 'lithuania', 'luxembourg',
+  'malaysia', 'mexico', 'morocco', 'netherlands', 'new zealand', 'nigeria', 'norway', 'oman',
+  'pakistan', 'panama', 'paraguay', 'peru', 'philippines', 'poland', 'portugal',
+  'qatar', 'romania', 'saudi arabia', 'serbia', 'singapore', 'slovakia', 'slovenia', 'south africa', 'south korea', 'spain', 'sri lanka', 'sweden', 'switzerland',
+  'taiwan', 'thailand', 'tunisia', 'turkey', 'turkiye',
+  'ukraine', 'united arab emirates', 'united kingdom', 'united states', 'uruguay', 'uzbekistan',
+  'venezuela', 'vietnam', 'zambia', 'zimbabwe'
+]);
+
 export function hasNonLatin(str?: string): boolean {
   if (!str) return false;
   return /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff]/.test(str);
@@ -192,6 +208,9 @@ export function validateAndSanitizeProject(p: any): Project | null {
     /^(?:government|us government|federal government|state government|taiwan government)$/i.test(rawCompany) ||
     /^(?:government\s+of\s+[a-z\s]+|ministry\s+of\s+[a-z\s]+)$/i.test(rawCompany)
   ) {
+    return null;
+  }
+  if (WORLD_COUNTRIES_SET.has(rawCompany.toLowerCase()) || /^(?:usa|u\.s\.a\.|u\.s\.|uk|u\.k\.|uae|u\.a\.e\.|korea|deutschland|espana)$/i.test(rawCompany)) {
     return null;
   }
 
