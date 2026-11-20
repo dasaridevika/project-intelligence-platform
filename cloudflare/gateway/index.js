@@ -331,7 +331,7 @@ function isForeignLanguageText(str) {
   let foreignHits = 0;
   const foreignMarkers = new Set([
     "dans", "avec", "pour", "cette", "sont", "leur", "leurs", "été", "aussi", "engagé", "ses",
-    "investissements", "projet", "doubler", "capacités", "production", "puces", "horizon", "isère",
+    "investissements", "projet", "doubler", "capacités", "puces", "isère",
     "para", "este", "esta", "estos", "estas", "como", "pero", "sobre", "entre", "cuando", "según",
     "und", "oder", "für", "fuer", "über", "ueber", "nach", "dieser", "diese", "dieses", "nicht", "eine"
   ]);
@@ -406,9 +406,31 @@ function validateAndNormalizeUrl(rawUrl) {
     const pathSegments = cleanPath.split("/").filter(Boolean);
     if (
       pathSegments.length === 0 ||
-      (pathSegments.length === 1 && /^(?:en|es|fr|de|home|index\.html|search|browse|category|directory|feed|news|articles|blog|resources)$/i.test(pathSegments[0]))
+      (pathSegments.length === 1 && /^(?:en|es|fr|de|home|index\.html|search|browse|category|categories|directory|feed|news|articles|blog|resources|topics?|sections?|channels?)$/i.test(pathSegments[0]))
     ) {
       return { valid: false, reason: "Homepage or broad section index, not a specific project article or filing." };
+    }
+
+    // Reject taxonomy archive / category / tag landing sections (e.g. pv-magazine.com/category/applications-installations/)
+    if (
+      pathSegments.some((seg, idx) => /^(?:category|categories|tag|tags|topic|topics|rubrik|kategorie|rubriken|rubrique|rubriques)$/i.test(seg) && idx >= pathSegments.length - 2)
+    ) {
+      return { valid: false, reason: "Taxonomy category or tag index page, not a specific project article." };
+    }
+
+    // Reject paths where all segments are generic taxonomy, sector, or category words (e.g. energywatch.in/renewable-energy/solar)
+    const TAXONOMY_WORDS = /^(?:en|es|fr|de|home|index\.html|search|browse|category|categories|tag|tags|topic|topics|section|sections|channel|channels|rubrik|kategorie|rubriken|industry|industries|sector|sectors|market|markets|news|article|articles|feed|blog|blogs|resources|insights|renewable-energy|clean-energy|energy|solar|solar-power|wind|wind-power|power|utilities|infrastructure|technology|data-centers?|semiconductors?|mining|chemicals?|oil-and-gas|oil-gas|oil|gas|hydrogen|battery|batteries|bess|storage|applications-installations)$/i;
+    if (pathSegments.length >= 2 && pathSegments.every(seg => TAXONOMY_WORDS.test(seg))) {
+      return { valid: false, reason: "Multi-level taxonomy/section landing page without an individual project article slug." };
+    }
+
+    // Reject listicles, rankings, and multi-year roundup URLs
+    if (
+      /\/(?:top|largest|biggest)-\d+/i.test(cleanPath) ||
+      /\/\d+-(?:top|largest|biggest|major)/i.test(cleanPath) ||
+      /\/.*-(?:20\d\d[-–—]20\d\d|roundup|list)\/?$/i.test(cleanPath)
+    ) {
+      return { valid: false, reason: "Listicle, multi-project roundup, or market forecast article URL." };
     }
 
     // 3. File extension check (only HTML/text pages allowed, no PDFs or binaries)
@@ -556,8 +578,11 @@ function isValidCompanyEntity(name) {
   if (n.length < 2 || n.length > 50) return false;
   const lower = n.toLowerCase();
 
-  // Reject literal None, Various, Unknown
-  if (/^(?:none|null|n\/a|various|unknown|tbd|undefined|capital project)$/i.test(lower)) {
+  // Reject literal None, Various, Unknown, Multiple, etc.
+  if (/^(?:none|null|n\/a|various|multiple|several|diverse|undisclosed|unspecified|anonymous|unknown|tbd|undefined|capital project)\b/i.test(lower)) {
+    return false;
+  }
+  if (/\b(?:various|multiple|several|different)\s+(?:developers?|companies|firms?|operators?|owners?|entities)\b/i.test(lower)) {
     return false;
   }
 
@@ -571,7 +596,6 @@ function isValidCompanyEntity(name) {
     lower === "eia" ||
     lower === "u.s. eia" ||
     lower === "enerdatics" ||
-    lower.includes("dmc education") ||
     lower.includes("energy information administration") ||
     lower === "statista" ||
     lower.includes("wood mackenzie") ||
@@ -587,20 +611,14 @@ function isValidCompanyEntity(name) {
     return false;
   }
 
-  // Reject placeholder or generic fallback words
+  // Reject placeholder, news headline action clauses, or generic fallback words
   if (
     lower === "project developer" ||
     lower === "leading developer" ||
     lower === "unknown" ||
     lower === "understanding" ||
-    lower === "fabs the newest chips need the know-how" ||
-    lower === "clay, ny campus by 2-3 years. - the" ||
     lower.includes("public service commission") ||
-    lower.includes("by 2-3 years") ||
-    lower.includes("the newest chips") ||
-    lower.includes("residents vote") ||
-    lower.includes("approved a") ||
-    lower.includes("court approves")
+    /\b(?:campus by \d+-\d+ years|chips need the|residents vote|approved a|court approves|secures loan|secures approval|breaks ground)\b/i.test(lower)
   ) {
     return false;
   }
@@ -681,26 +699,27 @@ function normalizeDeveloperName(name, url) {
   if (!name) return "Leading Developer";
   let clean = name.trim();
   const lower = clean.toLowerCase();
-  if (lower === "gf" || (url && url.includes(".gf.com"))) return "GlobalFoundries";
-  if (lower === "tsmc") return "TSMC";
-  if (lower === "asml") return "ASML";
-  if (lower === "amec") return "AMEC";
-  if (lower === "catl") return "CATL";
-  if (lower === "amd") return "AMD";
-  if (lower === "srp") return "SRP";
-  if (lower === "aws") return "AWS (Amazon Web Services)";
-  if (lower === "meta") return "Meta";
-  if (lower === "softbank") return "SoftBank";
-  if (clean.length < 3 && !["bp", "ge", "hp", "3m"].includes(lower)) {
+  if (lower === "project developer" || lower === "leading developer" || lower === "unknown") {
+    return "Leading Developer";
+  }
+  // Standard corporate acronyms (2-4 uppercase characters without spaces, e.g. TSMC, AMD, BESS, AWS)
+  if (clean.length <= 4 && !clean.includes(" ") && !["the", "and", "for"].includes(lower)) {
+    return clean.toUpperCase();
+  }
+  if (clean.length < 2) {
     return "Leading Developer";
   }
   return clean;
 }
 
 function getProjectDedupKey(name, developer) {
-  const STOPWORDS_REGEX = /\b(?:the|a|an|platforms|platform|technologies|technology|energy|resources|resource|holdings|services|solutions|group|corp|corporation|inc|llc|ltd|limited|co|company|asset|assets|management|capital|investments|investment|partners|partnership|ventures|venture|and|ai|artificial\s*intelligence|hyperscale|data\s*center|data\s*centre|megafab|gigafactory|project|campus|facility|plant|center|centre|park|farm|bess|battery|solar|wind|energy\s*storage|storage|phase\s*\d+|expansion|site|hub)\b/gi;
+  const STOPWORDS_REGEX = /\b(?:the|a|an|platforms|platform|technologies|technology|energy|resources|resource|holdings|services|solutions|group|corp|corporation|inc|llc|ltd|limited|co|company|asset|assets|management|capital|investments|investment|partners|partnership|ventures|venture|and|ai|artificial\s*intelligence|hyperscale|data\s*center|data\s*centre|megafab|gigafactory|project|campus|facility|plant|center|centre|park|farm|bess|battery|solar|wind|energy\s*storage|storage|phase\s*\d+|expansion|site|hub|solarpark|windpark|kraftwerk|solaranlage|photovoltaikanlage|photovoltaik|buergersolarpark|bürgersolarpark|windfarm|datacenter|datacentre|pv|solar-plus-storage)\b/gi;
 
-  const combined = `${developer || ""} ${name || ""}`
+  let cleanName = (name || "")
+    .toLowerCase()
+    .replace(/^(?:solarpark|windpark|kraftwerk|buergersolarpark)\s+/i, "");
+
+  const combined = `${developer || ""} ${cleanName}`
     .toLowerCase()
     .replace(/['’]s\b/gi, "")
     .replace(STOPWORDS_REGEX, " ")
@@ -712,12 +731,7 @@ function getProjectDedupKey(name, developer) {
   const tokens = Array.from(new Set(combined.split(/\s+/).filter(t => t.length >= 3)));
   tokens.sort();
 
-  let key = tokens.join("_");
-  if (key.includes("tsmc") && (key.includes("japanadvancedsemiconductor") || key.includes("jasm"))) {
-    key = "kumamoto_tsmc";
-  }
-
-  return key || `${(developer || "").toLowerCase()}_${(name || "").toLowerCase()}`;
+  return tokens.join("_") || `${(developer || "").toLowerCase()}_${(name || "").toLowerCase()}`;
 }
 
 function cleanSummaryText(raw) {
@@ -771,38 +785,27 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     /\/topics?\/\d+/i.test(u) ||
     /\/products-services\//i.test(u) ||
     /\/products-and-services\//i.test(u) ||
+    /\/store\/report\b/i.test(u) ||
+    /\/market-reports?\b/i.test(u) ||
+    /\/market-analysis\b/i.test(u) ||
+    /\/build-tracker\b/i.test(u) ||
+    /\/insights?\b/i.test(u) ||
+    /\/publications?\b/i.test(u) ||
+    /\/research\b/i.test(u) ||
+    /\/resources?\/(?:blog|guides?|whitepapers?)/i.test(u) ||
+    /\/guides?\b/i.test(u) ||
+    /\/glossary\b/i.test(u) ||
+    /\/fact-check/i.test(u) ||
+    /\/learn\b/i.test(u) ||
+    /\/academy\b/i.test(u) ||
+    /\/education\b/i.test(u) ||
+    /\/data-center-projects-database\b/i.test(u) ||
+    /\/what-is-/i.test(u) ||
+    /\/what-are-/i.test(u) ||
+    /\/how-to-/i.test(u) ||
+    /\/how-do-/i.test(u) ||
     u.includes("statista.com") ||
     u.includes("semi.org") ||
-    u.includes("semiengineering.com") ||
-    u.includes("dmc-education.com") ||
-    u.includes("adis-u-s-data-center-projects-database") ||
-    u.includes("/store/report/") ||
-    u.includes("/market-reports/") ||
-    u.includes("/market-analysis") ||
-    u.includes("/build-tracker") ||
-    u.includes("/research/artificial-intelligence/ai-capex") ||
-    u.includes("rba.gov.au/publications/insights") ||
-    u.includes("oxfordeconomics.com/resource/") ||
-    u.includes("pwc.com/gx/en/1/services/consulting/technology/data-centre-outlook") ||
-    u.includes("jpmorgan.com/insights") ||
-    u.includes("/what-is-") ||
-    u.includes("/what-are-") ||
-    u.includes("/how-to-") ||
-    u.includes("/how-do-") ||
-    u.includes("/how-data-centers-") ||
-    u.includes("/guides/") ||
-    u.includes("/glossary/") ||
-    u.includes("/fact-checking/") ||
-    u.includes("/publications/b1600/") ||
-    u.includes("digitalpower.huawei.com/en/blogs/") ||
-    u.includes("megawattlas.com/guides/") ||
-    u.includes("chipsupplychain.org/") ||
-    u.includes("patentpc.com/blog/") ||
-    u.includes("ciriontechnologies.com/en/data-center/resources/") ||
-    u.includes("hsc.com/resources/blog/") ||
-    u.includes("/learn/") ||
-    u.includes("/academy/") ||
-    u.includes("/education/") ||
     u.includes("mexc.co") ||
     u.includes("binance.com")
   ) {
@@ -812,8 +815,20 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     return true;
   }
 
-  // Reject listicles, rankings, and multi-project roundups (e.g. "USA Top 50 Solar Projects")
-  if (/\b(?:top\s+\d+|largest\s+\d+|biggest\s+\d+|\d+\s+largest|\d+\s+biggest|\d+\s+top|projects?\s+roundup|roundup\s+of|list\s+of\s+.*projects?|roundup)\b/i.test(n)) {
+  // Reject listicles, rankings, and multi-project roundups (checked across name, URL, and summary)
+  if (
+    /\b(?:top\s+\d+|\d+\s+top|largest\s+\d+|\d+\s+largest|biggest\s+\d+|\d+\s+biggest|projects?\s+roundup|roundup\s+of|list\s+of\s+.*projects?|roundup)\b/i.test(n) ||
+    /\b(?:top\s+\d+|\d+\s+top|largest\s+\d+|\d+\s+largest|biggest\s+\d+|\d+\s+biggest|projects?-roundup|roundup-of|top-\d+|\d+-top)\b/i.test(u) ||
+    /\b(?:top\s+\d+|\d+\s+top|projects?\s+roundup|roundup\s+of|list\s+of\s+.*projects?)\b/i.test(s)
+  ) {
+    return true;
+  }
+
+  // Reject multi-year forecast or listicle date ranges (e.g. "India Solar Power Projects 2026-2030")
+  if (
+    /\b20\d\d\s*[-–—/]\s*20\d\d\b/i.test(n) ||
+    /\b20\d\d[-–—]20\d\d\b/i.test(u)
+  ) {
     return true;
   }
 
@@ -822,8 +837,13 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     return true;
   }
 
+  // Reject generic or undisclosed developers (e.g. "Various", "Various developers", "Multiple", etc.)
+  if (/^(?:various|multiple|several|diverse|undisclosed|unspecified|anonymous|many)\b/i.test(c)) {
+    return true;
+  }
+
   // Reject data publishers, statistics agencies, or educational organizations as company
-  if (c === "eia" || c === "enerdatics" || c === "dmc education" || isNewsPublisher(c)) {
+  if (c === "eia" || c === "enerdatics" || isNewsPublisher(c)) {
     return true;
   }
 
@@ -831,9 +851,8 @@ function isGenericReportOrDirectory(url, name, company, summary) {
   if (
     /^(?:government\s+of\s+|ministry\s+of\s+|department\s+of\s+|state\s+council)/i.test(c) ||
     /\b(?:government\s+of\s+[a-z\s]+|ministry\s+of\s+[a-z\s]+)\b/i.test(c) ||
-    c === "government of south korea" ||
-    c === "government of japan" ||
-    c === "us government"
+    c === "us government" ||
+    c === "government"
   ) {
     return true;
   }
@@ -991,61 +1010,79 @@ function cleanProjectName(rawName, developer) {
 }
 
 function inferCategory(projectName, summary, hintCategory) {
-  const combined = `${projectName || ""} ${summary || ""}`.toLowerCase();
-
-  // 1. Battery Gigafactories & Cell Production (highest priority so "battery fab" or CATL/Gotion cell plant is Battery)
-  if (
-    /\b(?:gigafactory|giga-factory|battery plant|battery manufacturing|cell manufacturing|cell capacity|lfp battery|lithium-ion battery|battery cell|battery fab|catl|gotion|northvolt|forge nano)\b/i.test(combined) ||
-    (/\b(?:battery|lithium)\b/i.test(combined) && /\b(?:fab|factory|production|plant|gwh|cells?)\b/i.test(combined))
-  ) {
-    return "Battery Gigafactory";
+  // If user selected a specific sector from the 462 in the taxonomy or hintCategory is provided, KEEP IT!
+  if (hintCategory && typeof hintCategory === "string") {
+    const trimmed = hintCategory.trim();
+    if (trimmed && trimmed !== "all" && trimmed !== "All Categories" && trimmed !== "Capital Infrastructure" && trimmed !== "Capital Projects") {
+      return trimmed;
+    }
   }
 
-  // 2. Concentrated Solar Power (CSP) - strictly requires explicit thermal indicators
-  if (
-    /\b(?:concentrated solar|solar thermal|heliostats?|parabolic trough|molten salt tower|solar tower power)\b/i.test(combined)
-  ) {
-    return "Concentrated Solar Power (CSP)";
+  const nameOnly = (projectName || "").toLowerCase();
+  const summaryOnly = (summary || "").toLowerCase();
+  const combined = `${nameOnly} ${summaryOnly}`.trim();
+
+  // Priority 1: Match project name directly against primary sectors
+  for (const s of primarySectors) {
+    const sLower = s.sector.toLowerCase();
+    if (nameOnly.includes(sLower)) {
+      return s.sector;
+    }
   }
 
-  // 3. Solar Photovoltaic (PV) & Solar + Storage (including solar farms, PV plants, solar-plus-storage)
-  if (
-    /\b(?:solar-plus-storage|solar and battery|solar & battery|solar and storage|solar & storage|solar\s*\+\s*battery|solar\s*\+\s*storage)\b/i.test(combined) ||
-    /\b(?:solar park|solar farm|solar energy center|solar facility|solar installation|photovoltaic|pv farm|pv plant|solar project|utility solar)\b/i.test(combined) ||
-    /\bsolar\b/i.test(combined)
-  ) {
-    return "Solar Photovoltaic Power Plant (PV)";
-  }
-
-  // 4. Standalone Battery Energy Storage Systems (BESS)
-  if (/\b(?:bess|battery storage|energy storage site|storage facility|battery energy storage|mwh storage)\b/i.test(combined)) {
-    return "Battery Energy Storage";
-  }
-
-  // 5. Wind Energy
-  if (/\b(?:wind farm|wind energy center|offshore wind|wind facility|wind turbine|wind park)\b/i.test(combined)) {
-    return "Wind Energy";
-  }
-
-  // 6. Semiconductor Manufacturing (Checked before Data Center so "Micron DRAM fabs for AI data centers" is Semiconductor)
-  if (
-    /\b(?:semiconductor|silicon wafer|wafer fab|megafab|cleanroom|microchip|chip factory|memory chip|foundry|tsmc|asml|micron|infineon|intel fab|globalfoundries|sk hynix)\b/i.test(combined) ||
-    (/\bfabs?\b/i.test(combined) && !/\bbattery\b/i.test(combined) && !/\bdata\s*center\s*(?:campus|project|facility)\b/i.test(projectName.toLowerCase()))
-  ) {
-    return "Semiconductor Manufacturing";
-  }
-
-  // 7. Hyperscale Data Centers
-  if (/\b(?:data center|data centre|hyperscale|colocation|cloud campus|stargate|ai compute campus|ai data center|technology campus|hyperion campus|colossus)\b/i.test(combined)) {
+  // Priority 2: High-signal sector indicators in project name first (prevents auxiliary summary mentions from misclassifying)
+  if (/\b(?:data\s*cent(?:er|re)|hyperscale|cloud\s+campus|compute\s+campus)\b/i.test(nameOnly)) {
     return "Hyperscale Data Center";
   }
-
-  // 8. Clean Hydrogen
-  if (/\b(?:hydrogen|electrolyzer|clean ammonia)\b/i.test(combined)) {
+  if (/\b(?:semiconductor|wafer\s+fab|microchip|cleanroom|megafab)\b/i.test(nameOnly)) {
+    return "Semiconductor Manufacturing";
+  }
+  if (/\b(?:gigafactory|battery\s+(?:cell|plant|manufacturing|fab))\b/i.test(nameOnly)) {
+    return "Battery Gigafactory";
+  }
+  if (/\b(?:bess|battery\s+energy\s+storage|battery\s+storage)\b/i.test(nameOnly)) {
+    return "Battery Energy Storage";
+  }
+  if (/\b(?:concentrated\s+solar|solar\s+thermal|heliostats?|parabolic\s+trough|csp)\b/i.test(combined)) {
+    return "Concentrated Solar Power (CSP)";
+  }
+  if (/\b(?:floating\s+solar)\b/i.test(combined)) {
+    return "Floating Solar Power Plant";
+  }
+  if (/\b(?:offshore\s+wind)\b/i.test(nameOnly) || (/\boffshore\s+wind\b/i.test(combined) && !/\bsolar\b/i.test(nameOnly))) {
+    return "Offshore Wind Power Plant";
+  }
+  if (/\b(?:wind\s*(?:farm|park|energy|facility|turbine))\b/i.test(nameOnly)) {
+    return "Onshore Wind Power Plant";
+  }
+  if (/\b(?:solar\s*(?:farm|park|plant|project|energy|installation)|photovoltaic|pv\s+farm)\b/i.test(nameOnly)) {
+    return "Solar Photovoltaic Power Plant (PV)";
+  }
+  if (/\b(?:hydrogen|electrolyzer|clean\s+ammonia)\b/i.test(nameOnly)) {
     return "Clean Hydrogen";
   }
 
-  return hintCategory || "Capital Infrastructure";
+  // Priority 3: Summary-level indicators ONLY when project name gives no category
+  if (/\b(?:data\s*cent(?:er|re)|hyperscale|colocation)\b/i.test(summaryOnly)) {
+    return "Hyperscale Data Center";
+  }
+  if (/\b(?:semiconductor|wafer\s+fab|cleanroom|microchip)\b/i.test(summaryOnly)) {
+    return "Semiconductor Manufacturing";
+  }
+  if (/\b(?:gigafactory|battery\s+(?:plant|manufacturing|cell))\b/i.test(summaryOnly)) {
+    return "Battery Gigafactory";
+  }
+  if (/\b(?:solar\s*(?:farm|park|plant|project)|photovoltaic|pv\s+plant)\b/i.test(summaryOnly)) {
+    return "Solar Photovoltaic Power Plant (PV)";
+  }
+  if (/\b(?:wind\s*(?:farm|park|energy))\b/i.test(summaryOnly)) {
+    return "Wind Energy";
+  }
+  if (/\b(?:hydrogen|electrolyzer)\b/i.test(summaryOnly)) {
+    return "Clean Hydrogen";
+  }
+
+  return "Capital Infrastructure";
 }
 
 function isCompletedOrOperationalFacility(url, title, summary, text) {
@@ -1154,14 +1191,15 @@ function extractDateFromTextOrUrl(text, url, publishedDate) {
 function formatDisplayDate(rawDate) {
   if (!rawDate || typeof rawDate !== "string") return "";
   const d = rawDate.trim();
-  if (/^(?:latest 2026|not specified|unknown|tbd|none|n\/a)$/i.test(d)) return "";
+  const currentYear = new Date().getFullYear();
+  if (/^(?:latest\s+\d{4}|not specified|unknown|tbd|none|n\/a)$/i.test(d)) return "";
 
   // Extract all years in the string
   const allYears = Array.from(d.matchAll(/\b(20[1-3]\d)\b/g)).map(m => parseInt(m[1], 10));
-  const futureYears = allYears.filter(y => y >= 2025);
-  const pastYears = allYears.filter(y => y < 2025);
+  const futureYears = allYears.filter(y => y >= currentYear);
+  const pastYears = allYears.filter(y => y < currentYear);
 
-  // If the ONLY year mentioned is historical (< 2025, e.g. "2021 (project announcement)"), return null to drop
+  // If the ONLY year mentioned is historical (< currentYear), return null to drop
   if (allYears.length > 0 && futureYears.length === 0 && pastYears.length > 0) {
     return null;
   }
@@ -1182,7 +1220,7 @@ function formatDisplayDate(rawDate) {
   const isoMatch = d.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
   if (isoMatch) {
     const year = parseInt(isoMatch[1], 10);
-    if (year < 2025) return null;
+    if (year < currentYear) return null;
     const monthNum = parseInt(isoMatch[2], 10);
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     if (monthNum >= 1 && monthNum <= 12) {
@@ -1525,107 +1563,75 @@ function findBestCorroboratingCandidate(candidates, aiP) {
   return bestCandidate;
 }
 
-const LOCATION_DICTIONARY = {
-  "united states": [
-    "united states", "usa", "u.s.", "u.s.a.", "america", "texas", "california", "virginia", "northern virginia",
-    "arizona", "ohio", "new york", "idaho", "georgia", "north carolina", "michigan", "indiana", "oregon",
-    "illinois", "tennessee", "nevada", "florida", "colorado", "louisiana", "kansas", "wisconsin", "iowa",
-    "minnesota", "missouri", "alabama", "south carolina", "kentucky", "oklahoma", "utah", "new mexico",
-    "nebraska", "arkansas", "mississippi", "dallas", "austin", "houston", "phoenix", "richland parish", "ashburn", "loudoun"
-  ],
-  "texas": ["texas", "dallas", "austin", "houston", "fort worth", "san antonio", "plano", "el paso"],
-  "northern virginia": ["northern virginia", "loudoun", "ashburn", "richmond", "prince william", "fairfax"],
-  "arizona": ["arizona", "phoenix", "mesa", "chandler", "scottsdale", "tucson"],
-  "california": ["california", "silicon valley", "santa clara", "san jose", "los angeles", "san francisco", "sacramento"],
-  "india": [
-    "india", "indian", "gujarat", "karnataka", "bengaluru", "bangalore", "mumbai", "maharashtra",
-    "tamil nadu", "chennai", "telangana", "hyderabad", "noida", "uttar pradesh", "odisha", "assam",
-    "sanand", "dholera", "andhra pradesh", "rajasthan", "madhya pradesh", "kerala", "haryana", "delhi", "punjab"
-  ],
-  "germany": [
-    "germany", "german", "erfurt", "dresden", "munich", "berlin", "frankfurt", "magdeburg",
-    "brandenburg", "saarland", "bavaria", "saxony", "leipzig", "stuttgart", "hessen"
-  ],
-  "united kingdom": [
-    "united kingdom", "england", "scotland", "wales", "northern ireland", "london", "manchester",
-    "birmingham", "cambridge", "oxford", "bristol", "leeds"
-  ],
-  "ireland": ["ireland", "irish", "dublin", "cork", "galway", "limerick"],
-  "netherlands": ["netherlands", "dutch", "amsterdam", "eindhoven", "rotterdam"],
-  "spain": ["spain", "spanish", "madrid", "barcelona", "aragon", "valencia"],
-  "japan": ["japan", "japanese", "tokyo", "hokkaido", "kumamoto", "kikuyo", "chitose", "osaka", "yokohama"],
-  "south korea": ["south korea", "korea", "korean", "yongin", "seoul", "gyeonggi", "pyeongtaek", "incheon", "busan", "gumi", "suwon"],
-  "taiwan": ["taiwan", "taiwanese", "hsinchu", "taichung", "tainan", "kaohsiung", "taipei"],
-  "singapore": ["singapore"],
-  "malaysia": ["malaysia", "malaysian", "johor", "kuala lumpur", "penang"],
-  "australia": ["australia", "australian", "sydney", "melbourne", "queensland", "brisbane", "perth", "new south wales", "victoria"],
-  "saudi arabia": ["saudi", "arabia", "riyadh", "jeddah", "neom", "dammam"],
-  "united arab emirates": ["united arab emirates", "uae", "dubai", "abu dhabi", "sharjah"],
-  "brazil": ["brazil", "brazilian", "sao paulo", "rio de janeiro"],
-  "canada": ["canada", "canadian", "ontario", "quebec", "british columbia", "alberta", "toronto", "montreal", "vancouver"]
-};
-
-function getCanonicalCountry(locationStr) {
-  if (!locationStr || typeof locationStr !== "string") return null;
-  const s = locationStr.toLowerCase();
-  
-  for (const [country, aliases] of Object.entries(LOCATION_DICTIONARY)) {
-    for (const alias of aliases) {
-      if (alias.length < 3) continue;
-      const regex = new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
-      if (regex.test(s)) {
-        if (country === "texas" || country === "northern virginia" || country === "arizona" || country === "california") {
-          return "united states";
-        }
-        return country;
-      }
-    }
-  }
-  return null;
+function normalizeCountryName(str) {
+  if (!str || typeof str !== "string") return "";
+  let s = str.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (s === "usa" || s === "u s a" || s === "u s" || s === "us" || s === "america" || s === "the united states") return "united states";
+  if (s === "uk" || s === "u k" || s === "great britain" || s === "britain" || s === "england" || s === "scotland" || s === "wales") return "united kingdom";
+  if (s === "uae" || s === "u a e" || s === "the uae") return "united arab emirates";
+  if (s === "south korea" || s === "korea" || s === "republic of korea" || s === "rok") return "south korea";
+  if (s === "deutschland") return "germany";
+  if (s === "espana") return "spain";
+  return s;
 }
 
-function matchesSelectedCountry(detectedLocation, text, title, selectedCountry) {
-  if (!selectedCountry) return true;
-  const sel = selectedCountry.toLowerCase().trim();
-  if (sel === "worldwide (global)" || sel === "global" || sel === "all regions" || sel === "all" || sel === "") {
+function matchesTargetCountry(projectCountry, projectLocation, targetLocation) {
+  if (!targetLocation) return true;
+  const target = targetLocation.toLowerCase().trim();
+  if (target === "worldwide (global)" || target === "global" || target === "all regions" || target === "all" || target === "") {
     return true;
   }
 
-  // 1. If project has an identified location:
-  if (detectedLocation) {
-    const locCountry = getCanonicalCountry(detectedLocation);
-    if (locCountry) {
-      // If the project location belongs to a DIFFERENT country, DROP IT!
-      const isUsRegion = (sel === "united states" || ["texas", "arizona", "california", "northern virginia"].includes(sel)) &&
-                         (locCountry === "united states" || ["texas", "arizona", "california", "northern virginia"].includes(locCountry));
-      if (!isUsRegion && locCountry !== sel) {
-        return false;
+  const pCountry = (projectCountry || "").toLowerCase().trim();
+  const pLocation = (projectLocation || "").toLowerCase().trim();
+  const combined = `${pCountry} ${pLocation}`.trim();
+
+  const normTarget = normalizeCountryName(target);
+  const normCountry = normalizeCountryName(pCountry);
+
+  // 1. Sovereign country comparison
+  if (normCountry) {
+    if (normCountry === normTarget || normCountry.includes(normTarget) || normTarget.includes(normCountry)) {
+      // If target is a specific US state/region (Texas, Northern Virginia, Arizona, California), also require location match
+      if (normTarget === "texas" || normTarget === "northern virginia" || normTarget === "arizona" || normTarget === "california") {
+        return combined.includes(normTarget) || (normTarget === "northern virginia" && (combined.includes("loudoun") || combined.includes("ashburn") || combined.includes("richmond")));
       }
+      return true;
+    }
+    // If target is a US state and project is in United States, check if location matches the state
+    if (normCountry === "united states" && (normTarget === "texas" || normTarget === "northern virginia" || normTarget === "arizona" || normTarget === "california")) {
+      return combined.includes(normTarget) || (normTarget === "northern virginia" && (combined.includes("loudoun") || combined.includes("ashburn") || combined.includes("richmond")));
+    }
+    // Country was identified and clearly does NOT match target
+    return false;
+  }
+
+  // 2. Fallback: if country was not explicitly parsed, check combined location string
+  if (combined) {
+    const normCombined = normalizeCountryName(combined);
+    if (normCombined.includes(normTarget)) {
       return true;
     }
   }
 
-  // 2. If no location was extracted, check title or detected location
-  // NEVER check body text where foreign partnerships, trade delegations or "U.S.-Japan" initiatives appear!
-  const titleCombined = ((title || "") + " " + (detectedLocation || "")).toLowerCase();
-  const targetAliases = LOCATION_DICTIONARY[sel] || [sel];
-  return targetAliases.some(alias => {
-    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(`\\b${escaped}\\b`, "i");
-    return regex.test(titleCombined);
-  });
+  return false;
+}
+
+function matchesSelectedCountry(detectedLocation, text, title, selectedCountry) {
+  return matchesTargetCountry(detectedLocation, (text || "") + " " + (title || ""), selectedCountry);
 }
 
 function extractLocationFromCandidate(text, title, url) {
-  const combined = ((title ? title + " " : "") + (text ? text.slice(0, 800) : "")).toLowerCase();
-  for (const [canonicalCountry, aliases] of Object.entries(LOCATION_DICTIONARY)) {
-    for (const alias of aliases) {
-      if (alias.length < 3) continue;
-      const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const regex = new RegExp(`\\b${escaped}\\b`, "i");
-      if (regex.test(combined)) {
-        return canonicalCountry.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-      }
+  const combined = ((title ? title + " " : "") + (text ? text.slice(0, 1000) : "")).toLowerCase();
+  const MAJOR_COUNTRIES = [
+    "united states", "india", "germany", "united kingdom", "spain", "japan",
+    "south korea", "france", "australia", "canada", "brazil", "netherlands",
+    "ireland", "taiwan", "singapore", "malaysia", "saudi arabia", "united arab emirates"
+  ];
+  for (const c of MAJOR_COUNTRIES) {
+    const escaped = c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escaped}\\b`, "i").test(combined)) {
+      return c.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
     }
   }
   return null;
@@ -1648,19 +1654,43 @@ function parseLlmJson(rawOutput) {
   }
 
   const lastBrace = clean.lastIndexOf("}");
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-    return null;
-  }
-  clean = clean.slice(firstBrace, lastBrace + 1);
-  clean = clean.replace(/,\s*([}\]])/g, "$1");
-  try {
-    return JSON.parse(clean);
-  } catch (_) {
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const slice = clean.slice(firstBrace, lastBrace + 1).replace(/,\s*([}\]])/g, "$1");
     try {
-      const sanitized = clean.replace(/[\u0000-\u001F]+/g, " ");
-      return JSON.parse(sanitized);
-    } catch (_) {}
+      return JSON.parse(slice);
+    } catch (_) {
+      try {
+        const sanitized = slice.replace(/[\u0000-\u001F]+/g, " ");
+        return JSON.parse(sanitized);
+      } catch (_) {}
+    }
   }
+
+  // Truncated JSON recovery: recover partial JSON if LLM output hit token cutoff mid-response
+  if (firstBracket !== -1) {
+    const lastValidBrace = clean.lastIndexOf("}");
+    if (lastValidBrace > firstBracket) {
+      try {
+        const recovered = clean.slice(firstBracket, lastValidBrace + 1) + "]";
+        const sanitized = recovered.replace(/,\s*([}\]])/g, "$1").replace(/[\u0000-\u001F]+/g, " ");
+        return JSON.parse(sanitized);
+      } catch (_) {}
+    }
+  }
+  if (firstBrace !== -1) {
+    const projectsIndex = clean.indexOf('"projects"');
+    if (projectsIndex !== -1) {
+      const lastValidBrace = clean.lastIndexOf("}");
+      if (lastValidBrace > projectsIndex) {
+        try {
+          const recovered = clean.slice(firstBrace, lastValidBrace + 1) + "]}";
+          const sanitized = recovered.replace(/,\s*([}\]])/g, "$1").replace(/[\u0000-\u001F]+/g, " ");
+          return JSON.parse(sanitized);
+        } catch (_) {}
+      }
+    }
+  }
+
   return null;
 }
 
@@ -1777,7 +1807,7 @@ ONLY REJECT (set "is_project": false) IF:
 1. The candidate is a list, roundup, compilation, or ranking (e.g. "USA Top 50 Solar Projects", "Top 10 Data Centers", "Largest Projects Roundup"). NEVER extract a multi-project listicle as a single project!
 2. The candidate is an industry pipeline report, generator inventory, or statistical dataset (e.g. "US solar development pipeline", "Solar Photovoltaic generator rows", "Monthly Generator Inventory").
 3. The developer/company is a data/statistics publisher, research agency, or government bureau (e.g. EIA, Enerdatics, DMC Education, Wood Mackenzie, Statista) rather than a commercial project developer.
-4. The facility is already completed, commissioned in past years, or existing operational facilities (e.g. listicles describing already running plants).
+4. The facility is already completed, commissioned in past years, or existing operational facilities (e.g. English 'came online', 'operational', 'opened', 'commissioned', 'went live', 'energized'; German 'nimmt Betrieb auf', 'in Betrieb', 'ans Netz gegangen', 'Inbetriebnahme'; French 'inauguré', 'mis en service'; Spanish 'en operación', 'puesta en marcha'). For any such operational project, set "is_already_operating": true or set "is_project": false.
 5. The page is an educational article, academic study, field report, technology explainer, or how-to guide (e.g. "Understanding How Data Centers Impact Water", "What is a Data Center", "How Chips Are Made").
 6. The page is a directory of colocation spaces, search engine for capacity, or vendor marketplace (e.g. datacenters.com).
 7. The page is discussing a political protest, zoning dispute, or lawsuit without an actively funded physical development project.
@@ -1808,8 +1838,10 @@ If ONE OR MORE VALID PROJECTS:
     {
       "canonical_name": "Official specific name of the project or facility in English (e.g. '<Facility Name> Solar Park', '<Campus Name> Data Center'). Extract ONLY real project names from the webpage; NEVER output example placeholder names.",
       "company": "Specific company, developer, or operator building/investing in the project in English (e.g. '<Developer Corp>', '<Energy Company>'). Extract ONLY the real company from the webpage.",
-      "location": "City, State/Region, Country in English",
+      "country": "Sovereign country in English (e.g. 'United States', 'India', 'Germany', 'Spain', 'Japan', 'South Korea', 'United Kingdom')",
+      "location": "City, State/Province, or Region in English",
       "status": "Announced | Planning | Under Construction",
+      "is_already_operating": false,
       "category": "Industrial category in English (e.g. Hyperscale Data Center, Semiconductor Megafab, Battery Gigafactory, Solar Farm)",
       "date": "Announcement, start, or completion target date (e.g. November 2026, 2026)",
       "summary": "1-2 complete factual sentences in fluent English describing the project, developer, and its development scope."
@@ -1929,6 +1961,7 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
 
         if (hasNonLatinScript(projectName) || hasNonLatinScript(companyVal)) continue;
         if (isGenericReportOrDirectory(targetUrl, projectName, companyVal, item.summary) || isGenericReportOrDirectory(targetUrl, rawProjectName, companyVal, item.summary)) continue;
+        if (item.is_already_operating === true || item.status === "Operational" || item.status === "Completed") continue;
         if (
           isCompletedOrOperationalFacility(targetUrl, projectName, item.summary, pageText) ||
           isCompletedOrOperationalFacility(targetUrl, rawProjectName, item.summary, pageText) ||
@@ -1943,6 +1976,12 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
           projectDate = extractDateFromTextOrUrl(pageText, targetUrl);
         }
 
+        let pCountry = (item.country || "").trim();
+        let pLocation = (item.location || "").trim();
+        if (!pCountry && pLocation) {
+          pCountry = pLocation.includes(",") ? pLocation.split(",").pop().trim() : pLocation;
+        }
+
         validProjects.push({
           is_project: true,
           canonical_name: projectName,
@@ -1951,7 +1990,8 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
           project_url: targetUrl,
           status: finalStatus,
           category: inferCategory(projectName, item.summary, item.category || hintCategory),
-          country: item.location || item.country || null,
+          country: pCountry || "Not specified",
+          location: pLocation || pCountry || "Not specified",
           date: projectDate,
           summary: cleanSummaryText(item.summary || pageText.slice(0, 250))
         });
@@ -2001,7 +2041,7 @@ REJECT (MUST NOT EXTRACT):
 - DATA/STATISTICS PUBLISHERS AS DEVELOPER: Candidates where the company is a government statistical agency, market research platform, energy data tracker, or publisher (e.g. EIA, Enerdatics, DMC Education, S&P Global, FERC, Wood Mackenzie, Rystad Energy, Statista) rather than a commercial project owner/developer erecting the facility. If no specific corporate owner/developer is named, REJECT IT.
 - NATIONAL MACRO POLICY TARGETS & ROADMAPS: Broad macroeconomic government announcements, national policy initiatives, or multi-year GW targets (e.g. "South Korea announces $919bn investment into three mega projects, plans to build 18.4GW worth of data centers by 2035", "Government of South Korea"). A national government announcing a 10-year policy target or multi-billion funding roadmap is a public policy goal, NOT an individual physical development with a developer!
 - REGULATORY & GRID REVIEW ARTICLES: Articles primarily discussing power supply rules, grid reviews, zoning regulations, or regulatory hurdles (e.g. "Korea data center power rules raise Seoul area bar... sites under 10 MW skip grid review"). These are regulatory news reports, NOT project announcements!
-- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING (e.g. "Singapore's first data center ... is open", "Nxera opens data centre", "opens new facility", "began commercial operations", "facility opened today", "now operational", "commissioned", "came online", "just came online", "went online", "goes online", "go fully operational", "goes fully operational", "went fully operational", "now fully operational", "energized"). Also REJECT facilities described as "launches data center", "launches its third data center in [city]", "launches new plant", or "marking its entry into [country]". In energy, solar, power, and tech, "came online", "just came online", "went online", and "go fully operational" mean the power plant, solar farm, or facility is completed and operating! These are OPERATIONAL and MUST BE REJECTED. NEVER label "just came online", "came online", or "go fully operational" as "Under Construction"! We ONLY track upcoming pipeline under development (Announced, Planning, Under Construction).
+- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING in ANY language (e.g. English 'came online', 'operational', 'opened', 'commissioned', 'went live', 'energized'; German 'nimmt Betrieb auf', 'in Betrieb', 'in Betrieb genommen', 'Inbetriebnahme', 'ans Netz gegangen'; French 'inauguré', 'mis en service', 'en exploitation'; Spanish 'en operación', 'puesta en marcha', 'inaugurado'). Also REJECT facilities described as 'launches data center', 'launches its third data center in [city]', 'launches new plant', or 'marking its entry into [country]'. You MUST set "is_already_operating": true if the facility is already operating, active, or completed. NEVER label an operating plant as 'Under Construction'! We ONLY track upcoming pipeline under development (Announced, Planning, Under Construction).
 - Tool, equipment, or machinery product launches (e.g. wafer dicing systems, plasma systems, lithography tools, metrology tools). Equipment shipped to customers is NOT a capital project!
 - Material, wafer, or substrate product announcements (e.g. single-crystal diamond wafers, substrate materials).
 - R&D partnerships, industry collaboration initiatives, or technology roadmaps without a physical facility buildout.
@@ -2020,8 +2060,10 @@ Return ONLY a valid JSON object in this exact schema:
       "source_url": "The exact URL copied verbatim from the [Candidate #ID] block above where this project is described",
       "canonical_name": "Official, clean project or facility name in English (e.g. '<Facility Name> Solar Park', '<Project Name> Phase 1', '<Campus Name> Data Center'). MUST NOT be a journalistic news headline or sentence, and MUST NOT include action verbs or headlines like 'Secures Loans for', 'Secures Financing for', 'Wins Approval for', 'Breaks Ground on', 'Go Fully Operational', or 'just came online'. DO NOT invent or copy example placeholder names; extract ONLY the actual project name described in the candidate text.",
       "company": "Specific corporate developer or owner building the project in English (e.g. '<Developer Corp>', '<Energy Company>'). Extract ONLY the real company described in the candidate content.",
-      "location": "City, State/Region, Country in English (e.g. '<City>, <State/Province>, <Country>')",
+      "country": "Sovereign country name in English (e.g. 'United States', 'India', 'Germany', 'Spain', 'Japan', 'South Korea', 'United Kingdom')",
+      "location": "Specific city, state/province, or region in English (e.g. 'Andhra Pradesh', 'Callahan County, Texas', 'Lower Saxony')",
       "status": "Announced | Planning | Under Construction",
+      "is_already_operating": false,
       "category": "Industrial category (e.g. Hyperscale Data Center, Semiconductor Manufacturing, Battery Gigafactory, Utility Solar)",
       "date": "Target start, completion, or announcement date (e.g. 2026, 2027) if explicitly stated in candidate content, or empty string \"\" if not mentioned",
       "summary": "1-2 complete factual sentences in fluent English describing the project and buildout scope."
@@ -2031,7 +2073,7 @@ Return ONLY a valid JSON object in this exact schema:
 
   let candidateBlocks = "";
   candidateItems.slice(0, 12).forEach((c, idx) => {
-    const textSnippet = (c.text || c.snippet || c.title || "").slice(0, 800);
+    const textSnippet = (c.text || c.snippet || c.title || "").slice(0, 1500);
     candidateBlocks += `\n[Candidate #${idx + 1}]\nURL: ${c.cleanUrl}\nTitle: ${c.title || "Capital Project"}\nDate: ${c.published_date || ""}\nContent: """\n${textSnippet}\n"""\n`;
   });
 
@@ -2057,7 +2099,7 @@ Output your JSON analysis now:`;
           { role: "user", content: userPrompt }
         ],
         temperature: 0.1,
-        max_tokens: 1800
+        max_tokens: 4096
       });
 
       rawOutput = aiResponse?.response || (typeof aiResponse === "string" ? aiResponse : JSON.stringify(aiResponse)) || "";
@@ -2202,7 +2244,11 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   // 1. Initial analysis
   const sectorInfo = classifyQuery(query);
   const targetCategory = requestedCategory && requestedCategory !== "All Categories" ? requestedCategory : sectorInfo.category;
-  const targetLocation = requestedLocation && requestedLocation !== "All Regions" ? requestedLocation : extractLocation(query);
+  const queryLoc = extractLocation(query);
+  const effectiveLocation = (requestedLocation && requestedLocation !== "Worldwide (Global)" && requestedLocation !== "All Regions" && requestedLocation !== "Global" && requestedLocation !== "all")
+    ? requestedLocation
+    : (queryLoc !== "Global" ? queryLoc : null);
+  const targetLocation = effectiveLocation || "Global";
 
   // Build composite search query from all three inputs: ${query} ${sector} ${country}
   const searchParts = [query.trim()];
@@ -2213,9 +2259,9 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     }
   }
 
-  if (requestedLocation && requestedLocation !== "Worldwide (Global)" && requestedLocation !== "All Regions" && requestedLocation !== "Global" && requestedLocation !== "all") {
-    if (!query.toLowerCase().includes(requestedLocation.toLowerCase())) {
-      searchParts.push(requestedLocation);
+  if (effectiveLocation) {
+    if (!query.toLowerCase().includes(effectiveLocation.toLowerCase())) {
+      searchParts.push(effectiveLocation);
     }
   }
 
@@ -2327,7 +2373,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         },
         body: JSON.stringify({
           query: effectiveSearchText,
-          numResults: 25,
+          numResults: 12,
           useAutoprompt: true,
           startPublishedDate: rollingStartPublishedDate,
           contents: {
@@ -2366,7 +2412,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     const t0 = Date.now();
     queryTelemetry.google_search = 1;
     try {
-      const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(effectiveSearchText)}&num=10&lr=lang_en&hl=en&dateRestrict=m12`;
+      const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(effectiveSearchText)}&num=10&hl=en&dateRestrict=m12`;
       const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(6000) });
       const elapsed = Date.now() - t0;
       recordApiUsage("Google Custom Search", elapsed, gRes.ok);
@@ -2447,7 +2493,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         store.urlCache.set(cleanUrl, validCached);
         let acceptedFromCache = false;
         for (const p of validCached) {
-          if (requestedLocation && !matchesSelectedCountry(p.country || p.location, p.summary, p.canonical_name, requestedLocation)) {
+          if (effectiveLocation && !matchesTargetCountry(p.country, p.location, effectiveLocation)) {
             continue;
           }
           extractedProjects.push(p);
@@ -2512,6 +2558,12 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         continue;
       }
 
+      // Drop any project identified as already operating, completed, or commissioned in any language
+      if (aiP.is_already_operating === true || aiP.status === "Operational" || aiP.status === "Completed") {
+        addEvent("candidate_filtered", `DROPPED (Already Operating / Completed): '${aiP.canonical_name || "Unknown"}' is identified as an already operational facility.`);
+        continue;
+      }
+
       const cleanUrl = matchedCandidate.cleanUrl;
       const rawStatus = (aiP.status || "").trim();
       let projectStatus = null;
@@ -2561,24 +2613,43 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         continue;
       }
 
-      // Resolve project location: do NOT default to requested country
-      let projectCountry = null;
-      if (aiP.location && !/^(?:not specified|unknown|global|tbd|none|n\/a)$/i.test(aiP.location.trim())) {
-        projectCountry = aiP.location.trim();
-      } else {
-        projectCountry = extractLocationFromCandidate(matchedCandidate.text || matchedCandidate.snippet, matchedCandidate.title, cleanUrl);
+      // Resolve project sovereign country and specific location
+      let projectCountry = (aiP.country || "").trim();
+      let projectLocation = (aiP.location || "").trim();
+
+      if (/^(?:not specified|unknown|global|tbd|none|n\/a)$/i.test(projectCountry)) {
+        projectCountry = "";
+      }
+      if (/^(?:not specified|unknown|global|tbd|none|n\/a)$/i.test(projectLocation)) {
+        projectLocation = "";
       }
 
-      // Filter results by selected country: drop projects whose location does not match
-      if (requestedLocation && !matchesSelectedCountry(projectCountry, matchedCandidate.text || matchedCandidate.snippet, matchedCandidate.title, requestedLocation)) {
-        addEvent("candidate_filtered", `DROPPED (Location Mismatch): '${projectName}' location '${projectCountry || "Unspecified"}' does not match target country '${requestedLocation}'`);
+      if (!projectCountry && projectLocation) {
+        const parts = projectLocation.split(",").map(p => p.trim());
+        if (parts.length > 1) {
+          projectCountry = parts[parts.length - 1];
+        } else {
+          projectCountry = projectLocation;
+        }
+      }
+
+      if (!projectCountry) {
+        projectCountry = extractLocationFromCandidate(matchedCandidate.text || matchedCandidate.snippet, matchedCandidate.title, cleanUrl) || "Not specified";
+      }
+      if (!projectLocation) {
+        projectLocation = projectCountry;
+      }
+
+      // Filter results by effective target location (from dropdown or search query)
+      if (effectiveLocation && !matchesTargetCountry(projectCountry, projectLocation, effectiveLocation)) {
+        addEvent("candidate_filtered", `DROPPED (Location Mismatch): '${projectName}' location '${projectLocation || projectCountry}' does not match target location '${effectiveLocation}'`);
         continue;
       }
 
       let rawDate = (aiP.date || matchedCandidate.published_date || "").trim();
       let projectDate = formatDisplayDate(rawDate);
       if (projectDate === null) {
-        addEvent("candidate_filtered", `DROPPED (Historical/Past Project Date): '${projectName}' date '${rawDate}' is prior to 2025.`);
+        addEvent("candidate_filtered", `DROPPED (Historical/Past Project Date): '${projectName}' date '${rawDate}' is prior to current active pipeline.`);
         continue;
       }
       const projId = "proj-" + crypto.randomUUID().slice(0, 8);
@@ -2591,6 +2662,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         status: projectStatus,
         category: inferCategory(projectName, aiP.summary, aiP.category || targetCategory),
         country: projectCountry || "Not specified",
+        location: projectLocation || projectCountry || "Not specified",
         date: projectDate,
         http_status: 200,
         summary: cleanSummaryText(aiP.summary || matchedCandidate.snippet || ""),
@@ -2629,8 +2701,9 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         }
 
         const detectedLocation = extractLocationFromCandidate(item.text || item.snippet, item.title, item.cleanUrl);
+        const detectedCountry = detectedLocation || "Not specified";
 
-        if (requestedLocation && !matchesSelectedCountry(detectedLocation, item.text || item.snippet, item.title, requestedLocation)) {
+        if (effectiveLocation && !matchesTargetCountry(detectedCountry, detectedLocation, effectiveLocation)) {
           continue;
         }
 
@@ -2654,7 +2727,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           project_url: item.cleanUrl,
           status: fbStatus,
           category: inferCategory(fbProjectName, fb.summary, fb.category || targetCategory),
-          country: detectedLocation || "Not specified",
+          country: detectedCountry || "Not specified",
+          location: detectedLocation || detectedCountry || "Not specified",
           date: fbDate,
           http_status: 200,
           summary: cleanSummaryText(fb.summary || item.snippet || ""),
@@ -2673,7 +2747,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
 
   for (const proj of extractedProjects) {
     if (!proj || !proj.canonical_name) continue;
-    if (requestedLocation && !matchesSelectedCountry(proj.country, proj.summary, proj.canonical_name, requestedLocation)) {
+    if (effectiveLocation && !matchesTargetCountry(proj.country, proj.location, effectiveLocation)) {
       continue;
     }
     if (isGenericReportOrDirectory(proj.project_url, proj.canonical_name, proj.company || proj.developer, proj.summary)) {
@@ -2705,8 +2779,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     category: p.category,
     status: p.status,
     country: p.country || "Not specified",
-    location: p.country || "Not specified",
-    date: p.date && p.date !== "Latest 2026" ? p.date : "",
+    location: p.location || p.country || "Not specified",
+    date: p.date && !/^latest\s+\d{4}$/i.test(p.date) ? p.date : "",
     http_status: p.http_status,
     summary: p.summary,
     relevance_score: Math.max(0.70, 0.98 - index * 0.05)
@@ -2851,10 +2925,10 @@ export default {
         status: "ok",
         edge_worker_active: true,
         edge_ai_ready: !!env.AI,
-        model: "@cf/meta/llama-3.1-8b-instruct",
+        model: "@cf/meta/llama-3.2-3b-instruct",
         uptime: "100%",
         components: {
-          database: "connected",
+          kv_storage: env.PROJECT_DATA ? "operational" : "in-memory",
           ai_worker: "operational",
           edge_proxy: "healthy"
         }
@@ -2867,7 +2941,7 @@ export default {
         return jsonRes({
           status: "healthy",
           edge_ai_ready: !!env.AI,
-          model: "@cf/meta/llama-3.1-8b-instruct",
+          model: "@cf/meta/llama-3.2-3b-instruct",
           service: "Cloudflare Workers AI Web Fetcher & Extractor (index.js)",
         });
       }
@@ -3050,12 +3124,7 @@ export default {
         } catch (_) {}
       }
       if (!run) {
-        run = {
-          id: sId,
-          status: "completed",
-          results_count: store.projects.size,
-          created_at: new Date().toISOString()
-        };
+        return jsonRes({ error: `Search run '${sId}' not found` }, 404);
       }
       return jsonRes(run);
     }
@@ -3064,7 +3133,16 @@ export default {
     const searchResultsMatch = url.pathname.match(/^\/api(?:\/v1)?\/search\/([a-zA-Z0-9_-]+)\/results$/);
     if (searchResultsMatch && request.method === "GET") {
       const sId = searchResultsMatch[1];
-      const run = store.searches.get(sId);
+      let run = store.searches.get(sId);
+      if (!run && env.PROJECT_DATA) {
+        try {
+          run = await env.PROJECT_DATA.get(`run:${sId}:meta`, "json");
+        } catch (_) {}
+      }
+      if (!run) {
+        return jsonRes({ error: `Search run '${sId}' not found` }, 404);
+      }
+
       let results = store.searchResults.get(sId);
       if ((!results || results.length === 0) && env.PROJECT_DATA) {
         try {
@@ -3086,7 +3164,7 @@ export default {
               return null;
             }
             // Strict country filter on search results: never show foreign projects under a specific country run
-            if (searchLocation && !matchesSelectedCountry(val.country || val.location, val.summary, val.canonical_name, searchLocation)) {
+            if (searchLocation && !matchesTargetCountry(val.country, val.location, searchLocation)) {
               return null;
             }
             return {
@@ -3101,9 +3179,9 @@ export default {
               project_url: val.project_url,
               category: val.category,
               status: val.status,
-              country: val.country,
-              location: val.location,
-              date: val.date && val.date !== "Latest 2026" ? val.date : "",
+              country: val.country || "Not specified",
+              location: val.location || val.country || "Not specified",
+              date: val.date && !/^latest\s+\d{4}$/i.test(val.date) ? val.date : "",
               http_status: r.http_status || val.http_status,
               summary: val.summary,
               relevance_score: r.relevance_score || Math.max(0.70, 0.98 - index * 0.05)
@@ -3126,7 +3204,15 @@ export default {
     if (searchEventsMatch && request.method === "GET") {
       const sId = searchEventsMatch[1];
       const events = store.activityEvents.get(sId) || [];
-      const run = store.searches.get(sId);
+      let run = store.searches.get(sId);
+      if (!run && env.PROJECT_DATA) {
+        try {
+          run = await env.PROJECT_DATA.get(`run:${sId}:meta`, "json");
+        } catch (_) {}
+      }
+      if (!run && events.length === 0) {
+        return jsonRes({ error: `Search run '${sId}' not found` }, 404);
+      }
 
       // Format events into standard text/event-stream format
       let sseBody = "";
@@ -3329,7 +3415,7 @@ export default {
       for (const p of list) {
         const name = `"${(p.canonical_name || '').replace(/"/g, '""')}"`;
         const comp = `"${(p.company || p.developer || '').replace(/"/g, '""')}"`;
-        const dt = `"${(p.date && p.date !== 'Latest 2026' ? p.date : '').replace(/"/g, '""')}"`;
+        const dt = `"${(p.date && !/^latest\s+\d{4}$/i.test(p.date) ? p.date : '').replace(/"/g, '""')}"`;
         const pUrl = `"${(p.project_url || '').replace(/"/g, '""')}"`;
         const cat = `"${p.category || ''}"`;
         const stat = `"${p.status || ''}"`;
@@ -3384,14 +3470,14 @@ export default {
     if (url.pathname === "/api/v1/analytics/system-health") {
       return jsonRes({
         status: "healthy",
-        database_status: "connected",
-        redis_status: "operational",
+        kv_storage: env.PROJECT_DATA ? "operational" : "in-memory",
+        storage: env.PROJECT_DATA ? "Cloudflare KV" : "Edge Memory",
         total_projects: store.projects.size,
         total_searches: store.searches.size,
         active_search_jobs: 0,
         pending_outbox_queue: 0,
         edge_worker: "active",
-        workers_ai_model: "@cf/meta/llama-3.1-8b-instruct"
+        workers_ai_model: "@cf/meta/llama-3.2-3b-instruct"
       });
     }
 
