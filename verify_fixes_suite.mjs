@@ -850,6 +850,43 @@ test("Genuine planned data center expansion 'Microsoft to double data centers in
   assert.strictEqual(isValidCompany, true);
 });
 
+// ==============================================================================
+// 13. CAPITAL PROJECT DISCOVERY INTENT AUGMENTATION & VERIFICATION
+// ==============================================================================
+console.log("\n[Group 13: Bare Discovery Query Intent Augmentation & Candidate Verification]");
+
+function buildProviderSearchQueryTest(effectiveSearchText) {
+  const hasProjectIntent = /\b(?:projects?|facilities|facility|plants?|campuses?|farms?|expansion|investments?|capex|construction|groundbreaking|announced|planning|buildouts?|build|under\s+construction|upcoming)\b/i.test(effectiveSearchText);
+  return hasProjectIntent
+    ? effectiveSearchText
+    : `${effectiveSearchText} upcoming project facility construction announced`;
+}
+
+test("Bare query 'data center' is augmented with capital project intent keywords", () => {
+  const q = buildProviderSearchQueryTest("data center");
+  assert.strictEqual(q, "data center upcoming project facility construction announced");
+});
+
+test("Bare query 'solar' is augmented with capital project intent keywords", () => {
+  const q = buildProviderSearchQueryTest("solar");
+  assert.strictEqual(q, "solar upcoming project facility construction announced");
+});
+
+test("Geographic query without intent 'data center Taiwan' is augmented with capital project keywords", () => {
+  const q = buildProviderSearchQueryTest("data center Taiwan");
+  assert.strictEqual(q, "data center Taiwan upcoming project facility construction announced");
+});
+
+test("Query already containing project intent 'Upcoming green hydrogen plant in Oman' is preserved as-is", () => {
+  const q = buildProviderSearchQueryTest("Upcoming green hydrogen plant in Oman");
+  assert.strictEqual(q, "Upcoming green hydrogen plant in Oman");
+});
+
+test("Query already containing 'under construction' is preserved as-is", () => {
+  const q = buildProviderSearchQueryTest("Data centers under construction in Virginia");
+  assert.strictEqual(q, "Data centers under construction in Virginia");
+});
+
 console.log("\n=================================================");
 console.log(`ALL ${passedTests} TESTS PASSED SUCCESSFULLY!`);
 console.log("=================================================\n");

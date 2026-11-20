@@ -1500,17 +1500,16 @@ function getSpecificProjectWords(canonicalName, companyName, location) {
   }
 
   // If canonicalName had no specific project words (e.g. only company name + sector words),
-  // extract distinctive location tokens (city / county / town)
+  // extract distinctive location tokens (city / county / town / state / country)
   if (specificWords.length === 0 && location) {
-    const BROAD_LOCATIONS = new Set([
-      "usa", "united", "states", "america", "india", "japan", "korea", "south", "germany",
-      "spain", "france", "canada", "australia", "china", "uk", "kingdom", "texas"
+    const NON_DISTINCT_LOCATIONS = new Set([
+      "global", "worldwide", "international", "national", "regional", "various", "multiple", "unspecified", "tbd"
     ]);
     const locTokens = location
       .toLowerCase()
       .split(/[\s\-–—/_:;.,()]+/)
       .map(t => t.replace(/[^a-z0-9]/g, ""))
-      .filter(t => t.length >= 4 && !/^\d+$/.test(t) && !BROAD_LOCATIONS.has(t) && !SECTOR_WORDS.has(t) && !PROJECT_MATCH_STOPWORDS.has(t));
+      .filter(t => t.length >= 3 && !/^\d+$/.test(t) && !NON_DISTINCT_LOCATIONS.has(t) && !SECTOR_WORDS.has(t) && !PROJECT_MATCH_STOPWORDS.has(t));
     for (const lTok of locTokens) {
       if (!compTokens.has(lTok)) {
         specificWords.push(lTok);
@@ -1539,26 +1538,32 @@ function candidateMentionsProject(candidate, aiP) {
   if (!matchesCompanyName(comp, fullContent)) return false;
 
   // Condition 2: Require a specific project word that isn't a sector word
-  const specificWords = getSpecificProjectWords(name, comp, aiP.location);
-  if (specificWords.length === 0) {
-    // If no specific project word could be determined at all, this is not a verifiable specific project
-    return false;
-  }
-
-  let specificWordMatched = false;
-  for (const word of specificWords) {
-    const wordRegex = new RegExp(`\\b${word}\\b`, 'i');
-    if (wordRegex.test(fullContent)) {
-      specificWordMatched = true;
-      break;
+  const specificWords = getSpecificProjectWords(name, comp, aiP.location || aiP.country);
+  if (specificWords.length > 0) {
+    let specificWordMatched = false;
+    for (const word of specificWords) {
+      const wordRegex = new RegExp(`\\b${word}\\b`, 'i');
+      if (wordRegex.test(fullContent)) {
+        specificWordMatched = true;
+        break;
+      }
+    }
+    if (!specificWordMatched) {
+      return false;
+    }
+  } else {
+    // If canonicalName only consists of company + sector words (e.g. "Microsoft Data Center")
+    // and location is broad/absent, verify that the candidate content contains the facility sector term
+    const cleanName = name.toLowerCase();
+    const hasSectorCorroboration = Array.from(SECTOR_WORDS).some(sw => 
+      sw.length >= 4 && cleanName.includes(sw) && new RegExp(`\\b${sw}\\b`, 'i').test(fullContent)
+    );
+    if (!hasSectorCorroboration) {
+      return false;
     }
   }
 
-  if (!specificWordMatched) {
-    return false;
-  }
-
-  // Both company name (not website's own name) AND specific project word matched!
+  // Both company name (not website's own name) AND specific project / sector corroboration matched!
   return true;
 }
 
@@ -2306,6 +2311,15 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   const effectiveSearchText = searchParts.join(" ").trim();
   const cacheKey = getQueryCacheKey(query, targetCategory, targetLocation);
 
+  // Capital Project Intent Augmentation:
+  // When a user enters a bare sector or keyword query (e.g. "data center", "solar", "battery storage"),
+  // external search engines (Exa / Google) will return generic encyclopedia articles ("What is a Data Center? - Cisco")
+  // and vendor marketing pages unless capital project intent keywords are present.
+  const hasProjectIntent = /\b(?:projects?|facilities|facility|plants?|campuses?|farms?|expansion|investments?|capex|construction|groundbreaking|announced|planning|buildouts?|build|under\s+construction|upcoming)\b/i.test(effectiveSearchText);
+  const providerSearchQuery = hasProjectIntent
+    ? effectiveSearchText
+    : `${effectiveSearchText} upcoming project facility construction announced`;
+
   const addEvent = (eventType, message, component = "ai_worker", metadata = {}) => {
     const event = {
       event_id: crypto.randomUUID(),
@@ -2388,7 +2402,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     total_requests: 0
   };
 
-  addEvent("provider_started", `Executing web discovery for: '${effectiveSearchText}'`);
+  addEvent("provider_started", `Executing web discovery for: '${effectiveSearchText}' (Provider Query: '${providerSearchQuery}')`);
 
   let candidateUrls = [];
   const useExa = requestedProviders.includes("exa") && env.EXA_API_KEY && env.EXA_API_KEY.length > 10;
@@ -2410,7 +2424,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          query: effectiveSearchText,
+          query: providerSearchQuery,
           numResults: 12,
           useAutoprompt: true,
           startPublishedDate: rollingStartPublishedDate,
@@ -2450,7 +2464,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     const t0 = Date.now();
     queryTelemetry.google_search = 1;
     try {
-      const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(effectiveSearchText)}&num=10&hl=en&dateRestrict=m12`;
+      const gUrl = `https://www.googleapis.com/customsearch/v1?key=${env.GOOGLE_SEARCH_API_KEY}&cx=${env.GOOGLE_SEARCH_CX}&q=${encodeURIComponent(providerSearchQuery)}&num=10&hl=en&dateRestrict=m12`;
       const gRes = await fetch(gUrl, { signal: AbortSignal.timeout(6000) });
       const elapsed = Date.now() - t0;
       recordApiUsage("Google Custom Search", elapsed, gRes.ok);
@@ -2688,11 +2702,17 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         continue;
       }
 
-      let rawDate = (aiP.date || matchedCandidate.published_date || "").trim();
-      let projectDate = formatDisplayDate(rawDate);
-      if (projectDate === null) {
-        addEvent("candidate_filtered", `DROPPED (Historical/Past Project Date): '${projectName}' date '${rawDate}' is prior to current active pipeline.`);
-        continue;
+      let projectDate = "";
+      if (aiP.date && aiP.date.trim()) {
+        const formatted = formatDisplayDate(aiP.date.trim());
+        if (formatted === null) {
+          addEvent("candidate_filtered", `DROPPED (Historical/Past Project Date): '${projectName}' date '${aiP.date}' is prior to current active pipeline.`);
+          continue;
+        }
+        projectDate = formatted;
+      } else if (matchedCandidate.published_date) {
+        const pubFormatted = formatDisplayDate(matchedCandidate.published_date);
+        projectDate = pubFormatted || "";
       }
 
       // Deduplicate against existing records in store.projects
