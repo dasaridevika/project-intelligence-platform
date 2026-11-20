@@ -1850,9 +1850,9 @@ A VALID CAPITAL PROJECT MUST:
 DO NOT REJECT active construction, site buildouts, or facility expansions!
 
 ONLY REJECT (set "is_project": false) IF:
-1. The candidate is a multi-project list, roundup, directory, database, compilation, or ranking (e.g. "largest solar and wind farms", "solar farms in the US"). NEVER extract a multi-project listicle or directory as a single project!
-2. The developer/company is a website domain name, URL, media outlet, data directory (e.g. ending in .online/.com), data/statistics publisher, research agency, or government department rather than a commercial project developer.
-3. The facility is already completed, commissioned in past years, or currently operational/powering facilities in any language. For any operating, active, or completed facility, set "is_already_operating": true or set "is_project": false.
+1. The candidate is a multi-project list, roundup, directory, database, compilation, or ranking. NEVER extract a multi-project listicle or directory as a single project!
+2. The developer/company is a website domain name, URL, media outlet, data directory (e.g. names containing web TLDs like .online, .com, .org, .net), data/statistics publisher, research agency, or government department rather than a commercial project developer.
+3. The facility is already completed, commissioned in past years, or currently operational or active in any language. For any operating, active, or completed facility, set "is_already_operating": true or set "is_project": false.
 4. The candidate is an aggregate industry pipeline report, generator inventory, or statistical dataset.
 5. The page is an educational article, academic study, technology explainer, or how-to guide.
 6. The page is a colocation directory, search engine for capacity, or vendor marketplace.
@@ -1861,7 +1861,7 @@ ONLY REJECT (set "is_project": false) IF:
 
 CRITICAL REQUIREMENT - COMPANY ENTITY:
 - The "company" field MUST be the actual corporate developer, operator, or owner entity constructing or financing the facility.
-- NEVER use website domain names (e.g. ending in .online, .com), media publishers, statistical agencies, regulatory commissions, author bylines, or generic placeholder terms.
+- NEVER use website domain names (e.g. ending in a web domain TLD), media publishers, statistical agencies, regulatory commissions, author bylines, or generic placeholder terms.
 
 CRITICAL REQUIREMENT - ACCURATE CATEGORY:
 - The "category" field MUST reflect the specific primary industrial sector of the facility, honoring the Category Hint provided in the prompt when applicable.
@@ -2078,13 +2078,13 @@ A VALID CAPITAL PROJECT MUST:
    - "Under Construction": Groundbreaking, foundation work, active construction, or ongoing campus buildout.
 
 REJECT (MUST NOT EXTRACT):
-- LISTS, ROUNDUPS, COMPILATIONS & DIRECTORIES: Articles listing "largest solar and wind farms", "solar farms in the US", multi-project directories, databases, or project rankings. NEVER extract an entire listicle, ranking, directory, or roundup as a single project!
-- WEBSITE DOMAIN NAMES AS DEVELOPER: NEVER return a website domain name, URL, or data directory (e.g. "Gridplants.online", "RenewableDB", or names ending in .online/.com/.org) as the developer company.
+- LISTS, ROUNDUPS, COMPILATIONS & DIRECTORIES: Articles listing multiple facilities, regional directories, multi-project databases, inventories, or project rankings. NEVER extract an entire listicle, ranking, directory, or roundup as a single project!
+- WEBSITE DOMAIN NAMES AS DEVELOPER: NEVER return a website domain name, URL, or data directory (e.g. names containing web domain TLDs such as .online, .com, .org, .net) as the developer company.
 - PIPELINES, INVENTORIES & STATISTICAL DATASETS: Industry pipeline overviews, generator rows, project databases, capacity trackers, or national statistics tables.
 - DATA/STATISTICS PUBLISHERS AS DEVELOPER: Candidates where the company is a government statistical agency, market research platform, energy data tracker, or publisher rather than a commercial project owner/developer erecting the facility.
 - NATIONAL MACRO POLICY TARGETS & ROADMAPS: Broad macroeconomic government announcements, national policy initiatives, or multi-year capacity targets without an individual physical development project.
 - REGULATORY & GRID REVIEW ARTICLES: Articles primarily discussing power supply rules, grid reviews, zoning regulations, or regulatory hurdles without a specific development project.
-- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING / POWERING FACILITIES in ANY language (including facilities that "now power water-treatment plants", "generate power", "cut CO2", "turned a reservoir into a solar farm", or signed a supply/PPA agreement for an existing facility). You MUST set "is_already_operating": true if the facility is already operating, active, generating power, or completed. NEVER label an operating plant as 'Under Construction'!
+- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING, ACTIVE, OR POWERING FACILITIES in ANY language (including operational plants, commissioned utility farms, or power purchase agreements for existing operational sites). You MUST set "is_already_operating": true if the facility is already operating, active, generating power, or completed. NEVER label an operating plant as 'Under Construction'!
 - Tool, equipment, or machinery product launches. Equipment shipped to customers is NOT a capital project!
 - Material, wafer, or substrate product announcements.
 - R&D partnerships, industry collaboration initiatives, or technology roadmaps without a physical facility buildout.
@@ -3035,7 +3035,7 @@ export default {
       }
 
       if (url.pathname === "/api/ai/test-model") {
-        const testModel = url.searchParams.get("model") || "@cf/meta/llama-3.3-70b-instruct";
+        const testModel = url.searchParams.get("model") || "@cf/meta/llama-3.2-3b-instruct";
         try {
           const testRes = await env.AI.run(testModel, {
             messages: [{ role: "user", content: "Respond with the word 'READY' only." }],
@@ -3436,8 +3436,8 @@ export default {
       });
     }
 
-    // GET /api/v1/projects/export (CSV Export)
-    if (url.pathname === "/api/v1/projects/export") {
+    // GET /api/v1/projects/export or /api/projects/export (CSV Export)
+    if (url.pathname === "/api/v1/projects/export" || url.pathname === "/api/projects/export") {
       const category = url.searchParams.get("category");
       const group = url.searchParams.get("group");
       const location = url.searchParams.get("location");

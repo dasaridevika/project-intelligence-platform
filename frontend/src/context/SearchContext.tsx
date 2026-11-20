@@ -309,7 +309,7 @@ export const SearchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     for (const p of discoveredResults) {
       const name = `"${(p.canonical_name || '').replace(/"/g, '""')}"`;
       const comp = `"${(p.company || p.developer || '').replace(/"/g, '""')}"`;
-      const dt = `"${(p.date && p.date !== 'Latest 2026' ? p.date : '').replace(/"/g, '""')}"`;
+      const dt = `"${(p.date && !/^latest\s+\d{4}$/i.test(p.date) ? p.date : '').replace(/"/g, '""')}"`;
       const u = `"${(p.project_url || '').replace(/"/g, '""')}"`;
       const cat = `"${(p.category || '').replace(/"/g, '""')}"`;
       const st = `"${(p.status || '').replace(/"/g, '""')}"`;
@@ -322,7 +322,7 @@ export const SearchProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.setAttribute('href', url);
-    link.setAttribute('download', `discovered_projects_2026_${Date.now()}.csv`);
+    link.setAttribute('download', `discovered_projects_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

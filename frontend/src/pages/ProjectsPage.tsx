@@ -34,7 +34,7 @@ const ALL_SECTORS = primarySectorsData as PrimarySector[];
 export function formatProjectDate(d?: string): string {
   if (!d) return '';
   const trimmed = d.trim();
-  if (/^(?:latest 2026|not specified|unknown|tbd|none|n\/a)$/i.test(trimmed)) return '';
+  if (/^(?:latest\s+\d{4}|not specified|unknown|tbd|none|n\/a)$/i.test(trimmed)) return '';
   const isoMatch = trimmed.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
   if (isoMatch) {
     const year = isoMatch[1];

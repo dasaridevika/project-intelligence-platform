@@ -37,8 +37,8 @@ apiClient.interceptors.response.use(
 // DURABLE PERSISTENCE LAYER (Saves data across code updates & redeploys)
 // ==============================================================================
 
-const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v6';
-const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v6';
+const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v7';
+const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v7';
 
 export function hasNonLatin(str?: string): boolean {
   if (!str) return false;
@@ -135,11 +135,14 @@ export function validateAndSanitizeProject(p: any): Project | null {
     return null;
   }
 
-  // 3. Reject already operating facilities
+  // 3. Reject already operating facilities or software cloud region launches
   if (
     /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|reducing\s+co2\s+emissions\s+by|reduces\s+co2\s+emissions\s+by|cuts\s+\d+[\d,.]*\s+tonnes\s+of\s+co|turned\s+a\s+.*into\s+a\s+solar|signs?\s+25-year\s+floating\s+solar\s+supply\s+agreement)\b/i.test(summary) ||
     /\b(?:already\s+operating|is\s+already\s+operating|has\s+commenced\s+operations?|commenced\s+operations?|powers\s+up)\b/i.test(summary) ||
-    /\b(?:already\s+operating|has\s+commenced\s+operations?|commenced\s+operations?|powers\s+up)\b/i.test(rawName)
+    /\b(?:already\s+operating|has\s+commenced\s+operations?|commenced\s+operations?|powers\s+up)\b/i.test(rawName) ||
+    /\b(?:has\s+launched|launches|launched)\s+(?:a\s+new\s+)?(?:cloud\s+region|data\s*cent(?:er|re))\b/i.test(summary) ||
+    /\b(?:launches|launched)\s+(?:.*?\s+)?cloud\s+region\b/i.test(rawName) ||
+    /(?:-|_|\/)(?:launches|launched)-(?:[a-z0-9-]+-)?cloud-region/i.test(rawUrl)
   ) {
     return null;
   }
@@ -251,8 +254,10 @@ export function cleanSummaryText(raw?: string): string {
 function getStoredProjects(): Project[] {
   try {
     // Purge legacy contaminated storage keys so old bad data cannot resurface
+    localStorage.removeItem('pi_persisted_projects_v6');
     localStorage.removeItem('pi_persisted_projects_v5');
     localStorage.removeItem('pi_persisted_projects');
+    localStorage.removeItem('pi_persisted_searches_v6');
     localStorage.removeItem('pi_persisted_searches_v5');
 
     const raw = localStorage.getItem(STORAGE_PROJECTS_KEY);
