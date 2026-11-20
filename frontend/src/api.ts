@@ -100,11 +100,14 @@ export function validateAndSanitizeProject(p: any): Project | null {
   const summary = p.summary || p.text || '';
   const rawDate = p.date || '';
 
-  // 1. Company entity validation: reject if website domain / TLD or generic
+  // 1. Company entity validation: reject if website domain / TLD or generic or sovereign government
   if (/\.(?:online|com|org|net|io|co|info|gov|edu|ai|app|tech|dev|biz|tv|me|us|uk|de|in|cn|jp|fr|es|eu|nl)\b/i.test(rawCompany)) {
     return null;
   }
   if (/^(?:various|multiple|several|diverse|undisclosed|unspecified|anonymous|unknown|tbd|undefined|capital project)\b/i.test(rawCompany)) {
+    return null;
+  }
+  if (/\b(?:government|ministry|department|commission|bureau|agency)\b/i.test(rawCompany)) {
     return null;
   }
 
@@ -122,17 +125,21 @@ export function validateAndSanitizeProject(p: any): Project | null {
     }
   } catch (_) {}
 
-  // 2. Reject listicles, directories, rankings
+  // 2. Reject listicles, directories, macro overviews, hardware chip procurement
   if (
     /\b(?:directory|largest\s+solar|largest\s+wind|largest\s+projects\s+directory|top\s+\d+|largest\s+\d+|in\s+the\s+us)\b/i.test(rawName) ||
-    /\b(?:the\s+article\s+lists|the\s+article\s+provides\s+a\s+directory|provides\s+a\s+directory|lists\s+the\s+largest)\b/i.test(summary)
+    /\b(?:prepares\s+for\s+.*expansion|\d+[\d,]*\s+(?:more\s+)?gpus?|secure\s+\d+[\d,]*\s+gpus?|gpu\s+procurement)\b/i.test(rawName) ||
+    /\b(?:the\s+article\s+lists|the\s+article\s+provides\s+a\s+directory|provides\s+a\s+directory|lists\s+the\s+largest)\b/i.test(summary) ||
+    /\b(?:has\s+\d+\s+.*in\s+operation\s+with\s+(?:an\s+estimated\s+)?\d+.*under\s+construction|plans?\s+to\s+secure\s+(?:an\s+additional\s+)?\d+[\d,]*\s+gpus?)\b/i.test(summary)
   ) {
     return null;
   }
 
   // 3. Reject already operating facilities
   if (
-    /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|reducing\s+co2\s+emissions\s+by|reduces\s+co2\s+emissions\s+by|cuts\s+\d+[\d,.]*\s+tonnes\s+of\s+co|turned\s+a\s+.*into\s+a\s+solar|signs?\s+25-year\s+floating\s+solar\s+supply\s+agreement)\b/i.test(summary)
+    /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|reducing\s+co2\s+emissions\s+by|reduces\s+co2\s+emissions\s+by|cuts\s+\d+[\d,.]*\s+tonnes\s+of\s+co|turned\s+a\s+.*into\s+a\s+solar|signs?\s+25-year\s+floating\s+solar\s+supply\s+agreement)\b/i.test(summary) ||
+    /\b(?:already\s+operating|is\s+already\s+operating|has\s+commenced\s+operations?|commenced\s+operations?|powers\s+up)\b/i.test(summary) ||
+    /\b(?:already\s+operating|has\s+commenced\s+operations?|commenced\s+operations?|powers\s+up)\b/i.test(rawName)
   ) {
     return null;
   }

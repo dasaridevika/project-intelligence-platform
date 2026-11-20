@@ -171,7 +171,11 @@ function testCompany(name) {
   if (/^(?:nigeria|india|usa|united states|korea|south korea|japan|china|germany|spain|brazil|france|canada|australia|mexico|singapore|ohi)$/i.test(lower)) {
     return false;
   }
-  if (/^(?:government|ministry|department)\s+of\b/i.test(lower) || lower === "government") {
+  if (
+    /\b(?:government|ministry|department|commission|bureau|agency)\b/i.test(lower) ||
+    /\b(?:government|ministry|department)\s+of\b/i.test(lower) ||
+    /^(?:public service commission|state government|federal government|energy information administration)$/i.test(lower)
+  ) {
     return false;
   }
   if (/\b(?:campus by \d+-\d+ years|chips need the|residents vote|approved a|court approves)\b/i.test(lower)) {
@@ -650,11 +654,18 @@ function testIsGenericReportOrDirectory(url, name, company, summary) {
     /\b(?:largest|biggest)\s+.*(?:farms?|plants?|facilities|projects?)\s+in\s+(?:the\s+)?[a-z]+\b/i.test(n) ||
     /\b(?:solar|wind|power|data\s+center)\s+farms?\s+in\s+(?:the\s+)?[a-z]+\b/i.test(n) ||
     /\b(?:directory\b|roundup\b|inventory\b|catalog\b|rankings?\b|listicle\b|tracker\b)/i.test(n) ||
+    /\b(?:prepares\s+for\s+.*expansion|market\s+landscape|industry\s+survey|overall\s+market|country\s+profile)\b/i.test(n) ||
+    /\b(?:\d+[\d,]*\s+(?:more\s+)?gpus?|secure\s+\d+[\d,]*\s+(?:more\s+)?gpus?|procure\s+\d+[\d,]*\s+gpus?|buy\s+\d+[\d,]*\s+gpus?|gpu\s+procurement)\b/i.test(n) ||
     /\b(?:in\s+the\s+us|in\s+the\s+usa|in\s+the\s+u\.s\.|in\s+the\s+united\s+states)\s*$/i.test(n) ||
+    /\b(?:top\s+\d+|\d+\s+top|largest\s+\d+|\d+\s+largest|biggest\s+\d+|\d+\s+biggest|projects?-roundup|roundup-of|top-\d+|\d+-top)\b/i.test(u) ||
     /(?:-|_|\/)(?:largest|biggest|top|major)-(?:[a-z]+-)?(?:solar|wind|power|farms|plants|facilities|projects)/i.test(u) ||
     /(?:-|_|\/)(?:solar|wind|data-center|projects?)-farms?-in-(?:the-)?[a-z]+/i.test(u) ||
     /(?:-|_|\/)(?:directory|directories|database|trackers?|roundups?|listings?)(?:-|_|\/|\.|$)/i.test(u) ||
+    /(?:-|_|\/)(?:prepares-for-data-center-expansion|secure-\d+-more-gpus|secure-\d+-gpus)/i.test(u) ||
+    /\b(?:top\s+\d+|\d+\s+top|projects?\s+roundup|roundup\s+of|list\s+of\s+.*projects?)\b/i.test(s) ||
     /\b(?:the\s+article|the\s+page|the\s+report|this\s+article|this\s+page|this\s+report)\s+(?:lists|provides\s+a\s+directory|provides\s+a\s+list|ranks|compiles|outlines|examines|summarizes|surveys|features|details\s+the\s+largest|details\s+the\s+top)\b/i.test(s) ||
+    /\b(?:has\s+\d+\s+.*in\s+operation\s+with\s+(?:an\s+estimated\s+)?\d+.*under\s+construction|commercial\s+and\s+enterprise\s+data\s+centers\s+in\s+operation)\b/i.test(s) ||
+    /\b(?:plans?\s+to\s+secure\s+(?:an\s+additional\s+)?\d+[\d,]*\s+gpus?|securing\s+\d+[\d,]*\s+gpus?|procuring\s+\d+[\d,]*\s+gpus?)\b/i.test(s) ||
     /\b(?:provides\s+a\s+directory|largest\s+projects\s+directory|lists\s+the\s+largest|lists\s+the\s+top|directory\s+of\s+(?:the\s+)?largest|directory\s+of\s+solar|directory\s+of\s+wind|directory\s+of\s+data\s+centers?)\b/i.test(s)
   ) {
     return true;
@@ -695,6 +706,8 @@ function testIsCompletedOrOperationalFacility(url, title, summary, text) {
   }
 
   if (
+    /\b(?:is open|now open|has opened|opens data cent(?:er|re)|opened its|opens new|officially opened|opens megafab|opens plant|inaugurated|inaugurates|commenced\s+(?:commercial\s+)?operations|has\s+commenced\s+operations|now operational|commercial operation started|begins operations|went online|starts operations|has been commissioned|completes construction of)\b/i.test(t) ||
+    /\b(?:came online|just came online|comes online|go fully operational|goes fully operational|went fully operational|go operational|goes operational|went operational|fully operational|now fully operational|is fully operational|already\s+operating|is\s+already\s+operating|powers\s+up)\b/i.test(t) ||
     /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|turned\s+(?:a|an|[a-z0-9\s-]+)\s+into\s+a\s+(?:solar|wind|power|data\s+center)|covered\s+(?:a|an|[a-z0-9\s-]+)\s+with\s+(?:floating\s+)?solar)\b/i.test(t) ||
     /\b(?:signs?\s+(?:\d+[- ]year\s+)?(?:solar|wind|clean\s+energy|floating\s+solar|power)?\s*(?:supply|ppa|power\s+purchase)\s+agreement\s+with)\b/i.test(t) ||
     /\b(?:inauguré|inaugurée|mis\s+en\s+service|in\s+Betrieb|nimmt\s+Betrieb\s+auf)\b/i.test(t)
@@ -703,6 +716,8 @@ function testIsCompletedOrOperationalFacility(url, title, summary, text) {
   }
 
   if (
+    /\b(?:came online|just came online|comes online|go fully operational|goes fully operational|went fully operational|go operational|goes operational|went operational|fully operational|now fully operational|is fully operational|already\s+operating|is\s+already\s+operating)\b/i.test(s) ||
+    /\b(?:commenced\s+(?:commercial\s+)?operations|has\s+commenced\s+operations|commences\s+operations)\b/i.test(s) ||
     /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|reducing\s+co2\s+emissions\s+by|reduces\s+co2\s+emissions\s+by|cuts\s+\d+[\d,.]*\s+tonnes\s+of\s+co|turned\s+(?:a|an|[a-z0-9\s-]+)\s+into\s+a\s+(?:solar|wind|power|data\s+center)|covered\s+(?:a|an|[a-z0-9\s-]+)\s+with\s+(?:floating\s+)?solar)\b/i.test(s) ||
     /\b(?:signs?\s+(?:\d+[- ]year\s+)?(?:solar|wind|clean\s+energy|floating\s+solar|power)?\s*(?:supply|ppa|power\s+purchase)\s+agreement\s+with)\b/i.test(s) ||
     /\b(?:inauguré|inaugurée|mis\s+en\s+service|in\s+Betrieb|nimmt\s+Betrieb\s+auf)\b/i.test(s)
@@ -755,6 +770,84 @@ test("Article 'the country that turned a 111-acre reservoir into a solar farm' i
 test("German plant 'nimmt Betrieb auf' is identified as already operational in non-English", () => {
   assert.strictEqual(testIsCompletedOrOperationalFacility("", "Solarpark nimmt Betrieb auf", "Die Anlage nimmt Betrieb auf", ""), true);
   assert.strictEqual(testIsCompletedOrOperationalFacility("", "Solarpark in Betrieb", "Die Anlage ist in Betrieb", ""), true);
+});
+
+// ==============================================================================
+// 12. SOVEREIGN GOVERNMENTS, HARDWARE/GPU PROCUREMENT & OPERATIONAL DATA CENTERS
+// ==============================================================================
+console.log("\n[Group 12: Sovereign Governments, GPU Procurement & Operational Data Centers]");
+
+test("Sovereign government, ministry, department, or agency is rejected as developer", () => {
+  assert.strictEqual(testCompany("Taiwan Government"), false);
+  assert.strictEqual(testCompany("Ministry of Economic Affairs"), false);
+  assert.strictEqual(testCompany("Department of Energy"), false);
+  assert.strictEqual(testCompany("Federal Communications Commission"), false);
+  assert.strictEqual(testCompany("Bureau of Energy"), false);
+  assert.strictEqual(testCompany("National Development Agency"), false);
+  assert.strictEqual(testCompany("Microsoft"), true);
+  assert.strictEqual(testCompany("Amazon Web Services"), true);
+  assert.strictEqual(testCompany("Chunghwa Telecom"), true);
+});
+
+test("Territorial macro survey 'Taiwan Prepares for Data Center Expansion' is rejected", () => {
+  const isRejected = testIsGenericReportOrDirectory(
+    "https://topics.amcham.com.tw/2026/10/taiwan-prepares-for-data-center-expansion",
+    "Taiwan Prepares for Data Center Expansion",
+    "Amazon Web Services (AWS)",
+    "Taiwan has 22 commercial and enterprise data centers in operation, with an estimated five to eight major facilities under construction or active planning."
+  );
+  assert.strictEqual(isRejected, true);
+});
+
+test("GPU chip procurement 'Taiwan to secure 10,000 more GPUs' is rejected as hardware procurement", () => {
+  const isRejected = testIsGenericReportOrDirectory(
+    "https://www.digitaltoday.co.kr/en/view/126632/taiwan-to-secure-10000-more-gpus-to-scale-up-ai-computing-infrastructure",
+    "Taiwan to secure 10,000 more GPUs to scale up AI computing infrastructure",
+    "Taiwan Government",
+    "Taiwan's government plans to secure an additional 10,000 GPUs in 2027 to strengthen competitiveness in the AI industry."
+  );
+  assert.strictEqual(isRejected, true);
+});
+
+test("Already operational data center 'Chunghwa Telecom Powers Up... has commenced operations' is rejected", () => {
+  const isRejected = testIsCompletedOrOperationalFacility(
+    "https://telecomgrid.com/news/chunghwa-telecom-powers-up-ai-future-36mw-data-center-taoyuan",
+    "Chunghwa Telecom Powers Up AI Future with 36MW Data Center in Taoyuan, Taiwan",
+    "Chunghwa Telecom has commenced operations at its newly constructed AI data center in Taoyuan, Taiwan.",
+    ""
+  );
+  assert.strictEqual(isRejected, true);
+});
+
+test("Cloud region GA 'Azure cloud region in Taiwan is already operating' is rejected as operational", () => {
+  const isRejected = testIsCompletedOrOperationalFacility(
+    "https://focustaiwan.tw/business/202609010030",
+    "Microsoft working on making Taiwan Azure region widely available",
+    "Microsoft's Azure cloud region in Taiwan is already operating and serving selected customers, and the company is working toward making it generally available as its local infrastructure continues to expand.",
+    ""
+  );
+  assert.strictEqual(isRejected, true);
+});
+
+test("Genuine planned data center expansion 'Microsoft to double data centers in Taiwan' is accepted", () => {
+  const isGeneric = testIsGenericReportOrDirectory(
+    "https://www.taipeitimes.com/News/biz/archives/2026/09/22/2003864650",
+    "Microsoft to double data centers in Taiwan",
+    "Microsoft",
+    "Microsoft plans to double its data centers in Taiwan from two facilities to four, mainly in northern Taiwan to meet customer demand and reduce the risk of operational disruptions."
+  );
+  assert.strictEqual(isGeneric, false);
+
+  const isOperational = testIsCompletedOrOperationalFacility(
+    "https://www.taipeitimes.com/News/biz/archives/2026/09/22/2003864650",
+    "Microsoft to double data centers in Taiwan",
+    "Microsoft plans to double its data centers in Taiwan from two facilities to four, mainly in northern Taiwan to meet customer demand and reduce the risk of operational disruptions.",
+    ""
+  );
+  assert.strictEqual(isOperational, false);
+
+  const isValidCompany = testCompany("Microsoft");
+  assert.strictEqual(isValidCompany, true);
 });
 
 console.log("\n=================================================");
