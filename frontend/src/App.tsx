@@ -9,8 +9,10 @@ import {
   History,
   LayoutDashboard,
   Search,
-  Settings
+  Settings,
+  Loader2
 } from 'lucide-react';
+import { SearchProvider, useSearch } from './context/SearchContext';
 import { SearchPage } from './pages/SearchPage';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { SystemPage } from './pages/SystemPage';
@@ -22,6 +24,9 @@ const NAV_ITEMS = [
 ];
 
 const Layout: React.FC = () => {
+  const { searchProgress, searchStage, searchCompleted } = useSearch();
+  const isSearching = searchProgress > 0 && !searchCompleted;
+
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
       {/* Sidebar */}
@@ -69,7 +74,7 @@ const Layout: React.FC = () => {
             </div>
             <div className="text-xs">
               <p className="font-medium text-slate-200">Edge AI Worker</p>
-              <p className="text-[11px] text-slate-400">Llama 3.1 8B Active</p>
+              <p className="text-[11px] text-slate-400">Llama 3.2 3B Active</p>
             </div>
           </div>
         </div>
@@ -83,9 +88,22 @@ const Layout: React.FC = () => {
             <span className="font-medium text-slate-200">Global Capital Project Intelligence</span>
           </div>
 
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800/80 border border-slate-700/60 text-xs text-slate-300">
-            <Activity className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Edge Gateway Online</span>
+          <div className="flex items-center gap-3">
+            {isSearching && (
+              <NavLink
+                to="/search"
+                className="flex items-center gap-2 px-3 py-1 rounded-full bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs hover:bg-sky-500/20 transition-all animate-pulse"
+                title="Search actively running in background - click to view"
+              >
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-400" />
+                <span className="font-medium truncate max-w-xs">{searchStage || `Searching (${searchProgress}%)`}</span>
+              </NavLink>
+            )}
+
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800/80 border border-slate-700/60 text-xs text-slate-300">
+              <Activity className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Edge Gateway Online</span>
+            </div>
           </div>
         </header>
 
@@ -100,21 +118,23 @@ const Layout: React.FC = () => {
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route element={<Layout />}>
-          <Route path="/" element={<Navigate to="/search" replace />} />
-          <Route path="/search" element={<SearchPage />} />
-          <Route path="/projects" element={<ProjectsPage />} />
-          <Route path="/projects/:id" element={<ProjectsPage />} />
-          <Route path="/results" element={<ProjectsPage />} />
-          <Route path="/history" element={<SearchPage />} />
-          <Route path="/system" element={<SystemPage />} />
-          <Route path="/analytics" element={<SystemPage />} />
-          <Route path="/monitoring" element={<SystemPage />} />
-          <Route path="/settings" element={<SystemPage />} />
-          <Route path="*" element={<Navigate to="/search" replace />} />
-        </Route>
-      </Routes>
+      <SearchProvider>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<Navigate to="/search" replace />} />
+            <Route path="/search" element={<SearchPage />} />
+            <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/projects/:id" element={<ProjectsPage />} />
+            <Route path="/results" element={<ProjectsPage />} />
+            <Route path="/history" element={<SearchPage />} />
+            <Route path="/system" element={<SystemPage />} />
+            <Route path="/analytics" element={<SystemPage />} />
+            <Route path="/monitoring" element={<SystemPage />} />
+            <Route path="/settings" element={<SystemPage />} />
+            <Route path="*" element={<Navigate to="/search" replace />} />
+          </Route>
+        </Routes>
+      </SearchProvider>
     </BrowserRouter>
   );
 }

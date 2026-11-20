@@ -155,9 +155,9 @@ export const SystemPage: React.FC = () => {
               </div>
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                <span className="text-lg font-bold text-white">Llama 3.1 8B</span>
+                <span className="text-lg font-bold text-white">Llama 3.2 3B</span>
               </div>
-              <p className="text-[11px] text-slate-400">Meta Llama 3.1 8B Instruct Edge Node</p>
+              <p className="text-[11px] text-slate-400">Meta Llama 3.2 3B Instruct Edge Node</p>
             </div>
 
             <div className="rounded-xl bg-slate-900 border border-slate-800 p-5 space-y-2">

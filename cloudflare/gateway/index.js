@@ -5,7 +5,7 @@
  * - Edge Discovery Engine: Natural language query parsing across 462 primary industrial sectors
  * - Pre-LLM Validation & Deduplication: Zero duplicate queries, zero duplicate URLs, strict domain filter
  * - High-Efficiency Parallel Fetcher: Concurrent HTML fetching with timeout guards & noise stripping
- * - Cloudflare Workers AI: Powered by Meta Llama 3.1 8B Instruct (@cf/meta/llama-3.1-8b-instruct)
+ * - Cloudflare Workers AI: Powered by Meta Llama 3.2 3B Instruct (@cf/meta/llama-3.2-3b-instruct)
  * - Complete In-Worker REST & SSE API: All search, project, sector, analytics, and monitoring endpoints
  * - Static React SPA Hosting: Serves production frontend assets with single-page routing
  */
@@ -3001,7 +3001,7 @@ export default {
           return jsonRes({
             success: true,
             count: results.length,
-            engine: env.AI ? "Cloudflare Workers AI (@cf/meta/llama-3.1-8b-instruct)" : "Edge Heuristic Parser",
+            engine: env.AI ? "Cloudflare Workers AI (@cf/meta/llama-3.2-3b-instruct)" : "Edge Heuristic Parser",
             items: results.map((r, i) => r.status === "fulfilled" ? r.value : { url: validUrls[i], success: false })
           });
         } catch (err) {

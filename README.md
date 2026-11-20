@@ -1,7 +1,7 @@
 # Project Intelligence Platform
 
 > **100% Serverless Edge AI-Powered Global Capital Project Intelligence Platform**
-> Built with **React 18 + TypeScript + Cloudflare Workers AI (Meta Llama 3.1 8B Instruct) + Edge Web Fetcher + 462 Primary Sector Taxonomy**
+> Built with **React 18 + TypeScript + Cloudflare Workers AI (Meta Llama 3.2 3B Instruct) + Edge Web Fetcher + 462 Primary Sector Taxonomy**
 
 ---
 
@@ -11,7 +11,7 @@ The **Project Intelligence Platform** is a serverless, edge-native discovery eng
 
 ### Core Capabilities
 
-1. **Cloudflare Workers AI (`@cf/meta/llama-3.1-8b-instruct`)**:
+1. **Cloudflare Workers AI (`@cf/meta/llama-3.2-3b-instruct`)**:
    - Executes structured entity extraction directly on Cloudflare edge GPUs.
    - Extracts canonical project name, developer, sector, investment valuation, capacity, location, status, and evidentiary quote from raw webpage HTML.
 
@@ -45,7 +45,7 @@ flowchart TD
         Worker -->|"Serve React SPA"| Assets["Static Assets Binding (env.ASSETS)"]
         Worker -->|"Pre-LLM Cache & Dedup"| Cache[("Edge Memory & Query Cache")]
         Worker -->|"Fetch Live Content"| WebFetcher["Edge Web Fetcher (fetch)"]
-        Worker -->|"Structured Extraction"| WorkersAI["Cloudflare Workers AI (@cf/meta/llama-3.1-8b-instruct)"]
+        Worker -->|"Structured Extraction"| WorkersAI["Cloudflare Workers AI (@cf/meta/llama-3.2-3b-instruct)"]
         Worker -->|"Taxonomy Matching"| Taxonomy["462 Primary Sectors Index"]
         Worker -->|"Real-Time Events"| SSE["Server-Sent Events Stream"]
     end
@@ -104,4 +104,4 @@ The unified worker will automatically bundle the React SPA from `frontend/dist` 
 
 - **Zero Client-Side Secrets**: All API requests and Workers AI calls execute server-side in the Worker.
 - **Strict URL Sanitation**: Blocks private IP addresses, localhost, RFC 1918 ranges, and malformed URLs.
-- **No Hallucination Mandate**: The LLM extraction prompt strictly instructs Llama 3.1 to only extract explicitly stated metrics and leave unconfirmed values null.
+- **No Hallucination Mandate**: The LLM extraction prompt strictly instructs Llama 3.2 to only extract explicitly stated metrics and leave unconfirmed values null.
