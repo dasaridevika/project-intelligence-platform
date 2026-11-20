@@ -249,7 +249,7 @@ export const SectorSelector: React.FC<SectorSelectorProps> = ({
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search 462 primary sectors or definitions..."
+                placeholder="Search primary sectors or definitions..."
                 className="w-full pl-8 pr-8 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-sky-500"
                 autoFocus
               />

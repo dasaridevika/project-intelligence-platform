@@ -95,7 +95,7 @@ export function validateAndSanitizeProject(p: any): Project | null {
 
   const rawName = p.canonical_name || p.name || p.title || '';
   if (!rawName || rawName.length < 2) return null;
-  const rawCompany = p.company || p.developer || 'Leading Developer';
+  const rawCompany = (p.company || p.developer || '').trim();
   const rawUrl = p.project_url || p.url || '';
   const summary = p.summary || p.text || '';
   const rawDate = p.date || '';

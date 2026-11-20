@@ -463,7 +463,7 @@ export const ProjectsPage: React.FC = () => {
                         type="text"
                         value={sectorSearchTerm}
                         onChange={(e) => setSectorSearchTerm(e.target.value)}
-                        placeholder="Type to search 462 sectors (e.g. semiconductor, data center, battery, solar, hydrogen)..."
+                        placeholder="Type to search primary sectors or keywords..."
                         className="w-full pl-8 pr-7 py-2 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-sky-500"
                         autoFocus
                       />

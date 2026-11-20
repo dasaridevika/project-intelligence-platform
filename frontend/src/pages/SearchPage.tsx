@@ -216,7 +216,7 @@ export const SearchPage: React.FC = () => {
               setSearchStage(`Fetching & Sanitizing: ${msg.data.url?.slice(0, 45) || 'webpage'}...`);
             } else if (msg.event === 'candidate_accepted' || ev.event_type === 'candidate_accepted') {
               setSearchProgress((p) => Math.min(p + 5, 85));
-              setSearchStage(`Candidate Identified: ${ev.metadata?.canonical_name || (ev.metadata?.project as any)?.canonical_name || 'Capital Project'}`);
+              setSearchStage(`Candidate Identified: ${ev.metadata?.canonical_name || (ev.metadata?.project as any)?.canonical_name || 'Project'}`);
               const proj = ev.metadata?.project || (ev as any).project;
               const pStatus = (proj?.status || '').toLowerCase().trim();
               const isUpcoming = pStatus === 'announced' || pStatus === 'planning' || pStatus === 'under construction';
@@ -224,8 +224,9 @@ export const SearchPage: React.FC = () => {
               if (proj && isUpcoming && !isProduct && !/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(proj.canonical_name || proj.title || '')) {
                 const st = pStatus === 'under construction' ? 'Under Construction' : pStatus === 'announced' ? 'Announced' : 'Planning';
                 setDiscoveredResults((prev) => {
-                  const pName = proj.canonical_name || proj.name || proj.title || 'Capital Project';
-                  const pDev = proj.company || proj.developer || 'Leading Developer';
+                  const pName = proj.canonical_name || proj.name || proj.title || '';
+                  const pDev = proj.company || proj.developer || '';
+                  if (!pName) return prev;
                   const dedupKey = getProjectDedupKey(pName, pDev);
                   const exists = prev.some(item => getProjectDedupKey(item.canonical_name, item.company || item.developer) === dedupKey || item.project_url === proj.project_url);
                   return exists ? prev : [...prev, {
@@ -346,7 +347,7 @@ export const SearchPage: React.FC = () => {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Enter any project search query (e.g. data center projects, solar farms, semiconductor fabs, gigafactories)..."
+                placeholder="Search capital projects by facility, developer, sector, or region..."
                 className="w-full pl-11 pr-4 py-3.5 rounded-xl bg-slate-950 border border-slate-700/80 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500 text-sm sm:text-base shadow-inner"
               />
               <Search className="w-5 h-5 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
@@ -674,15 +675,17 @@ export const SearchPage: React.FC = () => {
                     </div>
 
                     <h3 className="text-base font-bold text-white line-clamp-1">
-                      {p.canonical_name || (p as any).name || (p as any).title || (p as any).project?.canonical_name || 'Capital Project'}
+                      {p.canonical_name || (p as any).name || (p as any).title || (p as any).project?.canonical_name}
                     </h3>
                     
-                    <div className="flex items-center gap-1.5 text-xs text-sky-200/90 font-medium">
-                      <Building2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                      <span className="truncate">
-                        {p.company || p.developer || (p as any).project?.company || (p as any).project?.developer || 'Leading Developer'}
-                      </span>
-                    </div>
+                    {(p.company || p.developer || (p as any).project?.company || (p as any).project?.developer) && (
+                      <div className="flex items-center gap-1.5 text-xs text-sky-200/90 font-medium">
+                        <Building2 className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                        <span className="truncate">
+                          {p.company || p.developer || (p as any).project?.company || (p as any).project?.developer}
+                        </span>
+                      </div>
+                    )}
                     
                     {p.project_url && (
                       <a

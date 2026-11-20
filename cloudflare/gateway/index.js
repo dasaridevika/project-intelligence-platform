@@ -678,22 +678,22 @@ function extractCompanyDynamically(text, title, url) {
     }
   }
 
-  return "Project Developer";
+  return "";
 }
 
 function normalizeDeveloperName(name, url) {
-  if (!name) return "Leading Developer";
+  if (!name) return "";
   let clean = name.trim();
   const lower = clean.toLowerCase();
   if (lower === "project developer" || lower === "leading developer" || lower === "unknown") {
-    return "Leading Developer";
+    return "";
   }
   // Standard corporate acronyms (2-4 uppercase characters without spaces, e.g. TSMC, AMD, BESS, AWS)
   if (clean.length <= 4 && !clean.includes(" ") && !["the", "and", "for"].includes(lower)) {
     return clean.toUpperCase();
   }
   if (clean.length < 2) {
-    return "Leading Developer";
+    return "";
   }
   return clean;
 }
@@ -1697,7 +1697,7 @@ function extractProjectNameFromUrl(url) {
       return clean.replace(/\b[a-z]/g, c => c.toUpperCase());
     }
   } catch (_) {}
-  return "Capital Project";
+  return "";
 }
 
 // Fallback extractor: structural fallback if AI model is unreachable
@@ -1796,7 +1796,7 @@ ONLY REJECT (set "is_project": false) IF:
 1. The candidate is a multi-project list, roundup, compilation, or ranking. NEVER extract a multi-project listicle or ranking as a single project!
 2. The candidate is an aggregate industry pipeline report, generator inventory, or statistical dataset.
 3. The developer/company is a media outlet, data/statistics publisher, research agency, or government department rather than a commercial project developer.
-4. The facility is already completed, commissioned in past years, or existing operational facilities (in any language: e.g. English 'came online', 'operational', 'opened', 'commissioned', 'went live'; German 'nimmt Betrieb auf', 'in Betrieb', 'ans Netz gegangen', 'Inbetriebnahme'; French 'inauguré', 'mis en service'; Spanish 'en operación', 'puesta en marcha'). For any operational project, set "is_already_operating": true or set "is_project": false.
+4. The facility is already completed, commissioned in past years, or currently operational in any language. For any operating or completed facility, set "is_already_operating": true or set "is_project": false.
 5. The page is an educational article, academic study, technology explainer, or how-to guide.
 6. The page is a colocation directory, search engine for capacity, or vendor marketplace.
 7. The page discusses a political protest, zoning dispute, or lawsuit without an actively funded physical development project.
@@ -1807,11 +1807,7 @@ CRITICAL REQUIREMENT - COMPANY ENTITY:
 - NEVER use media publishers, statistical agencies, regulatory commissions, author bylines, or generic placeholder terms.
 
 CRITICAL REQUIREMENT - ACCURATE CATEGORY:
-- The "category" field MUST match the project's actual industrial type:
-  - If it is microchip, wafer, or DRAM manufacturing: "Semiconductor Manufacturing"
-  - If it is computing/cloud infrastructure: "Hyperscale Data Center"
-  - If it is battery/cell production: "Battery Gigafactory"
-  - If it is solar power generation: "Utility Solar"
+- The "category" field MUST reflect the specific primary industrial sector of the facility, honoring the Category Hint provided in the prompt when applicable.
 
 CRITICAL REQUIREMENT - STRICT ENGLISH ONLY:
 - Every single field in your JSON output (canonical_name, company, location, category, date, summary, reason) MUST be written in fluent, standard English.
@@ -1825,14 +1821,14 @@ If ONE OR MORE VALID PROJECTS:
   "is_project": true,
   "projects": [
     {
-      "canonical_name": "Official canonical name of the individual capital facility or project in English. Extract ONLY the real project name directly stated in the webpage; NEVER output placeholder names or journalistic headlines.",
-      "company": "Specific commercial enterprise, developer, or owner entity constructing or operating the facility. Extract ONLY the real corporate entity from the webpage.",
-      "country": "Sovereign country in English (e.g. 'United States', 'India', 'Germany', 'Spain', 'Japan', 'South Korea', 'United Kingdom')",
-      "location": "City, State/Province, or Region in English",
+      "canonical_name": "Official canonical name of the individual capital facility or project in English. Extract ONLY the real project name directly stated in the webpage; NEVER invent placeholder names or output article headlines.",
+      "company": "Specific commercial enterprise, developer, or owner entity constructing or operating the facility. Extract ONLY the real corporate entity directly stated in the webpage.",
+      "country": "Sovereign nation in English where the facility is physically located.",
+      "location": "Specific city, state, province, or local administrative region in English.",
       "status": "Announced | Planning | Under Construction",
       "is_already_operating": false,
-      "category": "Industrial category in English (e.g. Hyperscale Data Center, Semiconductor Megafab, Battery Gigafactory, Solar Farm)",
-      "date": "Announcement, start, or completion target date (e.g. 2026, 2027)",
+      "category": "Primary industrial sector of the facility in English.",
+      "date": "Target start, completion, or announcement year or date if explicitly stated in the text, or empty string if not mentioned.",
       "summary": "1-2 complete factual sentences in fluent English describing the project, developer, and its development scope."
     }
   ]
@@ -2030,7 +2026,7 @@ REJECT (MUST NOT EXTRACT):
 - DATA/STATISTICS PUBLISHERS AS DEVELOPER: Candidates where the company is a government statistical agency, market research platform, energy data tracker, or publisher rather than a commercial project owner/developer erecting the facility.
 - NATIONAL MACRO POLICY TARGETS & ROADMAPS: Broad macroeconomic government announcements, national policy initiatives, or multi-year capacity targets without an individual physical development project.
 - REGULATORY & GRID REVIEW ARTICLES: Articles primarily discussing power supply rules, grid reviews, zoning regulations, or regulatory hurdles without a specific development project.
-- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING in ANY language (e.g. English 'came online', 'operational', 'opened', 'commissioned', 'went live'; German 'nimmt Betrieb auf', 'in Betrieb', 'in Betrieb genommen', 'Inbetriebnahme', 'ans Netz gegangen'; French 'inauguré', 'mis en service'; Spanish 'en operación', 'puesta en marcha'). You MUST set "is_already_operating": true if the facility is already operating, active, or completed. NEVER label an operating plant as 'Under Construction'!
+- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING in ANY language. You MUST set "is_already_operating": true if the facility is already operating, active, or completed. NEVER label an operating plant as 'Under Construction'!
 - Tool, equipment, or machinery product launches. Equipment shipped to customers is NOT a capital project!
 - Material, wafer, or substrate product announcements.
 - R&D partnerships, industry collaboration initiatives, or technology roadmaps without a physical facility buildout.
@@ -2049,12 +2045,12 @@ Return ONLY a valid JSON object in this exact schema:
       "source_url": "The exact URL copied verbatim from the [Candidate #ID] block above where this project is described",
       "canonical_name": "Official canonical name of the individual capital facility or project in English. MUST NOT be a journalistic news headline or sentence, and MUST NOT include action verbs like 'Secures Loans for', 'Wins Approval for', 'Breaks Ground on', or 'came online'. Extract ONLY the actual project name described in the candidate text.",
       "company": "Specific corporate developer or owner building the project in English. Extract ONLY the real company described in the candidate content.",
-      "country": "Sovereign country name in English (e.g. 'United States', 'India', 'Germany', 'Spain', 'Japan', 'South Korea', 'United Kingdom')",
-      "location": "Specific city, state/province, or region in English",
+      "country": "Sovereign nation name in English where the facility is located.",
+      "location": "Specific city, state, province, or region in English.",
       "status": "Announced | Planning | Under Construction",
       "is_already_operating": false,
-      "category": "Industrial category (e.g. Hyperscale Data Center, Semiconductor Manufacturing, Battery Gigafactory, Utility Solar)",
-      "date": "Target start, completion, or announcement date (e.g. 2026, 2027) if explicitly stated in candidate content, or empty string \"\" if not mentioned",
+      "category": "Primary industrial sector of the facility in English.",
+      "date": "Target start, completion, or announcement date if explicitly stated in candidate content, or empty string \"\" if not mentioned",
       "summary": "1-2 complete factual sentences in fluent English describing the project and buildout scope."
     }
   ]
@@ -2063,7 +2059,7 @@ Return ONLY a valid JSON object in this exact schema:
   let candidateBlocks = "";
   candidateItems.slice(0, 12).forEach((c, idx) => {
     const textSnippet = (c.text || c.snippet || c.title || "").slice(0, 1500);
-    candidateBlocks += `\n[Candidate #${idx + 1}]\nURL: ${c.cleanUrl}\nTitle: ${c.title || "Capital Project"}\nDate: ${c.published_date || ""}\nContent: """\n${textSnippet}\n"""\n`;
+    candidateBlocks += `\n[Candidate #${idx + 1}]\nURL: ${c.cleanUrl}\nTitle: ${c.title || ""}\nDate: ${c.published_date || ""}\nContent: """\n${textSnippet}\n"""\n`;
   });
 
   const userPrompt = `Evaluate the following ${Math.min(candidateItems.length, 12)} web discovery candidates for genuine upcoming capital projects (Category Hint: ${targetCategory || "All Categories"}):
@@ -2570,7 +2566,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         continue;
       }
 
-      const rawProjectName = aiP.canonical_name || matchedCandidate.title || "Capital Project";
+      const rawProjectName = aiP.canonical_name || matchedCandidate.title || "";
       let companyName = aiP.company;
       if (!companyName || companyName === "Project Developer" || companyName === "Leading Developer" || isNewsPublisher(companyName)) {
         companyName = extractCompanyDynamically(matchedCandidate.text || matchedCandidate.snippet, matchedCandidate.title, cleanUrl);
@@ -2672,7 +2668,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       const fb = fallbackRegexExtract(item.text || item.snippet, item.cleanUrl, item.title, targetCategory);
       if (fb && fb.is_project !== false && isValidCompanyEntity(fb.company)) {
         const normDev = normalizeDeveloperName(fb.company, item.cleanUrl);
-        const fbRawName = fb.canonical_name || item.title || "Capital Project";
+        const fbRawName = fb.canonical_name || item.title || "";
         const fbProjectName = cleanProjectName(fbRawName, normDev);
 
         if (isGenericReportOrDirectory(item.cleanUrl, fbProjectName, normDev, fb.summary) || isGenericReportOrDirectory(item.cleanUrl, fbRawName, normDev, fb.summary)) {
@@ -2762,8 +2758,8 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     project_id: p.id,
     project: p,
     canonical_name: p.canonical_name,
-    company: p.company || p.developer || "Leading Developer",
-    developer: p.developer || p.company || "Leading Developer",
+    company: p.company || p.developer || "",
+    developer: p.developer || p.company || "",
     project_url: p.project_url,
     category: p.category,
     status: p.status,
