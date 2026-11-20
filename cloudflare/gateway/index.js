@@ -267,6 +267,7 @@ async function hydrateStore(env) {
       }
     } else {
       // In-memory store already has projects - sanitize & purge invalid entries
+      let purgedFromMem = false;
       for (const [id, rawP] of Array.from(store.projects.entries())) {
         const validated = validateAndSanitizeProjectRecord(rawP);
         if (
@@ -276,9 +277,15 @@ async function hydrateStore(env) {
         ) {
           store.projects.delete(id);
           if (rawP.project_url) store.urlCache.delete(rawP.project_url);
+          purgedFromMem = true;
         } else {
           store.projects.set(id, validated);
         }
+      }
+      if (purgedFromMem && env.PROJECT_DATA) {
+        try {
+          await persistStore(env);
+        } catch (_) {}
       }
     }
     if (store.searches.size === 0) {
@@ -605,14 +612,19 @@ function isNewsPublisher(name) {
   const n = name.toLowerCase().trim();
 
   // Pattern for media outlets, news wires, publishers, research/statistics agencies, advisory brokerages, and think tanks
-  const publisherPattern = /\b(?:reuters|bloomberg|constructconnect|datacenterdynamics|dcn|associated press|prnewswire|businesswire|globenewswire|cnbc|forbes|financial times|marketwatch|canary media|pv magazine|solar power world|recharge news|mckinsey|gartner|idc|accenture|deloitte|kpmg|ey|pwc|bcg|bain|oxford economics|globaldata|statista|eia|wood mackenzie|rystad energy|s&p global|ferc|iea|electrek|industrial info|power systems|renewables now|energy storage news|techtimes|chosun|korea herald|asia business daily|semiwiki|cleantechnica|cushman\s*(?:&|and)\s*wakefield|cbre|jll|jones lang lasalle|colliers|knight frank|newmark|savills|marcus\s*(?:&|and)\s*millichap|niti aayog|brookings|rand corporation|chatham house|csis|heritage foundation|cato institute|wilson center|urban institute|aspen institute|pew research)\b/i;
+  const publisherPattern = /\b(?:reuters|bloomberg|constructconnect|datacenterdynamics|dcn|associated press|prnewswire|businesswire|globenewswire|cnbc|forbes|financial times|marketwatch|canary media|pv magazine|solar power world|recharge news|mercom|jmk research|bridge to india|crisil|care ratings|icra|mckinsey|gartner|idc|accenture|deloitte|kpmg|ey|pwc|bcg|bain|oxford economics|globaldata|statista|eia|wood mackenzie|rystad energy|s&p global|ferc|iea|electrek|industrial info|power systems|renewables now|energy storage news|techtimes|chosun|korea herald|asia business daily|semiwiki|cleantechnica|cushman\s*(?:&|and)\s*wakefield|cbre|jll|jones lang lasalle|colliers|knight frank|newmark|savills|marcus\s*(?:&|and)\s*millichap|niti aayog|brookings|rand corporation|chatham house|csis|heritage foundation|cato institute|wilson center|urban institute|aspen institute|pew research)\b/i;
 
   if (publisherPattern.test(n)) {
     return true;
   }
 
-  // Publisher and advisory keywords (matched as whole words/phrases, never partial substrings)
+  // Publisher, analytics, and advisory keywords (matched as whole words/phrases, never partial substrings)
   if (/\b(?:press release|staff writer|news agency|market research|data platform|data tracker|statistics agency|statistical agency|think\s*tank|policy\s+institute|policy\s+commission|policy\s+hub|frontier\s+tech\s+hub|real\s+estate\s+services?|commercial\s+real\s+estate)\b/i.test(n)) {
+    return true;
+  }
+
+  // Pure research or analytics firm (e.g. "JMK Research", "Mercom India Research")
+  if (/\b(?:research|analytics|advisory)\b/i.test(n) && !/\b(?:energy|power|renewables?|solar|wind|utilities|infrastructure|electric)\b/i.test(n)) {
     return true;
   }
 
@@ -934,6 +946,16 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     /\b(?:data\s*cent(?:er|re)|solar|wind|ai)\s+boom\b/i.test(n) ||
     /\b(?:are\s+driving|is\s+driving)\s+[a-z\s]+['’]s\s+(?:data\s*cent(?:er|re)|solar|wind|ai|clean\s+energy)\s+boom\b/i.test(n) ||
     /\b(?:ai\s+concern\s+as|concern\s+as\s+[a-z\s]+\s+plans\s+to\s+double)\b/i.test(n || s)
+  ) {
+    return true;
+  }
+
+  // Reject nationwide/regional macroeconomic aggregate capacity statistics (e.g. "India adds record 27GW of solar in H1", "module capacity reaches 210GW")
+  if (
+    /\b(?:adds?\s+(?:record\s+)?[\d.]+\s*(?:gw|mw|gigawatts?|megawatts?)|cumulative\s+.*capacity\s+reaches|capacity\s+hits\s+[\d.]+\s*(?:gw|mw)|capacity\s+reaches\s+[\d.]+\s*(?:gw|mw)|installed\s+capacity\s+(?:crosses|surpasses|reaches))\b/i.test(n) ||
+    /^(?:india|us|u\.s\.|china|germany|japan|uk|texas|california|spain)\s+adds?\s+[\d.]+\s*(?:gw|mw)\b/i.test(n) ||
+    /\badds?\s+[\d.]+\s*(?:gw|mw)\s+of\s+(?:solar|wind|power|clean\s+energy)\s+capacity\b/i.test(n || s) ||
+    /\b(?:in\s+nine\s+months|in\s+h1|in\s+h2|in\s+q[1-4]|module\s+capacity\s+reaches|cell\s+capacity\s+hits)\b/i.test(n)
   ) {
     return true;
   }
@@ -2464,6 +2486,80 @@ async function mapConcurrent(items, concurrency, fn) {
   return results;
 }
 
+// Check whether an existing verified repository project matches discovery search criteria
+function projectMatchesSearchCriteria(project, query, targetCategory, effectiveLocation) {
+  if (!project || !project.canonical_name) return false;
+
+  // 1. Target Country / Location Filter
+  if (effectiveLocation && effectiveLocation !== "Global" && effectiveLocation !== "Worldwide (Global)" && effectiveLocation !== "All Regions" && effectiveLocation !== "all") {
+    if (!matchesTargetCountry(project.country, project.location, effectiveLocation)) {
+      return false;
+    }
+  }
+
+  const pCat = (project.category || "").toLowerCase();
+  const pName = (project.canonical_name || "").toLowerCase();
+  const pComp = (project.company || project.developer || "").toLowerCase();
+  const pSum = (project.summary || "").toLowerCase();
+
+  // 2. Target Category / Sector Filter
+  let categoryMatches = true;
+  if (targetCategory && targetCategory !== "All Categories" && targetCategory !== "all" && targetCategory !== "Capital Projects" && targetCategory !== "General Industrial") {
+    const tClean = targetCategory.toLowerCase().replace(/\s*\([^)]*\)/g, "").trim();
+    const pClean = pCat.replace(/\s*\([^)]*\)/g, "").trim();
+
+    if (tClean === pClean || pCat === targetCategory.toLowerCase()) {
+      categoryMatches = true;
+    } else if (tClean.includes("concentrated solar") || tClean.includes("csp")) {
+      categoryMatches = pCat.includes("concentrated solar") || pCat.includes("csp");
+    } else if (pCat.includes("concentrated solar") || pCat.includes("csp")) {
+      categoryMatches = tClean.includes("concentrated solar") || tClean.includes("csp");
+    } else if (tClean.includes("solar") && pClean.includes("solar")) {
+      categoryMatches = true;
+    } else if (tClean.includes("data center") && (pClean.includes("data center") || pClean.includes("hyperscale"))) {
+      categoryMatches = true;
+    } else if ((tClean.includes("battery") || tClean.includes("energy storage")) && (pClean.includes("battery") || pClean.includes("energy storage") || pClean.includes("bess"))) {
+      categoryMatches = true;
+    } else if (tClean.includes("wind") && pClean.includes("wind")) {
+      categoryMatches = true;
+    } else if (tClean.includes("hydrogen") && (pClean.includes("hydrogen") || pClean.includes("electrolysis"))) {
+      categoryMatches = true;
+    } else if (tClean.includes("semiconductor") && (pClean.includes("semiconductor") || pClean.includes("wafer") || pClean.includes("fab"))) {
+      categoryMatches = true;
+    } else {
+      categoryMatches = pCat.includes(tClean) || tClean.includes(pCat) || pName.includes(tClean) || pSum.includes(tClean);
+    }
+  }
+
+  if (!categoryMatches) return false;
+
+  // 3. Natural Language Query Filter
+  const qClean = (query || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (!qClean || qClean === "capital projects" || qClean === "all" || qClean === "global" || qClean === "capital development projects") {
+    return true;
+  }
+
+  if (effectiveLocation && qClean === effectiveLocation.toLowerCase().replace(/[^a-z0-9\s]/g, " ").trim()) {
+    return true;
+  }
+
+  const qWords = qClean.split(/\s+/).filter(w => w.length > 2 && !["and", "for", "the", "project", "projects", "plant", "plants", "facility", "facilities"].includes(w));
+  if (qWords.length === 0) return true;
+
+  const allWordsInSectorOrLoc = qWords.every(w =>
+    pCat.includes(w) ||
+    (targetCategory && targetCategory.toLowerCase().includes(w)) ||
+    (effectiveLocation && effectiveLocation.toLowerCase().includes(w))
+  );
+  if (allWordsInSectorOrLoc) return true;
+
+  if (pName.includes(qClean) || pComp.includes(qClean) || pSum.includes(qClean) || pCat.includes(qClean)) {
+    return true;
+  }
+
+  return qWords.some(w => pName.includes(w) || pComp.includes(w) || pSum.includes(w) || pCat.includes(w));
+}
+
 // ==============================================================================
 // 4. PARALLEL HIGH-EFFICIENCY DISCOVERY PIPELINE
 // ==============================================================================
@@ -2538,7 +2634,13 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
       store.queryCache.delete(cacheKey);
       addEvent("query_cache_expired", `Cache expired for '${cacheKey}' (${Math.round((Date.now() - cachedAt) / 60000)}m old). Running fresh live discovery.`);
     } else {
-      const cachedResults = store.searchResults.get(priorRunId) || [];
+      let cachedResults = store.searchResults.get(priorRunId);
+      if ((!cachedResults || cachedResults.length === 0) && env?.PROJECT_DATA) {
+        try {
+          cachedResults = await env.PROJECT_DATA.get(`run:${priorRunId}:results`, "json");
+        } catch (_) {}
+      }
+      cachedResults = cachedResults || [];
       const isValidCache = cachedResults.length > 0 && cachedResults.every(r => 
         r.canonical_name && 
         !r.canonical_name.startsWith("Project from") && 
@@ -3021,8 +3123,34 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     }
   }
 
+  // Also include matching verified repository projects so that discovery search results
+  // accurately reflect verified records in the repository without false "0 results" mismatches
+  for (const [_, repoProj] of store.projects.entries()) {
+    if (!repoProj || !repoProj.canonical_name) continue;
+    const validated = validateAndSanitizeProjectRecord(repoProj);
+    if (!validated) continue;
+
+    if (effectiveLocation && !matchesTargetCountry(validated.country, validated.location, effectiveLocation)) {
+      continue;
+    }
+
+    if (!projectMatchesSearchCriteria(validated, query, targetCategory, effectiveLocation)) {
+      continue;
+    }
+
+    const key = getProjectDedupKey(validated.canonical_name, validated.company || validated.developer);
+    if (!uniqueProjectMap.has(key)) {
+      uniqueProjectMap.set(key, validated);
+    } else {
+      const existing = uniqueProjectMap.get(key);
+      if ((validated.summary?.length || 0) > (existing.summary?.length || 0)) {
+        uniqueProjectMap.set(key, { ...existing, summary: validated.summary, date: validated.date || existing.date });
+      }
+    }
+  }
+
   const finalProjects = Array.from(uniqueProjectMap.values());
-  addEvent("deduplication_completed", `Verified ${finalProjects.length} unique capital projects (deduplicated from ${extractedProjects.length} source records).`);
+  addEvent("deduplication_completed", `Verified ${finalProjects.length} unique capital projects (deduplicated across live discovery & verified repository).`);
 
   const searchResults = finalProjects.map((p, index) => ({
     id: "sr-" + crypto.randomUUID().slice(0, 8),
@@ -3062,11 +3190,13 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     run.api_telemetry = queryTelemetry;
   }
 
-  // Save to queryCache with composite key (query + sector + country) and TTL timestamp
-  store.queryCache.set(cacheKey, {
-    runId: searchRunId,
-    timestamp: Date.now()
-  });
+  // Save to queryCache with composite key (query + sector + country) and TTL timestamp only when results exist
+  if (searchResults.length > 0) {
+    store.queryCache.set(cacheKey, {
+      runId: searchRunId,
+      timestamp: Date.now()
+    });
+  }
 
   // Durable KV Persistence (survives worker redeploys & syncs across edge colos)
   if (env.PROJECT_DATA) {
@@ -3338,14 +3468,20 @@ export default {
       // POST: Submit Discovery Search
       if (request.method === "POST") {
         const body = await request.json();
-        const query = body?.query?.trim();
-        if (!query) {
-          return jsonRes({ error: "Search query is required" }, 400);
-        }
-
+        let query = body?.query?.trim();
         const requestedCat = body?.categories?.[0] || body?.category;
         const requestedLoc = body?.location || body?.country;
         const requestedProv = Array.isArray(body?.providers) && body.providers.length > 0 ? body.providers : ["exa", "google"];
+
+        if (!query) {
+          if (requestedCat && requestedCat !== "All Categories" && requestedCat !== "all") {
+            query = requestedCat;
+          } else if (requestedLoc && requestedLoc !== "Worldwide (Global)" && requestedLoc !== "All Regions" && requestedLoc !== "Global" && requestedLoc !== "all") {
+            query = `capital development projects in ${requestedLoc}`;
+          } else {
+            return jsonRes({ error: "Search query is required" }, 400);
+          }
+        }
 
         const searchRunId = crypto.randomUUID();
         const searchRunRecord = {
@@ -3528,21 +3664,29 @@ export default {
       // Validate, sanitize, deduplicate, and filter projects
       const validProjects = [];
       const seenDedupKeys = new Set();
+      let modifiedStore = false;
       for (const [id, rawP] of Array.from(store.projects.entries())) {
         const sanitized = validateAndSanitizeProjectRecord(rawP);
         if (!sanitized) {
           store.projects.delete(id);
           if (rawP.project_url) store.urlCache.delete(rawP.project_url);
+          modifiedStore = true;
         } else {
           const k = getProjectDedupKey(sanitized.canonical_name, sanitized.company || sanitized.developer);
           if (seenDedupKeys.has(k)) {
             store.projects.delete(id);
+            modifiedStore = true;
             continue;
           }
           seenDedupKeys.add(k);
           store.projects.set(id, sanitized);
           validProjects.push(sanitized);
         }
+      }
+      if (modifiedStore && env?.PROJECT_DATA) {
+        try {
+          await persistStore(env);
+        } catch (_) {}
       }
       let list = validProjects;
 
@@ -3635,21 +3779,29 @@ export default {
       // Validate, sanitize, deduplicate, and filter projects
       const validProjects = [];
       const seenDedupKeys = new Set();
+      let modifiedStore = false;
       for (const [id, rawP] of Array.from(store.projects.entries())) {
         const sanitized = validateAndSanitizeProjectRecord(rawP);
         if (!sanitized) {
           store.projects.delete(id);
           if (rawP.project_url) store.urlCache.delete(rawP.project_url);
+          modifiedStore = true;
         } else {
           const k = getProjectDedupKey(sanitized.canonical_name, sanitized.company || sanitized.developer);
           if (seenDedupKeys.has(k)) {
             store.projects.delete(id);
+            modifiedStore = true;
             continue;
           }
           seenDedupKeys.add(k);
           store.projects.set(id, sanitized);
           validProjects.push(sanitized);
         }
+      }
+      if (modifiedStore && env?.PROJECT_DATA) {
+        try {
+          await persistStore(env);
+        } catch (_) {}
       }
       let list = validProjects;
 
