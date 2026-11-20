@@ -37,8 +37,8 @@ apiClient.interceptors.response.use(
 // DURABLE PERSISTENCE LAYER (Saves data across code updates & redeploys)
 // ==============================================================================
 
-const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v10';
-const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v10';
+const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v11';
+const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v11';
 
 const WORLD_COUNTRIES_SET = new Set([
   'afghanistan', 'albania', 'algeria', 'angola', 'argentina', 'armenia', 'australia', 'austria', 'azerbaijan',
@@ -477,12 +477,14 @@ export function cleanSummaryText(raw?: string): string {
 function getStoredProjects(): Project[] {
   try {
     // Purge legacy contaminated storage keys so old bad data cannot resurface
+    localStorage.removeItem('pi_persisted_projects_v10');
     localStorage.removeItem('pi_persisted_projects_v9');
     localStorage.removeItem('pi_persisted_projects_v8');
     localStorage.removeItem('pi_persisted_projects_v7');
     localStorage.removeItem('pi_persisted_projects_v6');
     localStorage.removeItem('pi_persisted_projects_v5');
     localStorage.removeItem('pi_persisted_projects');
+    localStorage.removeItem('pi_persisted_searches_v10');
     localStorage.removeItem('pi_persisted_searches_v9');
     localStorage.removeItem('pi_persisted_searches_v8');
     localStorage.removeItem('pi_persisted_searches_v7');

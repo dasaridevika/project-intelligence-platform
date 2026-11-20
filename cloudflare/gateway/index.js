@@ -220,8 +220,8 @@ function getQueryCacheKey(query, sector, country) {
   return `${q}::${s}::${c}`;
 }
 
-const KV_PROJECTS_KEY = "projects_v10";
-const KV_SEARCHES_KEY = "searches_v10";
+const KV_PROJECTS_KEY = "projects_v11";
+const KV_SEARCHES_KEY = "searches_v11";
 
 // Durable KV Persistence Layer (Survives worker code changes & redeploys)
 async function hydrateStore(env) {
@@ -233,11 +233,13 @@ async function hydrateStore(env) {
     env.PROJECT_DATA.delete("projects_v7").catch(() => {});
     env.PROJECT_DATA.delete("projects_v8").catch(() => {});
     env.PROJECT_DATA.delete("projects_v9").catch(() => {});
+    env.PROJECT_DATA.delete("projects_v10").catch(() => {});
     env.PROJECT_DATA.delete("searches").catch(() => {});
     env.PROJECT_DATA.delete("searches_v6").catch(() => {});
     env.PROJECT_DATA.delete("searches_v7").catch(() => {});
     env.PROJECT_DATA.delete("searches_v8").catch(() => {});
     env.PROJECT_DATA.delete("searches_v9").catch(() => {});
+    env.PROJECT_DATA.delete("searches_v10").catch(() => {});
     env.PROJECT_DATA.delete("pi_persisted_projects_v5").catch(() => {});
 
     if (store.projects.size === 0) {
@@ -2875,28 +2877,15 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
     }
   }
 
-  // If AI yielded no projects or wasn't configured, run resilient in-memory regex fallback (0 external requests)
-  if (extractedProjects.length === 0 && uncachedCandidates.length > 0) {
+  // Only run resilient in-memory regex fallback if Workers AI was completely unreachable / failed (0 inferences completed)
+  // NEVER run fallback guessing if AI already evaluated candidates and legitimately found 0 projects!
+  if (extractedProjects.length === 0 && uncachedCandidates.length > 0 && queryTelemetry.workers_ai_inferences === 0) {
     for (const item of uncachedCandidates.slice(0, 5)) {
       const fb = fallbackRegexExtract(item.text || item.snippet, item.cleanUrl, item.title, targetCategory);
       if (fb && fb.is_project !== false && isValidCompanyEntity(fb.company)) {
         const normDev = normalizeDeveloperName(fb.company, item.cleanUrl);
         const fbRawName = fb.canonical_name || item.title || "";
         const fbProjectName = cleanProjectName(fbRawName, normDev);
-
-        if (isGenericReportOrDirectory(item.cleanUrl, fbProjectName, normDev, fb.summary) || isGenericReportOrDirectory(item.cleanUrl, fbRawName, normDev, fb.summary)) {
-          continue;
-        }
-        if (isWebsiteOwnName(normDev, item.cleanUrl, item.title)) {
-          continue;
-        }
-        if (
-          isOldCompletedProject(item.cleanUrl, fbProjectName, fb.summary, item.text || item.snippet) ||
-          isOldCompletedProject(item.cleanUrl, item.title, fb.summary, item.text || item.snippet) ||
-          isOldCompletedProject(item.cleanUrl, fbRawName, fb.summary, item.text || item.snippet)
-        ) {
-          continue;
-        }
 
         const detectedLocation = extractLocationFromCandidate(item.text || item.snippet, item.title, item.cleanUrl);
         const detectedCountry = detectedLocation || "Not specified";
@@ -2905,37 +2894,33 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           continue;
         }
 
-        const fbStatus = fb.status;
-        if (!fbStatus || !["Announced", "Planning", "Approved", "Under Construction", "Operational", "Commissioned"].includes(fbStatus)) {
-          continue;
-        }
-
-        let fbRawDate = (fb.date || item.published_date || "").trim();
-        let fbDate = formatDisplayDate(fbRawDate);
-        if (fbDate === null) {
-          continue;
-        }
-
-        const projId = "proj-" + crypto.randomUUID().slice(0, 8);
-        const projectRecord = {
-          id: projId,
+        const candidateRecord = {
           canonical_name: fbProjectName,
           company: normDev,
           developer: normDev,
           project_url: item.cleanUrl,
-          status: fbStatus,
+          status: fb.status || "Planning",
           category: inferCategory(fbProjectName, fb.summary, fb.category || targetCategory),
           country: detectedCountry || "Not specified",
           location: detectedLocation || detectedCountry || "Not specified",
-          date: fbDate,
+          date: fb.date || item.published_date || "",
           http_status: 200,
           summary: cleanSummaryText(fb.summary || item.snippet || ""),
           created_at: new Date().toISOString()
         };
-        store.projects.set(projId, projectRecord);
-        store.urlCache.set(item.cleanUrl, [projectRecord]);
-        extractedProjects.push(projectRecord);
-        addEvent("candidate_accepted", `VALID PROJECT URL: ${item.cleanUrl} | Company: [${projectRecord.company}] | Name: '${projectRecord.canonical_name}'`, "ai_worker", { project: projectRecord, canonical_name: projectRecord.canonical_name });
+
+        const validatedRecord = validateAndSanitizeProjectRecord(candidateRecord);
+        if (!validatedRecord) {
+          continue;
+        }
+
+        const projId = "proj-" + crypto.randomUUID().slice(0, 8);
+        validatedRecord.id = projId;
+
+        store.projects.set(projId, validatedRecord);
+        store.urlCache.set(item.cleanUrl, [validatedRecord]);
+        extractedProjects.push(validatedRecord);
+        addEvent("candidate_accepted", `VALID PROJECT URL: ${item.cleanUrl} | Company: [${validatedRecord.company}] | Name: '${validatedRecord.canonical_name}'`, "ai_worker", { project: validatedRecord, canonical_name: validatedRecord.canonical_name });
       }
     }
   }
@@ -3011,15 +2996,19 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
 
   // Durable KV Persistence (survives worker redeploys & syncs across edge colos)
   if (env.PROJECT_DATA) {
-    const kvPromises = [
-      persistStore(env),
-      env.PROJECT_DATA.put(`run:${searchRunId}:results`, JSON.stringify(searchResults), { expirationTtl: 86400 }),
-      run ? env.PROJECT_DATA.put(`run:${searchRunId}:meta`, JSON.stringify(run), { expirationTtl: 86400 }) : Promise.resolve()
-    ];
-    if (ctx && typeof ctx.waitUntil === "function") {
-      ctx.waitUntil(Promise.all(kvPromises));
-    } else {
-      await Promise.all(kvPromises);
+    try {
+      await persistStore(env);
+      const kvPromises = [
+        env.PROJECT_DATA.put(`run:${searchRunId}:results`, JSON.stringify(searchResults), { expirationTtl: 86400 }),
+        run ? env.PROJECT_DATA.put(`run:${searchRunId}:meta`, JSON.stringify(run), { expirationTtl: 86400 }) : Promise.resolve()
+      ];
+      if (ctx && typeof ctx.waitUntil === "function") {
+        ctx.waitUntil(Promise.all(kvPromises));
+      } else {
+        await Promise.all(kvPromises);
+      }
+    } catch (err) {
+      console.warn("KV persist error in executeDiscoveryPipeline:", err);
     }
   }
 
@@ -3088,7 +3077,7 @@ export default {
             }
           }
         }
-        ctx.waitUntil(persistStore(env));
+        await persistStore(env);
         return jsonRes({ success: true, total_projects: store.projects.size, total_searches: store.searches.size });
       } catch (err) {
         return jsonRes({ error: "Sync failed", details: err?.message || String(err) }, 400);
@@ -3106,6 +3095,12 @@ export default {
       if (env.PROJECT_DATA) {
         try {
           await Promise.all([
+            env.PROJECT_DATA.delete(KV_PROJECTS_KEY),
+            env.PROJECT_DATA.delete(KV_SEARCHES_KEY),
+            env.PROJECT_DATA.delete("projects_v11"),
+            env.PROJECT_DATA.delete("searches_v11"),
+            env.PROJECT_DATA.delete("projects_v10"),
+            env.PROJECT_DATA.delete("searches_v10"),
             env.PROJECT_DATA.delete("projects_v9"),
             env.PROJECT_DATA.delete("projects_v8"),
             env.PROJECT_DATA.delete("projects_v7"),
@@ -3447,6 +3442,9 @@ export default {
 
     // 6. Project Endpoints (/api/v1/projects)
     if (url.pathname === "/api/v1/projects" || url.pathname === "/api/projects") {
+      if (store.projects.size === 0 && env.PROJECT_DATA) {
+        await hydrateStore(env);
+      }
       const category = url.searchParams.get("category");
       const group = url.searchParams.get("group");
       const location = url.searchParams.get("location");
