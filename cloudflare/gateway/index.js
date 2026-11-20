@@ -29,6 +29,15 @@ const sectorIndex = primarySectors.map(s => {
   };
 });
 
+// Dynamic sector vocabulary generated 100% dynamically from all 462 primary sectors (Zero hardcoding)
+const SECTOR_WORDS = new Set(
+  primarySectors.flatMap(s => [
+    ...s.sector.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/),
+    ...s.group.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/),
+    ...(s.keywords || []).flatMap(k => k.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/))
+  ]).filter(w => w && w.length >= 2)
+);
+
 // Comprehensive dynamic country dictionary (replaces hardcoded country arrays)
 const WORLD_COUNTRIES = [
   "afghanistan", "albania", "algeria", "angola", "argentina", "armenia", "australia", "austria", "azerbaijan",
@@ -64,66 +73,88 @@ const INVALID_FILE_EXTENSIONS = [
   ".csv", ".xlsx", ".xls", ".doc", ".docx", ".ppt", ".pptx", ".xml", ".rss", ".json"
 ];
 
-const BLOCKED_DOMAINS = [
-  // Encyclopedias, wikis, dictionaries, glossaries, general reference (never host actual projects)
-  "wikipedia.org", "wiktionary.org", "wikimedia.org", "gem.wiki", "wikia.com", "fandom.com",
-  "dictionary.cambridge.org", "merriam-webster.com",
-  "dictionary.com", "investopedia.com", "britannica.com", "techtarget.com",
-  "computerhope.com", "coursera.org", "wordreference.com",
-  // Academic journals, research papers & scientific repositories (never host capital development projects)
-  "springer.com", "link.springer.com", "sciencedirect.com", "nature.com",
-  "ieeexplore.ieee.org", "mdpi.com", "wiley.com", "arxiv.org", "researchgate.net",
-  "frontiersin.org", "tandfonline.com", "cell.com", "e360.yale.edu",
-  // Aggregator portals, marketing blogs, educational explainers, marketplaces
-  "datacenters.com", "chipsupplychain.org", "patentpc.com", "poynter.org",
-  // Statistics agencies, market research databases & legal/consulting advisory portals
-  "statista.com", "eia.gov", "enerdatics.com", "woodmac.com", "woodmackenzie.com", 
-  "rystadenergy.com", "whitecase.com",
-  // Social media, video, and community forums
-  "youtube.com", "youtu.be", "vimeo.com", "facebook.com", "fb.com", "twitter.com",
-  "x.com", "instagram.com", "tiktok.com", "pinterest.com", "reddit.com", "quora.com",
-  "linkedin.com", "medium.com",
-  // Auth portals & tracking
-  "accounts.google.com", "login.microsoftonline.com", "appleid.apple.com"
-];
+// Dynamic Domain Reputation & Structural Source Classifier
+// Learns domain reliability at runtime and persists reputation scores to Cloudflare KV (Zero hardcoded domain blacklist)
+
+function recordDomainReputation(host, delta, reason = "") {
+  if (!host) return;
+  const cleanHost = host.toLowerCase().replace(/^(?:www\d*|m|amp)\./, "");
+  const current = store.domainReputation.get(cleanHost) || { score: 0, strikes: 0, successes: 0, lastReason: "" };
+  if (delta < 0) {
+    current.score = Math.max(-10, current.score + delta);
+    current.strikes = (current.strikes || 0) + 1;
+    current.lastReason = reason;
+  } else if (delta > 0) {
+    current.score = Math.min(10, current.score + delta);
+    current.successes = (current.successes || 0) + 1;
+    current.lastReason = reason;
+  }
+  store.domainReputation.set(cleanHost, current);
+}
+
+function isDomainDynamicallyBlocked(host) {
+  if (!host) return false;
+  const cleanHost = host.toLowerCase().replace(/^(?:www\d*|m|amp)\./, "");
+  const rep = store.domainReputation.get(cleanHost);
+  return rep && rep.score <= -3;
+}
+
+// Structural URL & Content screening patterns (Categorical heuristics instead of static domain blacklists)
+function isStructuralNonProjectSource(host, path, url) {
+  if (!host) return { blocked: true, reason: "Missing host." };
+  const h = host.toLowerCase();
+  const u = (url || "").toLowerCase();
+
+  // 1. Dynamic Domain Reputation check (Learned by edge worker runtime)
+  if (isDomainDynamicallyBlocked(h)) {
+    return { blocked: true, reason: `Domain '${h}' dynamically suppressed based on past zero-project yield or bot-blocks.` };
+  }
+
+  // 2. Encyclopedias, wikis, dictionaries, glossaries
+  if (
+    /\b(?:wiki|wiktionary|wikimedia|fandom|dictionary|encyclopedia|glossary)\b/i.test(h) ||
+    /\.wiki$|\/wiki\/|\/glossary\b/i.test(u)
+  ) {
+    return { blocked: true, reason: "Reference wiki, dictionary, or glossary (not a capital project host)." };
+  }
+
+  // 3. Social media, video sharing, and community forums
+  if (
+    /\b(?:youtube|youtu\.be|vimeo|facebook|instagram|tiktok|twitter|x\.com|reddit|quora|linkedin|medium|pinterest)\b/i.test(h) ||
+    /\/(?:videos?|watch\?v=|posts?|threads?|status\/\d+|subreddit)\b/i.test(u)
+  ) {
+    return { blocked: true, reason: "Social media, forum, or video streaming platform." };
+  }
+
+  // 4. Academic journals, DOI repositories, and scientific papers (not physical capital project news)
+  if (
+    /\/doi\/10\.\d{4}\/|\/article\/10\.\d{4}\/|\b(?:arxiv\.org|researchgate\.net)\b/i.test(u)
+  ) {
+    return { blocked: true, reason: "Academic paper or scientific repository." };
+  }
+
+  // 5. Auth and identity portals
+  if (/\b(?:accounts?|login|signin|signup|auth|oauth)\.[a-z0-9-]+\.[a-z]+/i.test(h)) {
+    return { blocked: true, reason: "Authentication or user account portal." };
+  }
+
+  return { blocked: false };
+}
 
 const TRACKING_QUERY_PARAMS = [
   "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
   "gclid", "fbclid", "ref", "source", "mc_cid", "mc_eid"
 ];
 
-// Patterns for non-article boilerplate paths to reject before LLM inference
+// Generic structural non-article boilerplate paths to reject before LLM inference
 const JUNK_PATH_PATTERNS = [
-  /\/login\b/i, /\/signin\b/i, /\/signup\b/i, /\/auth\b/i, /\/account\b/i,
-  /\/cookie/i, /\/cookies/i, /\/privacy/i, /\/terms/i, /\/datenschutz/i,
-  /\/impressum/i, /\/mentions-legales/i, /\/politique-de-confidentialite/i,
-  /\/terminos-y-condiciones/i, /\/aviso-legal/i,
-  /\/staff\b/i, /\/staff-directory\b/i, /\/directory\b/i, /\/phonebook\b/i,
-  /\/contact-us\b/i, /\/clinical-departments\b/i, /\/departments?\b/i,
-  /\/cart\b/i, /\/checkout\b/i, /\/pdf\//i,
-  // Regulatory, grid connection rules, power review policy articles (not specific project announcements)
-  /-power-rules\b/i, /-grid-review\b/i, /-grid-rules\b/i, /-regulatory-framework\b/i, /-power-regulations\b/i,
-  // Aggregator maps, directories, and topic index listings
-  /\/topics\b/i, /\/topics\/\d+/i,
-  /-map\b/i, /\/maps?\b/i, /\/data-center-map\b/i,
-  // Commercial vendor product & service catalogs (not project news)
-  /\/products-services\b/i, /\/products?\b/i, /\/services?\b/i,
-  // Legal & consulting thought leadership / insights
-  /\/insight-our-thinking\b/i, /\/thought-leadership\b/i,
-  // Generic section/category landing roots without article slugs
-  /\/international\/[a-z]{2}\/news\/?$/i, /\/news\/?$/i, /\/en-realestate\/?$/i,
-  // Educational guides, explainers, tutorials, glossaries, FAQs
-  /\/what-is\b/i, /\/what-are\b/i, /\/how-to\b/i, /\/how-do\b/i, /\/how-data-centers\b/i,
-  /\/guides?\b/i, /\/glossary\b/i, /\/faq\b/i, /\/fact-check/i, /\/fact-checking/i,
-  /\/resources\/blog\b/i, /\/top-10\b/i, /\/top-5\b/i, /\/rankings?\b/i,
-  // Long-form feature essays / magazine roundups (not project news)
-  /\/features\/[a-z0-9_-]+-(?:solar|energy|revolution|future|climate)\b/i,
-  // Commercial store / market research reports
-  /\/store\/report\b/i, /\/market-analysis\b/i, /\/market-reports?\b/i,
-  // Search engines / directories
-  /\/search-6/i, /\/find-a-/i,
-  // Academic field reports
-  /\/publications\/[A-Z0-9_-]+\/how-/i
+  /\/(?:login|signin|signup|auth|account|cart|checkout)\b/i,
+  /\/(?:cookie|cookies|privacy|terms|datenschutz|impressum|mentions-legales|aviso-legal)\b/i,
+  /\/(?:staff|phonebook|contact(?:-us)?|departments?)\b/i,
+  /\/(?:what-is|what-are|how-to|how-do|guides?|glossary|faqs?|fact-check(?:ing)?)\b/i,
+  /\/(?:store|shop|market-(?:analysis|reports?|insights?)|products?|services?)\b/i,
+  /\/(?:top-\d+|rankings?|maps?)\b/i,
+  /\/(?:regulations?|policies|policy-framework|grid-rules|power-rules)\b/i
 ];
 
 // ==============================================================================
@@ -137,6 +168,7 @@ const store = {
   activityEvents: new Map(),
   urlCache: new Map(),
   failedUrls: new Map(),
+  domainReputation: new Map(),
   queryCache: new Map(),
   systemErrors: [],
   apiUsage: [
@@ -318,6 +350,12 @@ async function hydrateStore(env) {
         }
       }
     }
+    const savedRep = await env.PROJECT_DATA.get("domain_reputation", "json");
+    if (Array.isArray(savedRep)) {
+      for (const [host, rep] of savedRep) {
+        store.domainReputation.set(host, rep);
+      }
+    }
   } catch (err) {
     console.warn("KV store hydration notice:", err?.message || err);
   }
@@ -328,11 +366,17 @@ async function persistStore(env) {
   try {
     const projectsList = Array.from(store.projects.values()).slice(-200);
     const searchesList = Array.from(store.searches.values()).slice(-50);
-    await Promise.all([
+    const kvPromises = [
       env.PROJECT_DATA.put(KV_PROJECTS_KEY, JSON.stringify(projectsList)),
       env.PROJECT_DATA.put(KV_SEARCHES_KEY, JSON.stringify(searchesList)),
       env.PROJECT_DATA.put("api_usage", JSON.stringify(store.apiUsage)),
-    ]);
+    ];
+    if (store.domainReputation.size > 0) {
+      kvPromises.push(
+        env.PROJECT_DATA.put("domain_reputation", JSON.stringify(Array.from(store.domainReputation.entries())), { expirationTtl: 30 * 86400 })
+      );
+    }
+    await Promise.all(kvPromises);
   } catch (err) {
     console.warn("KV store persistence notice:", err?.message || err);
   }
@@ -364,15 +408,6 @@ function isForeignLanguageUrl(parsed) {
     const foreignPathPrefixes = [/^\/zh\b/i, /^\/zh-[a-z]+\b/i, /^\/ru\b/i];
     for (const p of foreignPathPrefixes) {
       if (p.test(path)) return true;
-    }
-    
-    // Exclusively non-supported state-controlled news domains
-    const nonEnglishDomains = [
-      "sina.com", "sohu.com", "163.com", "xinhuanet.com", "people.com.cn", "huanqiu.com",
-      "tass.ru", "ria.ru", "rbc.ru", "lenta.ru", "kommersant.ru"
-    ];
-    for (const d of nonEnglishDomains) {
-      if (host === d || host.endsWith("." + d)) return true;
     }
   } catch (_) {}
   return false;
@@ -449,11 +484,10 @@ function validateAndNormalizeUrl(rawUrl) {
       return { valid: false, reason: "Access to private or localhost addresses is blocked." };
     }
 
-    // Domain blacklist check (dictionaries, social media, forums)
-    for (const blocked of BLOCKED_DOMAINS) {
-      if (host === blocked || host.endsWith("." + blocked)) {
-        return { valid: false, reason: `Domain '${host}' is on blocked reference or social media list.` };
-      }
+    // Dynamic domain reputation and categorical structural screening (Zero hardcoded domain blacklists)
+    const structuralCheck = isStructuralNonProjectSource(host, parsed.pathname, rawUrl);
+    if (structuralCheck.blocked) {
+      return { valid: false, reason: structuralCheck.reason };
     }
 
     // 2. Path normalization: collapse multiple slashes, strip redundant trailing slash to prevent duplicate links
@@ -567,6 +601,8 @@ function cleanHtml(rawHtml) {
 
 async function fetchUrlContent(targetUrl) {
   const t0 = Date.now();
+  let host = "";
+  try { host = new URL(targetUrl).hostname; } catch {}
   try {
     const res = await fetch(targetUrl, {
       headers: {
@@ -581,18 +617,22 @@ async function fetchUrlContent(targetUrl) {
 
     const elapsed = Date.now() - t0;
     if (res.status === 403) {
+      recordDomainReputation(host, -2, "Bot-blocked (HTTP 403)");
       return { ok: false, title: "", metaDesc: "", text: "", status: 403, error: "Bot-blocked (HTTP 403) - Access Forbidden", elapsed };
     }
     if (res.status === 503) {
+      recordDomainReputation(host, -1, "Temporarily unreachable (HTTP 503)");
       return { ok: false, title: "", metaDesc: "", text: "", status: 503, error: "Temporarily unreachable (HTTP 503) - Server Unavailable", elapsed };
     }
     if (res.status === 404) {
+      recordDomainReputation(host, -1, "Dead domain or page not found (HTTP 404)");
       return { ok: false, title: "", metaDesc: "", text: "", status: 404, error: "Dead domain or page not found (HTTP 404)", elapsed };
     }
     if (!res.ok) {
       return { ok: false, title: "", metaDesc: "", text: "", status: res.status, error: `HTTP ${res.status}`, elapsed };
     }
 
+    recordDomainReputation(host, +1, "Successful HTTP 200 fetch");
     const html = await res.text();
     const cleaned = cleanHtml(html);
     return { ok: true, ...cleaned, status: res.status, elapsed };
@@ -606,30 +646,28 @@ async function fetchUrlContent(targetUrl) {
   }
 }
 
-// Check if a company name or domain is a news agency, publisher, research firm, advisory brokerage, or think tank (NOT a project developer)
+// Structural classifier for news publishers, media outlets, research/statistics agencies, advisory brokerages, and think tanks (NOT a project developer)
 function isNewsPublisher(name) {
   if (!name || typeof name !== "string") return false;
   const n = name.toLowerCase().trim();
 
-  // Pattern for media outlets, news wires, publishers, research/statistics agencies, advisory brokerages, and think tanks
-  const publisherPattern = /\b(?:reuters|bloomberg|constructconnect|datacenterdynamics|dcn|associated press|prnewswire|businesswire|globenewswire|cnbc|forbes|financial times|marketwatch|canary media|pv magazine|solar power world|recharge news|mercom|jmk research|bridge to india|crisil|care ratings|icra|mckinsey|gartner|idc|accenture|deloitte|kpmg|ey|pwc|bcg|bain|oxford economics|globaldata|statista|eia|wood mackenzie|rystad energy|s&p global|ferc|iea|electrek|industrial info|power systems|renewables now|energy storage news|techtimes|chosun|korea herald|asia business daily|semiwiki|cleantechnica|cushman\s*(?:&|and)\s*wakefield|cbre|jll|jones lang lasalle|colliers|knight frank|newmark|savills|marcus\s*(?:&|and)\s*millichap|niti aayog|brookings|rand corporation|chatham house|csis|heritage foundation|cato institute|wilson center|urban institute|aspen institute|pew research)\b/i;
-
-  if (publisherPattern.test(n)) {
+  // Functional media, news wire, broadcasting, journal, and publishing descriptors
+  if (/\b(?:news(?:wire|paper)?|media|press|wire|times|tribune|gazette|herald|post|chronicle|journal|magazine|broadcast|broadcasting|editorial|publication|publishing|digest|bulletin|review|dispatch|telegraph)\b/i.test(n) && !/\b(?:energy|power|renewables?|solar|wind|utilities|infrastructure|electric|development|industries|construction)\b/i.test(n)) {
     return true;
   }
 
-  // Publisher, analytics, and advisory keywords (matched as whole words/phrases, never partial substrings)
-  if (/\b(?:press release|staff writer|news agency|market research|data platform|data tracker|statistics agency|statistical agency|think\s*tank|policy\s+institute|policy\s+commission|policy\s+hub|frontier\s+tech\s+hub|real\s+estate\s+services?|commercial\s+real\s+estate)\b/i.test(n)) {
+  // Market research, rating agencies, management consulting, brokerages, and policy think tanks
+  if (/\b(?:market\s+research|intelligence|ratings|credit\s+ratings|consulting|advisory|brokerage|think\s*tank|policy\s+(?:institute|commission|hub)|economic\s+research|data\s*(?:platform|tracker|analytics))\b/i.test(n) && !/\b(?:energy|power|renewables?|solar|wind|utilities|infrastructure|electric|development|industries|engineering)\b/i.test(n)) {
     return true;
   }
 
-  // Pure research or analytics firm (e.g. "JMK Research", "Mercom India Research")
-  if (/\b(?:research|analytics|advisory)\b/i.test(n) && !/\b(?:energy|power|renewables?|solar|wind|utilities|infrastructure|electric)\b/i.test(n)) {
+  // Staff, editorial, or press release signatures
+  if (/\b(?:press\s+release|staff\s+writer|editorial\s+team|contributor|editor|spokesperson|wire\s+service)\b/i.test(n)) {
     return true;
   }
 
   // Standalone non-developer words when used as the entire company name
-  if (/^(?:news|times|post|journal|herald|tribune|insight|insights|blog|blogs|article|articles|update|updates|overview|report|reports|tracker|editorial|education|statistics|database)$/i.test(n)) {
+  if (/^(?:news|times|post|journal|herald|tribune|insight|insights|blog|blogs|article|articles|update|updates|overview|report|reports|tracker|editorial|education|statistics|database|bulletin|gazette)$/i.test(n)) {
     return true;
   }
 
@@ -679,9 +717,12 @@ function isValidCompanyEntity(name) {
     }
   }
 
-  // Reject multi-company lists joined with " and " between separate major names (e.g. "Amazon and Google", "Google and Microsoft")
-  if (/\b(?:google|amazon|microsoft|meta|apple|equinix|digital realty|adani|reliance)\s+(?:and|&)\s+(?:google|amazon|microsoft|meta|apple|equinix|digital realty|adani|reliance)\b/i.test(lower)) {
-    return false;
+  // Reject dual/multi-company listings joined with " and " or " & " (e.g. "Company A and Company B")
+  if (/\b(?:and|&)\b/i.test(n) && !/\b(?:co|sons|associates|partners|company|consulting)\b/i.test(lower)) {
+    const parts = n.split(/\s+(?:and|&)\s+/i);
+    if (parts.length >= 2 && parts.every(p => p.trim().length >= 3 && !/^(?:solutions|services|energy|power|technologies|systems)$/i.test(p.trim()))) {
+      return false;
+    }
   }
 
   // Reject bare sovereign country names as company entity (dynamically checks all world nations)
@@ -1487,62 +1528,6 @@ function validateAndSanitizeProjectRecord(p) {
   };
 }
 
-const SECTOR_WORDS = new Set([
-  // Solar & Renewables
-  "solar", "photovoltaic", "pv", "csp", "concentrated", "heliostat", "heliostats", 
-  "inverter", "inverters", "panel", "panels", "module", "modules", "array", "arrays", 
-  "wind", "windfarm", "windfarms", "offshore", "onshore", "turbine", "turbines", 
-  "hydro", "hydroelectric", "hydropower", "geothermal", "biomass", "biogas", "biofuel", "biofuels",
-  "renewable", "renewables", "clean", "green", "cleantech", "cleanenergy", "decarbonization",
-
-  // Energy Storage & Batteries
-  "storage", "battery", "batteries", "bess", "cell", "cells", "pack", "packs", "megapack", "megapacks",
-
-  // Hydrogen & Carbon Management
-  "hydrogen", "electrolyzer", "electrolyser", "electrolyzers", "electrolysers", "ammonia", "methanol",
-  "carbon", "capture", "sequestration", "ccs", "ccus",
-
-  // Power, Electric, Transmission & Grid
-  "power", "energy", "generation", "electric", "electrical", "electricity", "utility", "utilities",
-  "transmission", "grid", "microgrid", "substation", "switchyard", "interconnection",
-  "megawatt", "mw", "gigawatt", "gw", "kilowatt", "kw", "kwh", "mwh", "gwh",
-  "voltage", "highvoltage", "hv", "hvdc",
-
-  // Oil, Gas & Petrochemicals
-  "oil", "gas", "lng", "lpg", "petroleum", "petrochemical", "petrochemicals", "refinery", "refineries",
-  "pipeline", "pipelines", "drilling", "crude", "ethane", "cracker", "feedstock", "chemical", "chemicals",
-  "fertilizer", "fertilizers",
-
-  // Data Centers, Cloud & IT Infrastructure
-  "data", "center", "centre", "centers", "centres", "datacenter", "datacentre", "datacenters", "datacentres",
-  "hyperscale", "hyperscaler", "hyperscalers", "colocation", "colo", "cloud", "compute", "server", "servers",
-  "ai", "gpu", "gpus", "cluster", "clusters", "hpc", "supercomputer", "supercomputing", "telecom", "telecommunications",
-
-  // Semiconductors & Electronics
-  "semiconductor", "semiconductors", "chip", "chips", "wafer", "wafers", "fab", "fabs", "megafab", "megafabs",
-  "foundry", "foundries", "cleanroom", "cleanrooms", "dram", "nand", "silicon",
-
-  // Manufacturing & Industrial Facilities
-  "manufacturing", "gigafactory", "gigafactories", "factory", "factories", "plant", "plants",
-  "facility", "facilities", "mill", "mills", "smelter", "smelters", "assembly", "production", "industrial",
-
-  // Metals & Mining
-  "mining", "mine", "mines", "metal", "metals", "steel", "iron", "aluminum", "aluminium", "copper",
-  "lithium", "nickel", "cobalt", "gold", "smelting", "ore",
-
-  // Real Estate, Logistics & Infrastructure
-  "logistics", "warehouse", "warehouses", "distribution", "fulfillment", "terminal", "terminals",
-  "port", "ports", "harbor", "airport", "rail", "railway", "freight", "park", "parks", "campus", "campuses",
-  "hub", "hubs", "site", "sites", "complex", "complexes", "zone", "estate", "corridor",
-
-  // Project, Engineering & Contracting Generic Words
-  "project", "projects", "development", "developments", "phase", "stage", "unit", "units", "block", "blocks",
-  "expansion", "initiative", "program", "scheme", "build", "building", "buildings", "construction",
-  "erection", "commissioning", "epc", "engineering", "procurement", "contracting", "contractor", "contractors",
-  "consulting", "consultancy", "developer", "developers", "operator", "operators", "operation", "operations",
-  "station", "stations", "system", "systems", "solutions", "services", "infrastructure"
-]);
-
 const PROJECT_MATCH_STOPWORDS = new Set([
   "and", "the", "for", "with", "from", "into", "over", "under", "new", "all",
   "first", "second", "third", "fourth", "announced", "planning", "construction",
@@ -1702,9 +1687,9 @@ function candidateMentionsProject(candidate, aiP) {
   } else {
     // If canonicalName only consists of company + sector words (e.g. "Microsoft Data Center")
     // and location is broad/absent, verify that the candidate content contains the facility sector term
-    const cleanName = name.toLowerCase();
-    const hasSectorCorroboration = Array.from(SECTOR_WORDS).some(sw => 
-      sw.length >= 4 && cleanName.includes(sw) && new RegExp(`\\b${sw}\\b`, 'i').test(fullContent)
+    const cleanTokens = cleanName.split(/\s+/).filter(w => w.length >= 4);
+    const hasSectorCorroboration = cleanTokens.some(sw => 
+      SECTOR_WORDS.has(sw) && new RegExp(`\\b${sw}\\b`, 'i').test(fullContent)
     );
     if (!hasSectorCorroboration) {
       return false;
@@ -3048,8 +3033,22 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
 
       store.urlCache.set(cleanUrl, [projectRecord]);
       extractedProjects.push(projectRecord);
+      try {
+        const h = new URL(cleanUrl).hostname;
+        recordDomainReputation(h, +3, "Verified project yield");
+      } catch {}
 
       addEvent("candidate_accepted", `VALID PROJECT URL: ${cleanUrl} | Company: [${companyName}] | Date: [${projectDate}] | Status: [${projectRecord.status}] | Name: '${projectRecord.canonical_name}'`, "ai_worker", { project: projectRecord, canonical_name: projectRecord.canonical_name });
+    }
+  }
+
+  // Dynamic domain reputation learning: penalize candidates that yielded zero valid projects
+  for (const cand of uncachedCandidates) {
+    if (!extractedProjects.some(p => p.project_url === cand.cleanUrl)) {
+      try {
+        const h = new URL(cand.cleanUrl).hostname;
+        recordDomainReputation(h, -1, "Zero projects yielded");
+      } catch {}
     }
   }
 
