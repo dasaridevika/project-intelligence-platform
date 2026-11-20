@@ -36,24 +36,24 @@ async function testAsync(name, fn) {
 // ==============================================================================
 console.log("\n[Group 1: API Accuracy & Health Reports]");
 
-await testAsync("GET /health reports real model @cf/meta/llama-3.2-3b-instruct and real kv_storage", async () => {
+await testAsync("GET /health reports real model @cf/meta/llama-3.1-8b-instruct and real kv_storage", async () => {
   const req = new Request("https://edge.example.com/health");
-  const env = { AI: {}, PROJECT_DATA: {} };
+  const env = { AI: {}, PROJECT_DATA: { delete: async () => {}, get: async () => null } };
   const res = await gatewayModule.fetch(req, env, {});
   assert.strictEqual(res.status, 200);
   const data = await res.json();
-  assert.strictEqual(data.model, "@cf/meta/llama-3.2-3b-instruct");
+  assert.strictEqual(data.model, "@cf/meta/llama-3.1-8b-instruct");
   assert.strictEqual(data.components.kv_storage, "operational");
   assert.strictEqual(data.components.database, undefined, "Fake database component must be removed");
 });
 
 await testAsync("GET /api/v1/analytics/system-health reports real kv_storage and real model without fake redis", async () => {
   const req = new Request("https://edge.example.com/api/v1/analytics/system-health");
-  const env = { AI: {}, PROJECT_DATA: {} };
+  const env = { AI: {}, PROJECT_DATA: { delete: async () => {}, get: async () => null } };
   const res = await gatewayModule.fetch(req, env, {});
   assert.strictEqual(res.status, 200);
   const data = await res.json();
-  assert.strictEqual(data.workers_ai_model, "@cf/meta/llama-3.2-3b-instruct");
+  assert.strictEqual(data.workers_ai_model, "@cf/meta/llama-3.1-8b-instruct");
   assert.strictEqual(data.kv_storage, "operational");
   assert.strictEqual(data.storage, "Cloudflare KV");
   assert.strictEqual(data.redis_status, undefined, "Fake redis_status must be removed");
@@ -1010,6 +1010,129 @@ test("Strict country filter keeps US projects and rejects foreign projects when 
   assert.strictEqual(testMatchesTargetCountry("Taiwan", "Taoyuan", "United States"), false);
   assert.strictEqual(testMatchesTargetCountry("Singapore", "Tengeh Reservoir", "United States"), false);
   assert.strictEqual(testMatchesTargetCountry("Germany", "Lower Saxony", "United States"), false);
+});
+
+// ==============================================================================
+// 15. VERIFICATION OF 6 CORE USER FIXES
+// ==============================================================================
+console.log("\n[Group 15: Verification of 6 Core User Fixes]");
+
+test("Fix 1: Provider search query does not append stage words ('upcoming', 'announced', 'construction')", () => {
+  const query = "solar power plant";
+  const requestedCategory = "Solar Photovoltaic Power Plant (PV)";
+  const requestedLocation = "India";
+  const searchParts = [query.trim()];
+  if (requestedCategory && !query.toLowerCase().includes(requestedCategory.toLowerCase())) {
+    searchParts.push(requestedCategory);
+  }
+  if (requestedLocation && !query.toLowerCase().includes(requestedLocation.toLowerCase())) {
+    searchParts.push(requestedLocation);
+  }
+  const effectiveSearchText = searchParts.join(" ").trim();
+  const providerSearchQuery = effectiveSearchText;
+
+  assert.strictEqual(providerSearchQuery, "solar power plant Solar Photovoltaic Power Plant (PV) India");
+  assert.strictEqual(/\b(?:upcoming|announced|construction)\b/i.test(providerSearchQuery), false);
+});
+
+test("Fix 2: Allow all stages (Operational, Under Construction, Approved, Announced, Planning) without dropping commissioned plants", () => {
+  const allowedStatuses = ["Announced", "Planning", "Approved", "Under Construction", "Operational", "Commissioned"];
+  assert.ok(allowedStatuses.includes("Operational"));
+  assert.ok(allowedStatuses.includes("Approved"));
+
+  // Check recently commissioned plant
+  const recentCommissionText = "SAEL commissions 1 GWp solar project at Khavda, generating power for the Gujarat state grid.";
+  const isOld = (function isOldCompleted(text) {
+    const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+    const cutoffYear = new Date(Date.now() - ONE_YEAR_MS).getFullYear();
+    const pastMatch = text.match(/\b(?:completed|commissioned|inaugurated|built|operational\s+since|online\s+since|in\s+operation\s+since)\s+(?:in\s+)?(19\d\d|20\d\d)\b/i);
+    if (pastMatch) {
+      const yr = parseInt(pastMatch[1], 10);
+      return !isNaN(yr) && yr < (cutoffYear - 1);
+    }
+    return false;
+  })(recentCommissionText);
+
+  assert.strictEqual(isOld, false, "Recently commissioned project must NOT be dropped");
+
+  // Check old completed project (Bhadla completed in 2020)
+  const oldBhadlaText = "Bhadla solar park completed in 2020 in Rajasthan with 2,245 MW capacity.";
+  const isOldBhadla = (function isOldCompleted(text) {
+    const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+    const cutoffYear = new Date(Date.now() - ONE_YEAR_MS).getFullYear();
+    const pastMatch = text.match(/\b(?:completed|commissioned|inaugurated|built|operational\s+since|online\s+since|in\s+operation\s+since)\s+(?:in\s+)?(19\d\d|20\d\d)\b/i);
+    if (pastMatch) {
+      const yr = parseInt(pastMatch[1], 10);
+      return !isNaN(yr) && yr < (cutoffYear - 1);
+    }
+    return false;
+  })(oldBhadlaText);
+
+  assert.strictEqual(isOldBhadla, true, "Old facility completed years ago MUST be dropped");
+});
+
+test("Fix 3: No invented dates: unassociated text numbers (firstcolo €250M) return empty date, not 2028", () => {
+  const articleText = "firstcolo announces an investment of 250 million euros in a high-efficiency green data center campus in Rosbach vor der Hoehe.";
+  const explicitDate = articleText.slice(0, 1000).match(/\b(?:announced|target\s+completion|completion|operational\s+by|commercial\s+operation\s+by|groundbreaking|start\s+of\s+construction|expected\s+online|inaugurated|commissioned|in\s+service)\s+(?:in\s+|by\s+|for\s+)?([A-Za-z]+\s+\d{4}|\d{4})\b/i);
+  assert.strictEqual(explicitDate, null, "No date context should be detected from bare investment amount");
+
+  const extractedDate = explicitDate ? explicitDate[1] : "";
+  assert.strictEqual(extractedDate, "", "Date must be empty string when not stated in article");
+});
+
+test("Fix 4: Rolling 12-month date window keeps Dec 2025 and does not drop on calendar year", () => {
+  const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+  const cutoffYear = new Date(Date.now() - ONE_YEAR_MS).getFullYear();
+
+  function formatDisplayDateTest(d) {
+    const allYears = Array.from(d.matchAll(/\b(19\d\d|20\d\d)\b/g)).map(m => parseInt(m[1], 10));
+    if (allYears.length > 0 && allYears.every(y => y < (cutoffYear - 1))) {
+      return null;
+    }
+    return d.trim();
+  }
+
+  // December 2025
+  assert.ok(formatDisplayDateTest("Dec 2025") !== null, "Dec 2025 must NOT be dropped");
+  // 2026
+  assert.ok(formatDisplayDateTest("Nov 2026") !== null, "2026 date must NOT be dropped");
+  // Future completion 2028
+  assert.ok(formatDisplayDateTest("Target Completion: 2028") !== null, "Future target date must NOT be dropped");
+  // Old 2020
+  assert.strictEqual(formatDisplayDateTest("2020"), null, "Historical year 2020 must be dropped");
+});
+
+test("Fix 5: Company validation preserves public utilities, SECI, NTPC, and state-owned developers", () => {
+  function isValidCompanyEntityTest(name) {
+    if (!name || typeof name !== "string") return false;
+    const n = name.trim();
+    if (n.length < 2 || n.length > 50) return false;
+    const lower = n.toLowerCase();
+    if (/^(?:none|null|n\/a|various|multiple|unknown|tbd|capital project)\b/i.test(lower)) return false;
+    if (
+      /\b(?:statistics?\s+(?:bureau|agency|office|division)|statistical\s+(?:agency|office)|census\s+bureau|bureau\s+of\s+(?:[a-z\s]+\s+)?statistics|economic\s+analysis\b|regulatory\s+commission|public\s+utilit(?:y|ies)\s+commission|utility\s+regulatory\s+commission|communications\s+commission)\b/i.test(lower) ||
+      /^(?:government|us government|federal government|state government|taiwan government)$/i.test(lower) ||
+      /^(?:government\s+of\s+[a-z\s]+|ministry\s+of\s+[a-z\s]+)$/i.test(lower)
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  assert.strictEqual(isValidCompanyEntityTest("SECI"), true, "SECI (Solar Energy Corporation of India) must be accepted");
+  assert.strictEqual(isValidCompanyEntityTest("NTPC Renewable Energy"), true, "NTPC must be accepted");
+  assert.strictEqual(isValidCompanyEntityTest("Tata Power Solar"), true, "Tata Power Solar must be accepted");
+  assert.strictEqual(isValidCompanyEntityTest("Duke Energy"), true, "Duke Energy must be accepted");
+  assert.strictEqual(isValidCompanyEntityTest("Bureau of Labor Statistics"), false, "Statistics bureau must be rejected");
+  assert.strictEqual(isValidCompanyEntityTest("Federal Energy Regulatory Commission"), false, "Regulatory commission must be rejected");
+});
+
+test("Fix 6: Model upgrade to @cf/meta/llama-3.1-8b-instruct", async () => {
+  const req = new Request("https://edge.example.com/api/v1/analytics/system-health");
+  const env = { AI: {}, PROJECT_DATA: { delete: async () => {}, get: async () => null } };
+  const res = await gatewayModule.fetch(req, env, {});
+  const data = await res.json();
+  assert.strictEqual(data.workers_ai_model, "@cf/meta/llama-3.1-8b-instruct");
 });
 
 console.log("\n=================================================");

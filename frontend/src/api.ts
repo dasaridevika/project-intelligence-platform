@@ -37,8 +37,8 @@ apiClient.interceptors.response.use(
 // DURABLE PERSISTENCE LAYER (Saves data across code updates & redeploys)
 // ==============================================================================
 
-const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v8';
-const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v8';
+const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v9';
+const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v9';
 
 export function hasNonLatin(str?: string): boolean {
   if (!str) return false;
@@ -48,7 +48,7 @@ export function hasNonLatin(str?: string): boolean {
 export function isUpcomingStatus(status?: string): boolean {
   if (!status) return false;
   const s = status.toLowerCase().trim();
-  return s === 'announced' || s === 'planning' || s === 'under construction';
+  return s === 'announced' || s === 'planning' || s === 'approved' || s === 'under construction' || s === 'operational' || s === 'commissioned';
 }
 
 export function isValidCompany(name?: string): boolean {
@@ -87,7 +87,33 @@ export function inferCategoryClient(projectName?: string, summary?: string, hint
 }
 
 export function formatProjectDate(rawDate?: string): string {
-  return (rawDate || '').trim();
+  if (!rawDate || typeof rawDate !== 'string') return '';
+  const d = rawDate.trim();
+  if (/^(?:latest\s+\d{4}|not specified|unknown|tbd|none|n\/a)$/i.test(d)) return '';
+
+  const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+  const cutoffYear = new Date(Date.now() - ONE_YEAR_MS).getFullYear();
+
+  // Extract all 4-digit years in the string
+  const allYears = Array.from(d.matchAll(/\b(19\d\d|20\d\d)\b/g)).map(m => parseInt(m[1], 10));
+  if (allYears.length > 0 && allYears.every(y => y < (cutoffYear - 1))) {
+    return '';
+  }
+
+  // Convert ISO string e.g. "2026-11-09T21:00:33.000Z" to readable format
+  const isoMatch = d.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
+  if (isoMatch) {
+    const year = parseInt(isoMatch[1], 10);
+    if (year < (cutoffYear - 1)) return '';
+    const monthNum = parseInt(isoMatch[2], 10);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    if (monthNum >= 1 && monthNum <= 12) {
+      return `${months[monthNum - 1]} ${year}`;
+    }
+    return `${year}`;
+  }
+
+  return d.replace(/\s*\([^)]*\)/g, '').trim();
 }
 
 export function normalizeCountryName(str?: string): string {
@@ -154,14 +180,18 @@ export function validateAndSanitizeProject(p: any): Project | null {
   const summary = p.summary || p.text || '';
   const rawDate = p.date || '';
 
-  // 1. Company entity validation: reject if website domain / TLD or generic or sovereign government
+  // 1. Company entity validation: reject if website domain / TLD or generic, statistics agency, regulatory commission
   if (/\.(?:online|com|org|net|io|co|info|gov|edu|ai|app|tech|dev|biz|tv|me|us|uk|de|in|cn|jp|fr|es|eu|nl)\b/i.test(rawCompany)) {
     return null;
   }
   if (/^(?:various|multiple|several|diverse|undisclosed|unspecified|anonymous|unknown|tbd|undefined|capital project)\b/i.test(rawCompany)) {
     return null;
   }
-  if (/\b(?:government|ministry|department|commission|bureau|agency)\b/i.test(rawCompany)) {
+  if (
+    /\b(?:statistics?\s+(?:bureau|agency|office|division)|statistical\s+(?:agency|office)|census\s+bureau|bureau\s+of\s+(?:[a-z\s]+\s+)?statistics|economic\s+analysis\b|regulatory\s+commission|public\s+utilit(?:y|ies)\s+commission|utility\s+regulatory\s+commission|communications\s+commission)\b/i.test(rawCompany) ||
+    /^(?:government|us government|federal government|state government|taiwan government)$/i.test(rawCompany) ||
+    /^(?:government\s+of\s+[a-z\s]+|ministry\s+of\s+[a-z\s]+)$/i.test(rawCompany)
+  ) {
     return null;
   }
 
@@ -189,16 +219,15 @@ export function validateAndSanitizeProject(p: any): Project | null {
     return null;
   }
 
-  // 3. Reject already operating facilities or software cloud region launches
-  if (
-    /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|reducing\s+co2\s+emissions\s+by|reduces\s+co2\s+emissions\s+by|cuts\s+\d+[\d,.]*\s+tonnes\s+of\s+co|turned\s+a\s+.*into\s+a\s+solar|signs?\s+25-year\s+floating\s+solar\s+supply\s+agreement)\b/i.test(summary) ||
-    /\b(?:already\s+operating|is\s+already\s+operating|has\s+commenced\s+operations?|commenced\s+operations?|powers\s+up)\b/i.test(summary) ||
-    /\b(?:already\s+operating|has\s+commenced\s+operations?|commenced\s+operations?|powers\s+up)\b/i.test(rawName) ||
-    /\b(?:has\s+launched|launches|launched)\s+(?:a\s+new\s+)?(?:cloud\s+region|data\s*cent(?:er|re))\b/i.test(summary) ||
-    /\b(?:launches|launched)\s+(?:.*?\s+)?cloud\s+region\b/i.test(rawName) ||
-    /(?:-|_|\/)(?:launches|launched)-(?:[a-z0-9-]+-)?cloud-region/i.test(rawUrl)
-  ) {
-    return null;
+  // 3. Reject old historical facilities completed before the 12-month rolling window (e.g. completed in 2020)
+  const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+  const cutoffYear = new Date(Date.now() - ONE_YEAR_MS).getFullYear();
+  const pastMatch = (summary + ' ' + rawName).match(/\b(?:completed|commissioned|inaugurated|built|operational\s+since|online\s+since|in\s+operation\s+since)\s+(?:in\s+)?(19\d\d|20\d\d)\b/i);
+  if (pastMatch) {
+    const yr = parseInt(pastMatch[1], 10);
+    if (!isNaN(yr) && yr < (cutoffYear - 1)) {
+      return null;
+    }
   }
 
   // 4. Reject multi-state, multi-region, or multi-site portfolio aggregations (e.g. "Arizona and Texas Data Center Campuses")
@@ -211,13 +240,19 @@ export function validateAndSanitizeProject(p: any): Project | null {
     return null;
   }
 
-  // Status sanitization
-  let status = p.status || 'Planning';
-  const stLower = status.toLowerCase().trim();
-  if (stLower === 'under construction') {
+  // 5. Status sanitization (Allow all stages: Announced, Planning, Approved, Under Construction, Operational/Commissioned)
+  let status = (p.status || 'Planning').trim();
+  const stLower = status.toLowerCase();
+  if (stLower.includes('operational') || stLower.includes('commission') || stLower.includes('online')) {
+    status = 'Operational';
+  } else if (stLower.includes('construction') || stLower.includes('groundbreak')) {
     status = 'Under Construction';
-  } else if (stLower === 'announced') {
+  } else if (stLower.includes('approved')) {
+    status = 'Approved';
+  } else if (stLower.includes('announced')) {
     status = 'Announced';
+  } else if (stLower.includes('planning')) {
+    status = 'Planning';
   } else {
     status = 'Planning';
   }
@@ -318,10 +353,12 @@ export function cleanSummaryText(raw?: string): string {
 function getStoredProjects(): Project[] {
   try {
     // Purge legacy contaminated storage keys so old bad data cannot resurface
+    localStorage.removeItem('pi_persisted_projects_v8');
     localStorage.removeItem('pi_persisted_projects_v7');
     localStorage.removeItem('pi_persisted_projects_v6');
     localStorage.removeItem('pi_persisted_projects_v5');
     localStorage.removeItem('pi_persisted_projects');
+    localStorage.removeItem('pi_persisted_searches_v8');
     localStorage.removeItem('pi_persisted_searches_v7');
     localStorage.removeItem('pi_persisted_searches_v6');
     localStorage.removeItem('pi_persisted_searches_v5');

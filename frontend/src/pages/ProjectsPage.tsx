@@ -23,7 +23,7 @@ import {
   Tag,
   X
 } from 'lucide-react';
-import { api, cleanSummaryText, validateAndSanitizeProject, getProjectDedupKey, matchesTargetCountry } from '../api';
+import { api, cleanSummaryText, validateAndSanitizeProject, getProjectDedupKey, matchesTargetCountry, formatProjectDate } from '../api';
 import { PrimarySector, Project, SearchRun } from '../types';
 import { SectorBadge, findPrimarySector } from '../components/Sector';
 import { GLOBAL_LOCATIONS } from './SearchPage';
@@ -31,22 +31,7 @@ import primarySectorsData from '../data/primary_sectors.json';
 
 const ALL_SECTORS = primarySectorsData as PrimarySector[];
 
-export function formatProjectDate(d?: string): string {
-  if (!d) return '';
-  const trimmed = d.trim();
-  if (/^(?:latest\s+\d{4}|not specified|unknown|tbd|none|n\/a)$/i.test(trimmed)) return '';
-  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
-  if (isoMatch) {
-    const year = isoMatch[1];
-    const monthNum = parseInt(isoMatch[2], 10);
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    if (monthNum >= 1 && monthNum <= 12) {
-      return `${months[monthNum - 1]} ${year}`;
-    }
-    return year;
-  }
-  return trimmed;
-}
+export { formatProjectDate };
 
 export const ProjectsPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -268,7 +253,9 @@ export const ProjectsPage: React.FC = () => {
 
   const getStatusColor = (status: string) => {
     const s = status.toLowerCase();
-    if (s.includes('construction')) return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+    if (s.includes('operational') || s.includes('commission')) return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+    if (s.includes('approved')) return 'bg-teal-500/10 text-teal-400 border-teal-500/30';
+    if (s.includes('construction') || s.includes('groundbreak')) return 'bg-amber-500/10 text-amber-400 border-amber-500/30';
     if (s.includes('announced')) return 'bg-sky-500/10 text-sky-400 border-sky-500/30';
     if (s.includes('planning')) return 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30';
     return 'bg-slate-800 text-slate-300 border-slate-700';
@@ -366,10 +353,12 @@ export const ProjectsPage: React.FC = () => {
               onChange={(e) => setStatusFilter(e.target.value)}
               className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-xs text-slate-200 focus:outline-none focus:border-sky-500"
             >
-              <option value="">All Upcoming Statuses</option>
-              <option value="under construction">Under Construction</option>
+              <option value="">All Project Stages</option>
               <option value="announced">Announced</option>
               <option value="planning">Planning</option>
+              <option value="approved">Approved</option>
+              <option value="under construction">Under Construction</option>
+              <option value="operational">Commissioned / Operational</option>
             </select>
           </div>
 

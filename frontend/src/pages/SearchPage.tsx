@@ -356,7 +356,7 @@ export const SearchPage: React.FC = () => {
               <div className="text-2xl font-bold text-white font-mono">
                 {queryTelemetry?.workers_ai_inferences ?? timelineEvents.filter(e => e.message?.includes('Workers AI Extraction') || e.event_type === 'candidate_accepted' || e.event_type === 'extraction_completed').length}
               </div>
-              <p className="text-[10px] text-slate-400">Llama 3.2 3B Inferences</p>
+              <p className="text-[10px] text-slate-400">Llama 3.1 8B Inferences</p>
             </div>
 
             {/* Exa Neural */}

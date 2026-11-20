@@ -5,7 +5,7 @@
  * - Edge Discovery Engine: Natural language query parsing across 462 primary industrial sectors
  * - Pre-LLM Validation & Deduplication: Zero duplicate queries, zero duplicate URLs, strict domain filter
  * - High-Efficiency Parallel Fetcher: Concurrent HTML fetching with timeout guards & noise stripping
- * - Cloudflare Workers AI: Powered by Meta Llama 3.2 3B Instruct (@cf/meta/llama-3.2-3b-instruct)
+ * - Cloudflare Workers AI: Powered by Meta Llama 3.1 8B Instruct (@cf/meta/llama-3.1-8b-instruct)
  * - Complete In-Worker REST & SSE API: All search, project, sector, analytics, and monitoring endpoints
  * - Static React SPA Hosting: Serves production frontend assets with single-page routing
  */
@@ -100,7 +100,7 @@ const store = {
   apiUsage: [
     {
       provider: "Cloudflare Workers AI",
-      endpoint: "@cf/meta/llama-3.2-3b-instruct",
+      endpoint: "@cf/meta/llama-3.1-8b-instruct",
       requests_sent: 0,
       success_count: 0,
       failed_count: 0,
@@ -180,8 +180,8 @@ function getQueryCacheKey(query, sector, country) {
   return `${q}::${s}::${c}`;
 }
 
-const KV_PROJECTS_KEY = "projects_v7";
-const KV_SEARCHES_KEY = "searches_v6";
+const KV_PROJECTS_KEY = "projects_v9";
+const KV_SEARCHES_KEY = "searches_v9";
 
 // Durable KV Persistence Layer (Survives worker code changes & redeploys)
 async function hydrateStore(env) {
@@ -189,7 +189,13 @@ async function hydrateStore(env) {
   try {
     // Purge legacy unvalidated KV keys so contaminated records cannot resurrect
     env.PROJECT_DATA.delete("projects").catch(() => {});
+    env.PROJECT_DATA.delete("projects_v6").catch(() => {});
+    env.PROJECT_DATA.delete("projects_v7").catch(() => {});
+    env.PROJECT_DATA.delete("projects_v8").catch(() => {});
     env.PROJECT_DATA.delete("searches").catch(() => {});
+    env.PROJECT_DATA.delete("searches_v6").catch(() => {});
+    env.PROJECT_DATA.delete("searches_v7").catch(() => {});
+    env.PROJECT_DATA.delete("searches_v8").catch(() => {});
     env.PROJECT_DATA.delete("pi_persisted_projects_v5").catch(() => {});
 
     if (store.projects.size === 0) {
@@ -589,11 +595,12 @@ function isValidCompanyEntity(name) {
     return false;
   }
 
-  // Reject government departments, sovereign governments, statistics agencies, or regulatory commissions
+  // Reject statistics agencies, regulatory commissions, or generic sovereign governments
+  // (Do NOT reject real developers, public utilities, or state-owned developers)
   if (
-    /\b(?:government|ministry|department|commission|bureau|agency)\b/i.test(lower) ||
-    /\b(?:government|ministry|department)\s+of\b/i.test(lower) ||
-    /^(?:public service commission|state government|federal government|energy information administration)$/i.test(lower)
+    /\b(?:statistics?\s+(?:bureau|agency|office|division)|statistical\s+(?:agency|office)|census\s+bureau|bureau\s+of\s+(?:[a-z\s]+\s+)?statistics|economic\s+analysis\b|regulatory\s+commission|public\s+utilit(?:y|ies)\s+commission|utility\s+regulatory\s+commission|communications\s+commission)\b/i.test(lower) ||
+    /^(?:government|us government|federal government|state government|taiwan government)$/i.test(lower) ||
+    /^(?:government\s+of\s+[a-z\s]+|ministry\s+of\s+[a-z\s]+)$/i.test(lower)
   ) {
     return false;
   }
@@ -1103,59 +1110,25 @@ function inferCategory(projectName, summary, hintCategory) {
   return "Capital Infrastructure";
 }
 
-function isCompletedOrOperationalFacility(url, title, summary, text) {
-  const u = (url || "").toLowerCase();
-  const t = (title || "").toLowerCase();
-  const s = ((summary || "") + " " + (text || "")).toLowerCase();
-  const currentYear = new Date().getFullYear();
+function isOldCompletedProject(url, title, summary, text) {
+  const combined = `${url || ""} ${title || ""} ${summary || ""} ${text || ""}`.toLowerCase();
+  const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+  const cutoffYear = new Date(Date.now() - ONE_YEAR_MS).getFullYear();
 
-  // 1. URL slug patterns indicating the facility has already opened/completed or launched
-  if (
-    /(?:-|_|\/)(?:is-open|now-open|opens|opened|launches-operations|begins-operations|goes-online|inaugurated|commissioned|completed|entry-into)(?:-|_|\/|\.|$)/i.test(u) ||
-    /(?:-|_|\/)(?:came-online|comes-online|just-came-online|goes-online|go-fully-operational|goes-fully-operational|went-fully-operational|fully-operational|go-operational|goes-operational|went-operational)(?:-|_|\/|\.|$)/i.test(u) ||
-    /(?:-|_|\/)(?:launches|launched)(?:-[a-z0-9-]+)?-(?:cloud-region|data-cent(?:er|re)|fab|plant|facility|campus|hub|solar|farm)(?:-|_|\/|\.|$)/i.test(u) ||
-    /(?:-|_|\/)(?:opens|opened)-(?:[a-z0-9-]+-)?(?:data-cent(?:er|re)|fab|plant|facility|campus|hub|solar|farm)(?:-|_|\/|\.|$)/i.test(u) ||
-    /(?:-|_|\/)(?:now-powers|turned-[a-z0-9-]+-into|supply-agreement|ppa-agreement)(?:-|_|\/|\.|$)/i.test(u)
-  ) {
-    return true;
+  // Match completion in a past year strictly before the 12-month window (e.g. "completed in 2020", "commissioned in 2018")
+  const pastMatch = combined.match(/\b(?:completed|commissioned|inaugurated|built|operational\s+since|online\s+since|in\s+operation\s+since|commercial\s+operation\s+since)\s+(?:in\s+|since\s+)?(19\d\d|20\d\d)\b/i);
+  if (pastMatch) {
+    const yr = parseInt(pastMatch[1], 10);
+    if (!isNaN(yr) && yr < (cutoffYear - 1)) {
+      return true;
+    }
   }
 
-  // 2. Title & Headline patterns indicating opened/completed status, commercial operation, or active powering
-  if (
-    /\b(?:is open|now open|has opened|opens data cent(?:er|re)|opened its|opens new|officially opened|opens megafab|opens plant|inaugurated|inaugurates|commenced\s+(?:commercial\s+)?operations|has\s+commenced\s+operations|now operational|commercial operation started|begins operations|went online|starts operations|has been commissioned|completes construction of)\b/i.test(t) ||
-    /\b(?:came online|just came online|comes online|go fully operational|goes fully operational|went fully operational|go operational|goes operational|went operational|fully operational|now fully operational|is fully operational|already\s+operating|is\s+already\s+operating)\b/i.test(t) ||
-    /\b(?:powers\s+up|powered\s+up|powering\s+up)\b/i.test(t) ||
-    /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|turned\s+(?:a|an|[a-z0-9\s-]+)\s+into\s+a\s+(?:solar|wind|power|data\s+center)|covered\s+(?:a|an|[a-z0-9\s-]+)\s+with\s+(?:floating\s+)?solar)\b/i.test(t) ||
-    /\b(?:signs?\s+(?:\d+[- ]year\s+)?(?:solar|wind|clean\s+energy|floating\s+solar|power)?\s*(?:supply|ppa|power\s+purchase)\s+agreement\s+with)\b/i.test(t) ||
-    /\b(?:launches|launched|is launching|launching)\s+(?:(?:third|fourth|second|first|new|its|another|\d+(?:st|nd|rd|th)?)\s+)*(?:cloud\s+region|data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(t) ||
-    /\b(?:launches\s+data\s*cent(?:er|re)|launched\s+data\s*cent(?:er|re)|launches\s+cloud\s+region|launched\s+cloud\s+region)\b/i.test(t) ||
-    /\bmarking\s+its\s+entry\s+into\b/i.test(t) ||
-    /\b(?:inauguré|inaugurée|mis\s+en\s+service|in\s+Betrieb|nimmt\s+Betrieb\s+auf|ha\s+inaugurado|ha\s+entrado\s+en\s+operación|entró\s+en\s+operación)\b/i.test(t)
-  ) {
-    return true;
-  }
-
-  // 3. Summary & content patterns indicating operational status
-  if (
-    /\b(?:is now open|has officially opened|opened its doors|opened its factory|opened its fab|opened its plant|opened its facility|began operations|started commercial operations|is now operational|facility is open|operational since|first data cent(?:er|re) built .* is open)\b/i.test(s) ||
-    /\b(?:came online|just came online|comes online|go fully operational|goes fully operational|went fully operational|go operational|goes operational|went operational|fully operational|now fully operational|is fully operational|already\s+operating|is\s+already\s+operating)\b/i.test(s) ||
-    /\b(?:commenced\s+(?:commercial\s+)?operations|has\s+commenced\s+operations|commences\s+operations)\b/i.test(s) ||
-    /\b(?:now\s+powers|currently\s+powers|it\s+now\s+powers|powers\s+\d+|is\s+powering|now\s+generates|currently\s+generates|now\s+supplies|supplies\s+power\s+to|reducing\s+co2\s+emissions\s+by|reduces\s+co2\s+emissions\s+by|cuts\s+\d+[\d,.]*\s+tonnes\s+of\s+co|turned\s+(?:a|an|[a-z0-9\s-]+)\s+into\s+a\s+(?:solar|wind|power|data\s+center)|covered\s+(?:a|an|[a-z0-9\s-]+)\s+with\s+(?:floating\s+)?solar)\b/i.test(s) ||
-    /\b(?:signs?\s+(?:\d+[- ]year\s+)?(?:solar|wind|clean\s+energy|floating\s+solar|power)?\s*(?:supply|ppa|power\s+purchase)\s+agreement\s+with)\b/i.test(s) ||
-    /\b(?:launches|launched|is launching|launching)\s+(?:(?:third|fourth|second|first|new|its|another|\d+(?:st|nd|rd|th)?)\s+)*(?:cloud\s+region|data\s*cent(?:er|re)|fab|plant|facility|campus|hub)\b/i.test(s) ||
-    /\b(?:launches\s+cloud\s+region|launched\s+cloud\s+region)\b/i.test(s) ||
-    /\bmarking\s+its\s+entry\s+into\b/i.test(s) ||
-    /\b(?:inauguré|inaugurée|mis\s+en\s+service|in\s+Betrieb|nimmt\s+Betrieb\s+auf|ha\s+inaugurado|ha\s+entrado\s+en\s+operación|entró\s+en\s+operación)\b/i.test(s)
-  ) {
-    return true;
-  }
-
-  // 4. Past year completions: any facility opened, completed, inaugurated, or operational in past years
-  const pastYearMatch = s.match(/\b(?:inaugurated|commissioned|completed|opened|launched|built|operational|in\s+operation|online|commenced|started\s+operations?|commercial\s+operations?)\s+(?:in|since)\s+(?:[a-z]+\s+)?(20\d\d)\b/i) ||
-                        t.match(/\b(?:inaugurated|commissioned|completed|opened|launched|built|operational|in\s+operation|online|commenced|started\s+operations?|commercial\s+operations?)\s+(?:in|since)\s+(?:[a-z]+\s+)?(20\d\d)\b/i);
-  if (pastYearMatch) {
-    const yr = parseInt(pastYearMatch[1], 10);
-    if (!isNaN(yr) && yr < currentYear) {
+  // URL slug indicating an old historical year
+  const urlYearMatch = (url || "").match(/(?:-|_|\/)(19\d\d|20\d\d)(?:-|_|\/)/);
+  if (urlYearMatch) {
+    const yr = parseInt(urlYearMatch[1], 10);
+    if (!isNaN(yr) && yr < (cutoffYear - 1) && /\b(?:completed|commissioned|inaugurated|built|operational)\b/i.test(combined)) {
       return true;
     }
   }
@@ -1163,21 +1136,27 @@ function isCompletedOrOperationalFacility(url, title, summary, text) {
   return false;
 }
 
+function isCompletedOrOperationalFacility(url, title, summary, text) {
+  return isOldCompletedProject(url, title, summary, text);
+}
+
 function extractStatusFromText(text, url) {
   const t = (text || "").toLowerCase();
-  const u = (url || "").toLowerCase();
 
-  // Priority 1: If explicitly completed, opened, or operational, drop it immediately!
-  if (
-    isCompletedOrOperationalFacility(u, "", "", t) ||
-    /\b(?:completed|operational|commissioned|opened|inaugurated|online|in service|commercial operation|is open|now open|has opened|opens data cent(?:er|re)|began operations)\b/i.test(t) ||
-    /\b(?:came online|just came online|comes online|go fully operational|goes fully operational|went fully operational|go operational|goes operational|went operational|fully operational|now fully operational|is fully operational)\b/i.test(t)
-  ) {
+  // If it's an old completed plant finished before the 12-month window, drop it
+  if (isOldCompletedProject(url, "", "", t)) {
     return null;
   }
 
+  // Detect real status from article content (Allow all stages: Operational, Under Construction, Approved, Announced, Planning)
+  if (/\b(?:commissioned|commissions|commissioning|operational|now\s+operational|went\s+online|came\s+online|now\s+powers|is\s+powering|powers\s+up|opened\s+its|officially\s+opened|inaugurated)\b/i.test(t)) {
+    return "Operational";
+  }
   if (t.includes("under construction") || t.includes("breaks ground") || t.includes("groundbreaking") || t.includes("underway") || t.includes("construction has begun")) {
     return "Under Construction";
+  }
+  if (/\b(?:approved|approval|green light|permits?\s+approved|cleared|wins?\s+bid|awarded)\b/i.test(t)) {
+    return "Approved";
   }
   if (t.includes("announced") || t.includes("announces") || t.includes("unveils") || t.includes("proposes") || t.includes("plans to build") || t.includes("secures funding")) {
     return "Announced";
@@ -1185,7 +1164,7 @@ function extractStatusFromText(text, url) {
   if (/\b(?:planning|permitting|environmental review|feed|designed to|proposed)\b/i.test(t)) {
     return "Planning";
   }
-  return null;
+  return "Planning";
 }
 
 function extractDateFromTextOrUrl(text, url, publishedDate) {
@@ -1200,26 +1179,24 @@ function extractDateFromTextOrUrl(text, url, publishedDate) {
 
   // Check URL slug for date pattern: /2026/11/04 or -2026-11-04 or /2026-11
   if (url) {
-    const fullDate = url.match(/\b(202[4-9]|203\d)[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12]\d|3[01])\b/);
+    const fullDate = url.match(/\b(19\d\d|20\d\d)[-/](0[1-9]|1[0-2])[-/](0[1-9]|[12]\d|3[01])\b/);
     if (fullDate) return `${fullDate[1]}-${fullDate[2]}-${fullDate[3]}`;
 
-    const monthYear = url.match(/\b(202[4-9]|203\d)[-/](0[1-9]|1[0-2])\b/);
+    const monthYear = url.match(/\b(19\d\d|20\d\d)[-/](0[1-9]|1[0-2])\b/);
     if (monthYear) return `${monthYear[1]}-${monthYear[2]}`;
 
-    const year = url.match(/\b(202[4-9]|203\d)\b/);
-    if (year) return year[1];
+    const pathYear = url.match(/(?:-|_|\/)(20\d\d)(?:-|_|\/)/);
+    if (pathYear) return pathYear[1];
   }
 
-  // Check text snippet for formatted date: e.g. "November 2026", "Nov 15, 2026", "2026"
+  // Check text snippet for explicit date context (e.g. "announced in Nov 2026", "target completion 2027", "scheduled for 2026")
+  // NEVER extract arbitrary unassociated future numbers!
   if (text) {
-    const textDate = text.slice(0, 800).match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+(202[4-9]|203\d)\b/i);
-    if (textDate) return textDate[0];
+    const explicitDate = text.slice(0, 1000).match(/\b(?:announced|target\s+completion|completion|operational\s+by|commercial\s+operation\s+by|groundbreaking|start\s+of\s+construction|expected\s+online|inaugurated|commissioned|in\s+service)\s+(?:in\s+|by\s+|for\s+)?([A-Za-z]+\s+\d{4}|\d{4})\b/i);
+    if (explicitDate) return explicitDate[1];
 
-    const myMatch = text.slice(0, 800).match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+(202[4-9]|203\d)\b/i);
-    if (myMatch) return myMatch[0];
-
-    const yearMatch = text.slice(0, 800).match(/\b(202[5-9]|203\d)\b/);
-    if (yearMatch) return yearMatch[1];
+    const standardDate = text.slice(0, 1000).match(/\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+(19\d\d|20\d\d)\b/i);
+    if (standardDate) return standardDate[0];
   }
 
   return "";
@@ -1228,36 +1205,24 @@ function extractDateFromTextOrUrl(text, url, publishedDate) {
 function formatDisplayDate(rawDate) {
   if (!rawDate || typeof rawDate !== "string") return "";
   const d = rawDate.trim();
-  const currentYear = new Date().getFullYear();
   if (/^(?:latest\s+\d{4}|not specified|unknown|tbd|none|n\/a)$/i.test(d)) return "";
 
-  // Extract all years in the string
-  const allYears = Array.from(d.matchAll(/\b(20[1-3]\d)\b/g)).map(m => parseInt(m[1], 10));
-  const futureYears = allYears.filter(y => y >= currentYear);
-  const pastYears = allYears.filter(y => y < currentYear);
+  // The 12-month window rule:
+  const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+  const cutoffYear = new Date(Date.now() - ONE_YEAR_MS).getFullYear();
 
-  // If the ONLY year mentioned is historical (< currentYear), return null to drop
-  if (allYears.length > 0 && futureYears.length === 0 && pastYears.length > 0) {
+  // Extract all 4-digit years in the string
+  const allYears = Array.from(d.matchAll(/\b(19\d\d|20\d\d)\b/g)).map(m => parseInt(m[1], 10));
+  // Only drop if every year mentioned is strictly older than the 12-month window (e.g. 2020 or 2022)
+  if (allYears.length > 0 && allYears.every(y => y < (cutoffYear - 1))) {
     return null;
   }
 
-  // If upcoming years are mentioned, extract target year
-  if (futureYears.length > 0) {
-    const targetYear = futureYears[0];
-    const monthMatch = d.match(new RegExp(`\\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+${targetYear}\\b`, 'i'));
-    if (monthMatch) {
-      const monthPrefix = monthMatch[1].slice(0, 3);
-      const cleanMonth = monthPrefix.charAt(0).toUpperCase() + monthPrefix.slice(1).toLowerCase();
-      return `${cleanMonth} ${targetYear}`;
-    }
-    return `${targetYear}`;
-  }
-
-  // Convert ISO string e.g. "2026-11-09T21:00:33.000Z" to readable format
+  // Convert ISO string e.g. "2026-11-09T21:00:33.000Z" to readable format e.g. "Nov 2026"
   const isoMatch = d.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
   if (isoMatch) {
     const year = parseInt(isoMatch[1], 10);
-    if (year < currentYear) return null;
+    if (year < (cutoffYear - 1)) return null;
     const monthNum = parseInt(isoMatch[2], 10);
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     if (monthNum >= 1 && monthNum <= 12) {
@@ -1266,7 +1231,6 @@ function formatDisplayDate(rawDate) {
     return `${year}`;
   }
 
-  // Strip trailing parentheticals, e.g. "2026 (groundbreaking)" -> "2026"
   return d.replace(/\s*\([^)]*\)/g, "").trim();
 }
 
@@ -1287,12 +1251,8 @@ function validateAndSanitizeProjectRecord(p) {
   // 2. Reject generic reports, listicles, directories, macro outlooks, or non-project lead
   if (isGenericReportOrDirectory(rawUrl, rawName, rawCompany, summary)) return null;
 
-  // 3. Reject completed, operational, or commissioned facilities
-  const sLower = (p.status || "").toLowerCase();
-  if (sLower.includes("operational") || sLower.includes("completed") || sLower.includes("commissioned")) {
-    return null;
-  }
-  if (isCompletedOrOperationalFacility(rawUrl, rawName, summary, summary)) {
+  // 3. Reject old historical facilities completed before the 12-month window
+  if (isOldCompletedProject(rawUrl, rawName, summary, summary)) {
     return null;
   }
 
@@ -1306,20 +1266,23 @@ function validateAndSanitizeProjectRecord(p) {
   if (/^(?:top\s+\d+|overview|pipeline|generator\s+rows|database|report)\b/i.test(cleanName)) return null;
   if (/^<.*>$/i.test(cleanName) || /<(?:facility|project|campus|company|developer)\s+name>/i.test(cleanName) || /^(?:<facility\s+name>|<project\s+name>|<campus\s+name>)\b/i.test(cleanName)) return null;
   if (isWebsiteOwnName(rawCompany, rawUrl, cleanName)) return null;
-  if (isCompletedOrOperationalFacility(rawUrl, cleanName, summary, summary)) return null;
+  if (isOldCompletedProject(rawUrl, cleanName, summary, summary)) return null;
   if (isGenericReportOrDirectory(rawUrl, cleanName, rawCompany, summary)) return null;
 
   // 6. Infer and validate accurate category
   const category = inferCategory(cleanName, summary, p.category);
 
-  // 7. Status sanitization
-  let status = p.status || "";
+  // 7. Status sanitization (Allow all stages: Announced, Planning, Approved, Under Construction, Operational/Commissioned)
+  let status = (p.status || "").trim();
   const statusFromText = extractStatusFromText(cleanName + " " + summary, rawUrl);
-  if (statusFromText === null && isCompletedOrOperationalFacility(rawUrl, cleanName, summary, summary)) {
+  if (statusFromText === null && isOldCompletedProject(rawUrl, cleanName, summary, summary)) {
     return null;
   }
-  if (!["Announced", "Planning", "Under Construction"].includes(status)) {
+  if (!["Announced", "Planning", "Approved", "Under Construction", "Operational", "Commissioned"].includes(status)) {
     status = statusFromText || "Planning";
+  }
+  if (status === "Commissioned") {
+    status = "Operational";
   }
 
   // 8. Location sanitization
@@ -1810,10 +1773,10 @@ function fallbackRegexExtract(text, url, titleHint, hintCategory) {
     };
   }
 
-  if (isCompletedOrOperationalFacility(url, canonical_name, "", text) || isCompletedOrOperationalFacility(url, rawCanonical, "", text)) {
+  if (isOldCompletedProject(url, canonical_name, "", text) || isOldCompletedProject(url, rawCanonical, "", text)) {
     return {
       is_project: false,
-      reason: "Facility is already completed or operational. Platform strictly requires upcoming capital projects only."
+      reason: "Facility was completed prior to the 12-month rolling window."
     };
   }
 
@@ -1821,7 +1784,7 @@ function fallbackRegexExtract(text, url, titleHint, hintCategory) {
   if (!projectStatus) {
     return {
       is_project: false,
-      reason: "Facility is already completed or operational. Platform strictly requires upcoming capital projects only."
+      reason: "Article does not identify an active capital project lifecycle status."
     };
   }
 
@@ -1853,17 +1816,19 @@ A VALID CAPITAL PROJECT MUST:
 1. Cover a concrete, individual physical facility, building, plant, megafab, hyperscale data center, power plant, solar/wind farm, transmission line, battery gigafactory, or campus expansion. It must be ONE distinct development, NOT an aggregate multi-state or multi-region portfolio.
 2. Have an identifiable corporate company, developer, owner, or operator building, expanding, or financing it. NEVER return the news site, media publisher, statistical agency, or market research portal.
 3. Have a verifiable location (city, state, region, or country).
-4. Be in one of these 3 active development lifecycle stages (ALL 3 ARE VALID):
+4. Be in one of these lifecycle stages:
    - "Announced": Newly announced investments, proposed facilities, capital expansion plans, or financing rounds for buildouts.
    - "Planning": In permitting, FEED, architectural design, environmental review, or procurement.
-   - "Under Construction": Groundbreaking, foundation work, active construction, or ongoing campus buildout. Active construction and expansions ARE VALID PROJECTS.
+   - "Approved": Permits approved, green light received, site rezoned, or concession/tender awarded.
+   - "Under Construction": Groundbreaking, foundation work, active construction, or ongoing campus buildout.
+   - "Operational": Recently commissioned, inaugurated, or commencing operations within the last 12 months.
 
-DO NOT REJECT active construction, site buildouts, or facility expansions!
+DO NOT REJECT active construction, site buildouts, or recently commissioned facilities!
 
 ONLY REJECT (set "is_project": false) IF:
 1. The candidate is a multi-project list, roundup, directory, database, compilation, or ranking. NEVER extract a multi-project listicle or directory as a single project!
-2. The developer/company is a website domain name, URL, media outlet, data directory (e.g. names containing web TLDs like .online, .com, .org, .net), data/statistics publisher, research agency, or government department rather than a commercial project developer.
-3. The facility is already completed, commissioned in past years, or currently operational or active in any language. For any operating, active, or completed facility, set "is_already_operating": true or set "is_project": false.
+2. The developer/company is a website domain name, URL, media outlet, data directory (e.g. names containing web TLDs like .online, .com, .org, .net), data/statistics publisher, research agency, or government department rather than a commercial project developer or public utility.
+3. The facility was completed, commissioned, or operational before the last 12-month window (e.g. historical plants completed years ago). Recent news reviewing an old finished project is NOT a new project.
 4. The candidate is an aggregate industry pipeline report, generator inventory, or statistical dataset.
 5. The page is an educational article, academic study, technology explainer, or how-to guide.
 6. The page is a colocation directory, search engine for capacity, or vendor marketplace.
@@ -1872,7 +1837,7 @@ ONLY REJECT (set "is_project": false) IF:
 9. The candidate is a multi-state or multi-region aggregate portfolio bundling multiple distinct facilities across different states or territories into one record.
 
 CRITICAL REQUIREMENT - COMPANY ENTITY:
-- The "company" field MUST be the actual corporate developer, operator, or owner entity constructing or financing the facility.
+- The "company" field MUST be the actual corporate developer, operator, or owner entity constructing or financing the facility (including public utilities and state-owned energy developers).
 - NEVER use website domain names (e.g. ending in a web domain TLD), media publishers, statistical agencies, regulatory commissions, author bylines, or generic placeholder terms.
 
 CRITICAL REQUIREMENT - ACCURATE CATEGORY:
@@ -1891,13 +1856,12 @@ If ONE OR MORE VALID PROJECTS:
   "projects": [
     {
       "canonical_name": "Official canonical name of the individual capital facility or project in English. Extract ONLY the real project name directly stated in the webpage; NEVER invent placeholder names or output article headlines.",
-      "company": "Specific commercial enterprise, developer, or owner entity constructing or operating the facility. Extract ONLY the real corporate entity directly stated in the webpage.",
+      "company": "Specific commercial enterprise, developer, utility, or owner entity constructing or operating the facility. Extract ONLY the real corporate entity directly stated in the webpage.",
       "country": "Sovereign nation in English where the facility is physically located.",
       "location": "Specific city, state, province, or local administrative region in English.",
-      "status": "Announced | Planning | Under Construction",
-      "is_already_operating": true | false,
+      "status": "Announced | Planning | Approved | Under Construction | Operational",
       "category": "Primary industrial sector of the facility in English.",
-      "date": "Target start, completion, or announcement year or date if explicitly stated in the text, or empty string if not mentioned.",
+      "date": "Only keep an explicit date stated in the text prefixed by its meaning (e.g. 'Announced: Nov 2026', 'Target Completion: 2028', 'Groundbreaking: 2026', 'Commissioned: Oct 2026'), or empty string \"\" if not mentioned.",
       "summary": "1-2 complete factual sentences in fluent English describing the project, developer, and its development scope."
     }
   ]
@@ -1924,8 +1888,8 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
   let aiSuccess = false;
 
   const modelsToTry = [
-    "@cf/meta/llama-3.2-3b-instruct",
-    "@cf/meta/llama-3.2-1b-instruct"
+    "@cf/meta/llama-3.1-8b-instruct",
+    "@cf/meta/llama-3.2-3b-instruct"
   ];
 
   for (const modelName of modelsToTry) {
@@ -1936,7 +1900,7 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
           { role: "user", content: userPrompt },
         ],
         temperature: 0.1,
-        max_tokens: 500,
+        max_tokens: 1024,
       });
 
       rawOutput = aiResponse?.response || (typeof aiResponse === "string" ? aiResponse : JSON.stringify(aiResponse)) || "";
@@ -1976,11 +1940,17 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
           finalStatus = "Announced";
         } else if (/^planning$/i.test(rawStatus)) {
           finalStatus = "Planning";
+        } else if (/^approved$/i.test(rawStatus)) {
+          finalStatus = "Approved";
         } else if (/^under\s+construction$/i.test(rawStatus)) {
           finalStatus = "Under Construction";
+        } else if (/^operational|commissioned$/i.test(rawStatus)) {
+          finalStatus = "Operational";
+        } else {
+          finalStatus = extractStatusFromText((item.canonical_name || "") + " " + (item.summary || ""), targetUrl) || "Planning";
         }
 
-        // Drop unknown or completed statuses
+        // Drop if no valid status could be identified
         if (!finalStatus) {
           continue;
         }
@@ -2015,11 +1985,10 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
 
         if (hasNonLatinScript(projectName) || hasNonLatinScript(companyVal)) continue;
         if (isGenericReportOrDirectory(targetUrl, projectName, companyVal, item.summary) || isGenericReportOrDirectory(targetUrl, rawProjectName, companyVal, item.summary)) continue;
-        if (item.is_already_operating === true || item.status === "Operational" || item.status === "Completed") continue;
         if (
-          isCompletedOrOperationalFacility(targetUrl, projectName, item.summary, pageText) ||
-          isCompletedOrOperationalFacility(targetUrl, rawProjectName, item.summary, pageText) ||
-          isCompletedOrOperationalFacility(targetUrl, hintTitle, item.summary, pageText)
+          isOldCompletedProject(targetUrl, projectName, item.summary, pageText) ||
+          isOldCompletedProject(targetUrl, rawProjectName, item.summary, pageText) ||
+          isOldCompletedProject(targetUrl, hintTitle, item.summary, pageText)
         ) {
           continue;
         }
@@ -2068,36 +2037,57 @@ Evaluate whether this discusses genuine upcoming capital projects in JSON:`;
   return [fb];
 }
 
-// Single Batch AI Extraction: Evaluates all candidates in exactly 1 Workers AI request
+// Focused Batch AI Extraction: Evaluates candidates in focused chunks of 4-5 candidates using Llama 3.1 8B
 async function extractBatchProjectsWithWorkersAI(ai, candidateItems, targetCategory) {
   if (!ai || typeof ai.run !== "function" || !candidateItems || candidateItems.length === 0) {
     return [];
   }
 
-  const systemPrompt = `You are an expert industrial intelligence analyst evaluating web discovery sources to identify genuine upcoming capital infrastructure, manufacturing, and development projects.
+  const CHUNK_SIZE = 5;
+  const chunks = [];
+  const maxCandidates = Math.min(candidateItems.length, 10);
+  for (let i = 0; i < maxCandidates; i += CHUNK_SIZE) {
+    chunks.push({
+      items: candidateItems.slice(i, i + CHUNK_SIZE),
+      offset: i
+    });
+  }
+
+  const chunkResults = await Promise.all(
+    chunks.map(chunk => extractBatchCandidateChunk(ai, chunk.items, targetCategory, chunk.offset))
+  );
+
+  return chunkResults.flat();
+}
+
+async function extractBatchCandidateChunk(ai, items, targetCategory, offset) {
+  const systemPrompt = `You are an expert industrial intelligence analyst evaluating web discovery sources to identify genuine capital infrastructure, manufacturing, renewable energy, and industrial development projects.
 
 TASK:
-Examine the numbered candidates. For each candidate that discusses a genuine, real-world physical capital project in development:
+Examine the numbered candidates. For each candidate that discusses a genuine, real-world physical capital project:
 Extract the required project parameters in fluent, standard English.
 
 A VALID CAPITAL PROJECT MUST:
 1. Be a concrete, individual physical facility, building, megafab, data center campus, power plant, solar/battery farm, or facility expansion. It must be ONE distinct development, NOT an aggregate industry category, ranking, multi-project inventory, or multi-state/multi-region portfolio buildout across multiple states or sites.
-2. Have an identifiable corporate developer, owner, or operator building, financing, or operating it. NEVER return a data publisher, research platform, government statistical bureau, or news outlet as the developer.
+2. Have an identifiable corporate developer, utility, or owner building, financing, or operating it. Commercial developers, public utilities, and state-owned power/energy enterprises ARE valid developers. NEVER return a data publisher, research platform, government statistical bureau, or news outlet as the developer.
 3. Have a verifiable location (city, state, region, or country).
-4. Be in one of these 3 active development lifecycle stages (ALL 3 ARE VALID):
+4. Be in one of these lifecycle stages:
    - "Announced": Newly announced investments, proposed facilities, capital expansion plans, or financing rounds for buildouts.
    - "Planning": In permitting, FEED, architectural design, environmental review, or procurement.
+   - "Approved": Regulatory/environmental permits approved, green light granted, site rezoned, or concession/tender awarded.
    - "Under Construction": Groundbreaking, foundation work, active construction, or ongoing campus buildout.
+   - "Operational": Recently commissioned, inaugurated, or commencing operations within the last 12 months.
+   Take the status strictly from what the candidate text states! Do NOT guess or default finished/commissioning plants to 'Under Construction'.
 
 REJECT (MUST NOT EXTRACT):
+- OLD HISTORICAL PROJECTS: Facilities completed, commissioned, or operating before the last 12-month window (e.g. historical profiles of plants completed years ago like Bhadla in 2020). Recent news reviewing an old finished project is NOT a new project.
 - MULTI-STATE / MULTI-REGION PORTFOLIO AGGREGATIONS: News reporting broad multi-state buildout programs combining multiple states or regions into a collective portfolio. Only extract an individual, distinct facility project located in a single verifiable state/location, never an aggregate multi-site portfolio!
 - LISTS, ROUNDUPS, COMPILATIONS & DIRECTORIES: Articles listing multiple facilities, regional directories, multi-project databases, inventories, or project rankings. NEVER extract an entire listicle, ranking, directory, or roundup as a single project!
 - WEBSITE DOMAIN NAMES AS DEVELOPER: NEVER return a website domain name, URL, or data directory (e.g. names containing web domain TLDs such as .online, .com, .org, .net) as the developer company.
 - PIPELINES, INVENTORIES & STATISTICAL DATASETS: Industry pipeline overviews, generator rows, project databases, capacity trackers, or national statistics tables.
-- DATA/STATISTICS PUBLISHERS AS DEVELOPER: Candidates where the company is a government statistical agency, market research platform, energy data tracker, or publisher rather than a commercial project owner/developer erecting the facility.
+- DATA/STATISTICS PUBLISHERS OR REGULATORS AS DEVELOPER: Candidates where the company is a government statistical agency (e.g., census or statistics bureau), regulatory commission, or news publisher. (Legitimate commercial developers, public utilities, and state-owned power/energy enterprises ARE valid).
 - NATIONAL MACRO POLICY TARGETS & ROADMAPS: Broad macroeconomic government announcements, national policy initiatives, or multi-year capacity targets without an individual physical development project.
 - REGULATORY & GRID REVIEW ARTICLES: Articles primarily discussing power supply rules, grid reviews, zoning regulations, or regulatory hurdles without a specific development project.
-- COMPLETED, OPENED, OR OPERATIONAL FACILITIES (CRITICAL): Facilities that have ALREADY OPENED, COMPLETED, INAUGURATED, or are OPERATING, ACTIVE, OR POWERING FACILITIES in ANY language (including operational plants, commissioned utility farms, or power purchase agreements for existing operational sites). You MUST set "is_already_operating": true if the facility is already operating, active, generating power, or completed. NEVER label an operating plant as 'Under Construction'!
 - Tool, equipment, or machinery product launches. Equipment shipped to customers is NOT a capital project!
 - Material, wafer, or substrate product announcements.
 - R&D partnerships, industry collaboration initiatives, or technology roadmaps without a physical facility buildout.
@@ -2115,25 +2105,24 @@ Return ONLY a valid JSON object in this exact schema:
       "candidate_index": 1,
       "source_url": "The exact URL copied verbatim from the [Candidate #ID] block above where this project is described",
       "canonical_name": "Official canonical name of the individual capital facility or project in English. MUST NOT be a journalistic news headline or sentence, and MUST NOT include action verbs like 'Secures Loans for', 'Wins Approval for', 'Breaks Ground on', or 'came online'. Extract ONLY the actual project name described in the candidate text.",
-      "company": "Specific corporate developer or owner building the project in English. Extract ONLY the real company described in the candidate content.",
+      "company": "Specific corporate developer, utility, or owner building/operating the project in English. Extract ONLY the real company described in the candidate content.",
       "country": "Sovereign nation name in English where the facility is located.",
       "location": "Specific city, state, province, or region in English.",
-      "status": "Announced | Planning | Under Construction",
-      "is_already_operating": true | false,
+      "status": "Announced | Planning | Approved | Under Construction | Operational",
       "category": "Primary industrial sector of the facility in English.",
-      "date": "Target start, completion, or announcement date if explicitly stated in candidate content, or empty string \"\" if not mentioned",
+      "date": "Only keep an explicit date stated in the candidate text, prefixed by what it means (e.g. 'Announced: Nov 2026', 'Target Completion: 2028', 'Groundbreaking: 2026', 'Commissioned: Oct 2026'). If no date is stated, return empty string \"\". NEVER invent or guess years!",
       "summary": "1-2 complete factual sentences in fluent English describing the project and buildout scope."
     }
   ]
 }`;
 
   let candidateBlocks = "";
-  candidateItems.slice(0, 12).forEach((c, idx) => {
+  items.forEach((c, idx) => {
     const textSnippet = (c.text || c.snippet || c.title || "").slice(0, 1500);
     candidateBlocks += `\n[Candidate #${idx + 1}]\nURL: ${c.cleanUrl}\nTitle: ${c.title || ""}\nDate: ${c.published_date || ""}\nContent: """\n${textSnippet}\n"""\n`;
   });
 
-  const userPrompt = `Evaluate the following ${Math.min(candidateItems.length, 12)} web discovery candidates for genuine upcoming capital projects (Category Hint: ${targetCategory || "All Categories"}):
+  const userPrompt = `Evaluate the following ${items.length} web discovery candidates for genuine upcoming or newly commissioned capital projects (Category Hint: ${targetCategory || "All Categories"}):
 ${candidateBlocks}
 
 Output your JSON analysis now:`;
@@ -2143,8 +2132,8 @@ Output your JSON analysis now:`;
   let aiSuccess = false;
 
   const modelsToTry = [
-    "@cf/meta/llama-3.2-3b-instruct",
-    "@cf/meta/llama-3.1-8b-instruct"
+    "@cf/meta/llama-3.1-8b-instruct",
+    "@cf/meta/llama-3.2-3b-instruct"
   ];
 
   for (const modelName of modelsToTry) {
@@ -2155,7 +2144,7 @@ Output your JSON analysis now:`;
           { role: "user", content: userPrompt }
         ],
         temperature: 0.1,
-        max_tokens: 4096
+        max_tokens: 3072
       });
 
       rawOutput = aiResponse?.response || (typeof aiResponse === "string" ? aiResponse : JSON.stringify(aiResponse)) || "";
@@ -2164,7 +2153,7 @@ Output your JSON analysis now:`;
         break;
       }
     } catch (err) {
-      console.warn(`Batch AI model ${modelName} notice:`, err?.message || err);
+      console.warn(`Batch AI chunk model ${modelName} notice:`, err?.message || err);
     }
   }
 
@@ -2176,7 +2165,22 @@ Output your JSON analysis now:`;
     const parsed = parseLlmJson(rawOutput);
     if (parsed) {
       const list = Array.isArray(parsed) ? parsed : (parsed.projects || []);
-      return list;
+      return list.map(p => {
+        let localIdx = 1;
+        if (typeof p.candidate_index === "number") {
+          localIdx = Math.floor(p.candidate_index);
+        } else if (typeof p.candidate_index === "string") {
+          const m = p.candidate_index.match(/\d+/);
+          if (m) localIdx = parseInt(m[0], 10);
+        }
+        const globalIdx = offset + localIdx;
+        const matchedItem = items[localIdx - 1];
+        return {
+          ...p,
+          candidate_index: globalIdx,
+          source_url: p.source_url || matchedItem?.cleanUrl || ""
+        };
+      });
     }
   }
   return [];
@@ -2324,14 +2328,9 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
   const effectiveSearchText = searchParts.join(" ").trim();
   const cacheKey = getQueryCacheKey(query, targetCategory, targetLocation);
 
-  // Capital Project Intent Augmentation:
-  // When a user enters a bare sector or keyword query (e.g. "data center", "solar", "battery storage"),
-  // external search engines (Exa / Google) will return generic encyclopedia articles ("What is a Data Center? - Cisco")
-  // and vendor marketing pages unless capital project intent keywords are present.
-  const hasProjectIntent = /\b(?:projects?|facilities|facility|plants?|campuses?|farms?|expansion|investments?|capex|construction|groundbreaking|announced|planning|buildouts?|build|under\s+construction|upcoming)\b/i.test(effectiveSearchText);
-  const providerSearchQuery = hasProjectIntent
-    ? effectiveSearchText
-    : `${effectiveSearchText} upcoming project facility construction announced`;
+  // Provider search query uses clean effective search text (query + sector + location)
+  // Recency is strictly enforced by provider date filters (last 12 months) rather than injecting stage words
+  const providerSearchQuery = effectiveSearchText;
 
   const addEvent = (eventType, message, component = "ai_worker", metadata = {}) => {
     const event = {
@@ -2377,7 +2376,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         !isForeignLanguageText(r.canonical_name) &&
         isValidCompanyEntity(r.company || r.developer) &&
         !isGenericReportOrDirectory(r.project_url, r.canonical_name, r.company || r.developer, r.summary) &&
-        ["Announced", "Planning", "Under Construction"].includes(r.status)
+        ["Announced", "Planning", "Approved", "Under Construction", "Operational", "Commissioned"].includes(r.status)
       );
       if (isValidCache) {
         addEvent("query_cache_hit", `Cache Hit: Query '${query}' [Sector: '${targetCategory}', Country: '${targetLocation}'] already executed with ${cachedResults.length} verified projects. Zero external calls or LLM inferences needed.`);
@@ -2623,27 +2622,27 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         continue;
       }
 
-      // Drop any project identified as already operating, completed, or commissioned in any language
-      if (aiP.is_already_operating === true || aiP.status === "Operational" || aiP.status === "Completed") {
-        addEvent("candidate_filtered", `DROPPED (Already Operating / Completed): '${aiP.canonical_name || "Unknown"}' is identified as an already operational facility.`);
+      // Drop only if old historical facility completed prior to 12-month rolling window
+      if (isOldCompletedProject(matchedCandidate.cleanUrl, aiP.canonical_name, aiP.summary, matchedCandidate.text || matchedCandidate.snippet)) {
+        addEvent("candidate_filtered", `DROPPED (Old Historical Facility): '${aiP.canonical_name || "Unknown"}' completed before the 12-month rolling window.`);
         continue;
       }
 
       const cleanUrl = matchedCandidate.cleanUrl;
       const rawStatus = (aiP.status || "").trim();
       let projectStatus = null;
-      if (/^announced$/i.test(rawStatus)) {
+      if (/^operational|commissioned$/i.test(rawStatus)) {
+        projectStatus = "Operational";
+      } else if (/^under\s+construction$/i.test(rawStatus)) {
+        projectStatus = "Under Construction";
+      } else if (/^approved$/i.test(rawStatus)) {
+        projectStatus = "Approved";
+      } else if (/^announced$/i.test(rawStatus)) {
         projectStatus = "Announced";
       } else if (/^planning$/i.test(rawStatus)) {
         projectStatus = "Planning";
-      } else if (/^under\s+construction$/i.test(rawStatus)) {
-        projectStatus = "Under Construction";
-      }
-
-      // Drop any project whose status isn't strictly Announced, Planning, or Under Construction
-      if (!projectStatus) {
-        addEvent("candidate_filtered", `DROPPED (Invalid/Completed Status): '${aiP.canonical_name || "Unknown"}' status '${aiP.status || "None"}' is not Announced, Planning, or Under Construction.`);
-        continue;
+      } else {
+        projectStatus = extractStatusFromText((aiP.canonical_name || "") + " " + (aiP.summary || ""), cleanUrl) || "Planning";
       }
 
       const rawProjectName = aiP.canonical_name || matchedCandidate.title || "";
@@ -2674,11 +2673,11 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         continue;
       }
       if (
-        isCompletedOrOperationalFacility(cleanUrl, projectName, aiP.summary, matchedCandidate.text || matchedCandidate.snippet) ||
-        isCompletedOrOperationalFacility(cleanUrl, matchedCandidate.title, aiP.summary, matchedCandidate.text || matchedCandidate.snippet) ||
-        isCompletedOrOperationalFacility(cleanUrl, rawProjectName, aiP.summary, matchedCandidate.text || matchedCandidate.snippet)
+        isOldCompletedProject(cleanUrl, projectName, aiP.summary, matchedCandidate.text || matchedCandidate.snippet) ||
+        isOldCompletedProject(cleanUrl, matchedCandidate.title, aiP.summary, matchedCandidate.text || matchedCandidate.snippet) ||
+        isOldCompletedProject(cleanUrl, rawProjectName, aiP.summary, matchedCandidate.text || matchedCandidate.snippet)
       ) {
-        addEvent("candidate_filtered", `DROPPED (Completed/Operational Facility): '${projectName}' (URL: ${cleanUrl}) has already opened or commenced operations.`);
+        addEvent("candidate_filtered", `DROPPED (Historical Project): '${projectName}' (URL: ${cleanUrl}) was completed prior to 12-month window.`);
         continue;
       }
 
@@ -2794,9 +2793,9 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
           continue;
         }
         if (
-          isCompletedOrOperationalFacility(item.cleanUrl, fbProjectName, fb.summary, item.text || item.snippet) ||
-          isCompletedOrOperationalFacility(item.cleanUrl, item.title, fb.summary, item.text || item.snippet) ||
-          isCompletedOrOperationalFacility(item.cleanUrl, fbRawName, fb.summary, item.text || item.snippet)
+          isOldCompletedProject(item.cleanUrl, fbProjectName, fb.summary, item.text || item.snippet) ||
+          isOldCompletedProject(item.cleanUrl, item.title, fb.summary, item.text || item.snippet) ||
+          isOldCompletedProject(item.cleanUrl, fbRawName, fb.summary, item.text || item.snippet)
         ) {
           continue;
         }
@@ -2809,7 +2808,7 @@ async function executeDiscoveryPipeline(env, ctx, searchRunId, query, requestedC
         }
 
         const fbStatus = fb.status;
-        if (!fbStatus || !["Announced", "Planning", "Under Construction"].includes(fbStatus)) {
+        if (!fbStatus || !["Announced", "Planning", "Approved", "Under Construction", "Operational", "Commissioned"].includes(fbStatus)) {
           continue;
         }
 
@@ -3009,7 +3008,13 @@ export default {
       if (env.PROJECT_DATA) {
         try {
           await Promise.all([
+            env.PROJECT_DATA.delete("projects_v9"),
+            env.PROJECT_DATA.delete("projects_v8"),
+            env.PROJECT_DATA.delete("projects_v7"),
             env.PROJECT_DATA.delete("projects_v6"),
+            env.PROJECT_DATA.delete("searches_v9"),
+            env.PROJECT_DATA.delete("searches_v8"),
+            env.PROJECT_DATA.delete("searches_v7"),
             env.PROJECT_DATA.delete("searches_v6"),
             env.PROJECT_DATA.delete("projects"),
             env.PROJECT_DATA.delete("searches"),
@@ -3026,7 +3031,7 @@ export default {
         status: "ok",
         edge_worker_active: true,
         edge_ai_ready: !!env.AI,
-        model: "@cf/meta/llama-3.2-3b-instruct",
+        model: "@cf/meta/llama-3.1-8b-instruct",
         uptime: "100%",
         components: {
           kv_storage: env.PROJECT_DATA ? "operational" : "in-memory",
@@ -3042,13 +3047,13 @@ export default {
         return jsonRes({
           status: "healthy",
           edge_ai_ready: !!env.AI,
-          model: "@cf/meta/llama-3.2-3b-instruct",
+          model: "@cf/meta/llama-3.1-8b-instruct",
           service: "Cloudflare Workers AI Web Fetcher & Extractor (index.js)",
         });
       }
 
       if (url.pathname === "/api/ai/test-model") {
-        const testModel = url.searchParams.get("model") || "@cf/meta/llama-3.2-3b-instruct";
+        const testModel = url.searchParams.get("model") || "@cf/meta/llama-3.1-8b-instruct";
         try {
           const testRes = await env.AI.run(testModel, {
             messages: [{ role: "user", content: "Respond with the word 'READY' only." }],
@@ -3080,7 +3085,7 @@ export default {
             url: val.cleanUrl,
             source_title: fetchResult.title,
             content_length: fetchResult.text.length,
-            engine: env.AI ? "Cloudflare Workers AI (@cf/meta/llama-3.2-3b-instruct)" : "Edge Heuristic Parser",
+            engine: env.AI ? "Cloudflare Workers AI (@cf/meta/llama-3.1-8b-instruct)" : "Edge Heuristic Parser",
             project: Array.isArray(projectData) ? projectData[0] : projectData,
             projects: projectData,
             last_ai_raw: store.lastAiRaw || null,
@@ -3117,7 +3122,7 @@ export default {
           return jsonRes({
             success: true,
             count: results.length,
-            engine: env.AI ? "Cloudflare Workers AI (@cf/meta/llama-3.2-3b-instruct)" : "Edge Heuristic Parser",
+            engine: env.AI ? "Cloudflare Workers AI (@cf/meta/llama-3.1-8b-instruct)" : "Edge Heuristic Parser",
             items: results.map((r, i) => r.status === "fulfilled" ? r.value : { url: validUrls[i], success: false })
           });
         } catch (err) {
@@ -3592,7 +3597,7 @@ export default {
         active_search_jobs: 0,
         pending_outbox_queue: 0,
         edge_worker: "active",
-        workers_ai_model: "@cf/meta/llama-3.2-3b-instruct"
+        workers_ai_model: "@cf/meta/llama-3.1-8b-instruct"
       });
     }
 

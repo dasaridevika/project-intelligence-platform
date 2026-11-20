@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { api, subscribeToSearchEvents, isProductOrEquipment, getProjectDedupKey, cleanSummaryText, validateAndSanitizeProject, matchesTargetCountry } from '../api';
+import { api, subscribeToSearchEvents, isProductOrEquipment, getProjectDedupKey, cleanSummaryText, validateAndSanitizeProject, matchesTargetCountry, formatProjectDate } from '../api';
 import { ActivityEvent, PrimarySector, QueryTelemetry, SearchResultItem, SearchRun } from '../types';
-import { formatProjectDate } from '../pages/ProjectsPage';
 
 interface SearchContextType {
   query: string;
