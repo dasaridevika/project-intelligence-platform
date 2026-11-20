@@ -65,10 +65,15 @@ const INVALID_FILE_EXTENSIONS = [
 ];
 
 const BLOCKED_DOMAINS = [
-  // Encyclopedias, dictionaries, glossaries, general reference (never host actual projects)
-  "wikipedia.org", "wiktionary.org", "dictionary.cambridge.org", "merriam-webster.com",
+  // Encyclopedias, wikis, dictionaries, glossaries, general reference (never host actual projects)
+  "wikipedia.org", "wiktionary.org", "wikimedia.org", "gem.wiki", "wikia.com", "fandom.com",
+  "dictionary.cambridge.org", "merriam-webster.com",
   "dictionary.com", "investopedia.com", "britannica.com", "techtarget.com",
   "computerhope.com", "coursera.org", "wordreference.com",
+  // Academic journals, research papers & scientific repositories (never host capital development projects)
+  "springer.com", "link.springer.com", "sciencedirect.com", "nature.com",
+  "ieeexplore.ieee.org", "mdpi.com", "wiley.com", "arxiv.org", "researchgate.net",
+  "frontiersin.org", "tandfonline.com", "cell.com",
   // Aggregator portals, marketing blogs, educational explainers, marketplaces
   "datacenters.com", "chipsupplychain.org", "patentpc.com", "poynter.org",
   // Statistics agencies, market research databases & legal/consulting advisory portals
@@ -215,8 +220,8 @@ function getQueryCacheKey(query, sector, country) {
   return `${q}::${s}::${c}`;
 }
 
-const KV_PROJECTS_KEY = "projects_v9";
-const KV_SEARCHES_KEY = "searches_v9";
+const KV_PROJECTS_KEY = "projects_v10";
+const KV_SEARCHES_KEY = "searches_v10";
 
 // Durable KV Persistence Layer (Survives worker code changes & redeploys)
 async function hydrateStore(env) {
@@ -227,10 +232,12 @@ async function hydrateStore(env) {
     env.PROJECT_DATA.delete("projects_v6").catch(() => {});
     env.PROJECT_DATA.delete("projects_v7").catch(() => {});
     env.PROJECT_DATA.delete("projects_v8").catch(() => {});
+    env.PROJECT_DATA.delete("projects_v9").catch(() => {});
     env.PROJECT_DATA.delete("searches").catch(() => {});
     env.PROJECT_DATA.delete("searches_v6").catch(() => {});
     env.PROJECT_DATA.delete("searches_v7").catch(() => {});
     env.PROJECT_DATA.delete("searches_v8").catch(() => {});
+    env.PROJECT_DATA.delete("searches_v9").catch(() => {});
     env.PROJECT_DATA.delete("pi_persisted_projects_v5").catch(() => {});
 
     if (store.projects.size === 0) {
@@ -586,20 +593,20 @@ async function fetchUrlContent(targetUrl) {
   }
 }
 
-// Check if a company name or domain is a news agency, publisher, or research firm (NOT a project developer)
+// Check if a company name or domain is a news agency, publisher, research firm, advisory brokerage, or think tank (NOT a project developer)
 function isNewsPublisher(name) {
   if (!name || typeof name !== "string") return false;
   const n = name.toLowerCase().trim();
 
-  // Pattern for media outlets, news wires, publishers, and research/statistics agencies
-  const publisherPattern = /\b(?:reuters|bloomberg|constructconnect|datacenterdynamics|dcn|associated press|prnewswire|businesswire|globenewswire|cnbc|forbes|financial times|marketwatch|canary media|pv magazine|solar power world|recharge news|mckinsey|gartner|idc|accenture|deloitte|kpmg|ey|pwc|bcg|bain|oxford economics|globaldata|statista|eia|wood mackenzie|rystad energy|s&p global|ferc|iea|electrek|industrial info|power systems|renewables now|energy storage news|techtimes|chosun|korea herald|asia business daily|semiwiki|cleantechnica)\b/i;
+  // Pattern for media outlets, news wires, publishers, research/statistics agencies, advisory brokerages, and think tanks
+  const publisherPattern = /\b(?:reuters|bloomberg|constructconnect|datacenterdynamics|dcn|associated press|prnewswire|businesswire|globenewswire|cnbc|forbes|financial times|marketwatch|canary media|pv magazine|solar power world|recharge news|mckinsey|gartner|idc|accenture|deloitte|kpmg|ey|pwc|bcg|bain|oxford economics|globaldata|statista|eia|wood mackenzie|rystad energy|s&p global|ferc|iea|electrek|industrial info|power systems|renewables now|energy storage news|techtimes|chosun|korea herald|asia business daily|semiwiki|cleantechnica|cushman\s*(?:&|and)\s*wakefield|cbre|jll|jones lang lasalle|colliers|knight frank|newmark|savills|marcus\s*(?:&|and)\s*millichap|niti aayog|brookings|rand corporation|chatham house|csis|heritage foundation|cato institute|wilson center|urban institute|aspen institute|pew research)\b/i;
 
   if (publisherPattern.test(n)) {
     return true;
   }
 
-  // Publisher keywords (matched as whole words/phrases, never partial substrings)
-  if (/\b(?:press release|staff writer|news agency|market research|data platform|data tracker|statistics agency|statistical agency)\b/i.test(n)) {
+  // Publisher and advisory keywords (matched as whole words/phrases, never partial substrings)
+  if (/\b(?:press release|staff writer|news agency|market research|data platform|data tracker|statistics agency|statistical agency|think\s*tank|policy\s+institute|policy\s+commission|policy\s+hub|frontier\s+tech\s+hub|real\s+estate\s+services?|commercial\s+real\s+estate)\b/i.test(n)) {
     return true;
   }
 
@@ -615,6 +622,7 @@ function isValidCompanyEntity(name) {
   if (!name || typeof name !== "string") return false;
   const n = name.trim();
   if (n.length < 2 || n.length > 50) return false;
+  if (/[\r\n]/.test(n)) return false;
   const lower = n.toLowerCase();
 
   // Reject literal None, Various, Unknown, Multiple, etc.
@@ -625,16 +633,53 @@ function isValidCompanyEntity(name) {
     return false;
   }
 
+  // Reject paywall, authentication, or cookie disclaimer strings
+  if (/\b(?:full access|access to this|you have full|subscribe to read|sign in to|login to|cookie policy)\b/i.test(lower)) {
+    return false;
+  }
+
+  // Reject company starting with month/date strings (e.g. "July 2026 ...")
+  if (/^(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}\b/i.test(lower)) {
+    return false;
+  }
+
+  // Reject standalone single sector nouns as the entire company entity
+  if (/^(?:solar|wind|power|energy|battery|data\s*cent(?:er|re)|hydrogen|semiconductor|infrastructure|clean\s*energy)$/i.test(lower)) {
+    return false;
+  }
+
+  // Reject comma-separated multi-company lists (e.g. "Amazon, Google", "Google, EdgeConnex, Maincubes", "AWS, Microsoft, Google, Adani, Reliance")
+  if (n.includes(",")) {
+    const isLegalSuffixOnly = /^[^,]+,\s*(?:inc|llc|ltd|corp|corporation|co|company|gmbh|ag|kg|bv|nv|plc|sl|srl|pty|lp|sa)\.?$/i.test(n);
+    if (!isLegalSuffixOnly) {
+      return false;
+    }
+  }
+
+  // Reject multi-company lists joined with " and " between separate major names (e.g. "Amazon and Google", "Google and Microsoft")
+  if (/\b(?:google|amazon|microsoft|meta|apple|equinix|digital realty|adani|reliance)\s+(?:and|&)\s+(?:google|amazon|microsoft|meta|apple|equinix|digital realty|adani|reliance)\b/i.test(lower)) {
+    return false;
+  }
+
   // Reject bare sovereign country names as company entity (dynamically checks all world nations)
   if (WORLD_COUNTRIES_SET.has(lower) || /^(?:usa|u\.s\.a\.|u\.s\.|uk|u\.k\.|uae|u\.a\.e\.|korea|deutschland|espana)$/i.test(lower)) {
     return false;
   }
 
-  // Reject statistics agencies, regulatory commissions, or generic sovereign governments
+  // Reject generic sovereign or state/provincial governments as developer (e.g. "Rajasthan government", "US Government")
+  if (/^(?:[a-z\s]+\s+)?government$/i.test(lower) || /^(?:government|us government|federal government|state government|provincial government|taiwan government)$/i.test(lower)) {
+    return false;
+  }
+
+  // Reject think tanks, policy bodies, or advisory hubs
+  if (/\b(?:think\s*tank|policy\s+(?:commission|council|hub|institute)|frontier\s+tech\s+hub)\b/i.test(lower)) {
+    return false;
+  }
+
+  // Reject statistics agencies, regulatory commissions, or ministries without specific utility/enterprise
   // (Do NOT reject real developers, public utilities, or state-owned developers)
   if (
     /\b(?:statistics?\s+(?:bureau|agency|office|division)|statistical\s+(?:agency|office)|census\s+bureau|bureau\s+of\s+(?:[a-z\s]+\s+)?statistics|economic\s+analysis\b|regulatory\s+commission|public\s+utilit(?:y|ies)\s+commission|utility\s+regulatory\s+commission|communications\s+commission)\b/i.test(lower) ||
-    /^(?:government|us government|federal government|state government|taiwan government)$/i.test(lower) ||
     /^(?:government\s+of\s+[a-z\s]+|ministry\s+of\s+[a-z\s]+)$/i.test(lower)
   ) {
     return false;
@@ -656,7 +701,7 @@ function isValidCompanyEntity(name) {
     return false;
   }
 
-  // Reject publishers & consulting firms
+  // Reject publishers, advisory brokerages, and consulting firms
   if (isNewsPublisher(lower)) {
     return false;
   }
@@ -817,7 +862,7 @@ function isGenericReportOrDirectory(url, name, company, summary) {
   const c = (company || "").toLowerCase().trim();
   const s = (summary || "").toLowerCase();
 
-  // Paid store reports, general market research, macro economic outlooks, guides, blogs, and listicles
+  // Paid store reports, general market research, macro economic outlooks, guides, blogs, wikis, and listicles
   if (
     /(?:[?&](?:term|category|channel|tag|tags|lineitemid|search)=)/i.test(u) ||
     /\/category\//i.test(u) ||
@@ -842,11 +887,48 @@ function isGenericReportOrDirectory(url, name, company, summary) {
     /\/what-is-/i.test(u) ||
     /\/what-are-/i.test(u) ||
     /\/how-to-/i.test(u) ||
-    /\/how-do-/i.test(u)
+    /\/how-do-/i.test(u) ||
+    /\.wiki\b|\/wiki\/|gem\.wiki|wikipedia\.org|wikimedia\.org|wikia\.com|fandom\.com/i.test(u) ||
+    /\/blogs\/(?:solar|wind|power|data-center|clean-energy|hydrogen)-power-plant/i.test(u) ||
+    /\/article\/10\.\d{4}\//i.test(u) ||
+    /\/doi\/10\.\d{4}\//i.test(u) ||
+    /\/resources\/.*project-report/i.test(u)
   ) {
     return true;
   }
   if (n.startsWith("project from") || n.startsWith("capital project at") || n === "capital project") {
+    return true;
+  }
+
+  // Reject academic literature reviews and journal articles
+  if (/\b(?:a\s+review\s+on\s+the\s+potentials|potentials,\s*requirements,\s*characteristics|literature\s+review|systematic\s+review|academic\s+review)\b/i.test(n || s)) {
+    return true;
+  }
+
+  // Reject template DPR checklists, guidelines, and fictional worked examples
+  if (/\b(?:dpr\s+(?:inputs|checklist|example|report)|fictional\s+\d+\s*mw\s+worked\s+example|a\s+fictional\s+.*example|sample\s+dpr)\b/i.test(s)) {
+    return true;
+  }
+
+  // Reject policy frameworks, guidelines, whitepapers, or evaluation frameworks (not physical facilities)
+  if (/\b(?:evaluation\s+framework|regulatory\s+framework|policy\s+framework|assessment\s+framework|development\s+framework|planning\s+framework|guidelines?|whitepapers?|action\s+plan)\b/i.test(n || s)) {
+    return true;
+  }
+
+  // Reject macro industry boom, growth concerns, and capacity doubling news headlines
+  if (
+    /\b(?:expansion\s+puts\s+.*in\s+focus|raises?\s+(?:water|power|grid|environmental|community|cost)\s+concerns|driving\s+[a-z\s]+['’]s\s+(?:data\s*cent(?:er|re)|solar|wind|ai)\s+boom|plans?\s+to\s+double\s+(?:data\s*cent(?:er|re)|solar|wind|capacity))\b/i.test(n) ||
+    /\b(?:data\s*cent(?:er|re)|solar|wind|ai)\s+boom\b/i.test(n) ||
+    /\b(?:are\s+driving|is\s+driving)\s+[a-z\s]+['’]s\s+(?:data\s*cent(?:er|re)|solar|wind|ai|clean\s+energy)\s+boom\b/i.test(n) ||
+    /\b(?:ai\s+concern\s+as|concern\s+as\s+[a-z\s]+\s+plans\s+to\s+double)\b/i.test(n || s)
+  ) {
+    return true;
+  }
+
+  // Reject educational dictionary / encyclopedia definition summaries
+  if (
+    /\b(?:is\s+a\s+facility\s+that\s+converts|is\s+a\s+facility\s+that\s+produces|is\s+a\s+facility\s+that\s+generates|are\s+facilities\s+that\s+convert|a\s+(?:solar|wind|power|data\s*cent(?:er|re)|hydrogen)\s+(?:power\s+)?plant\s+(?:in\s+[a-z\s]+)?is\s+a\s+facility)\b/i.test(s)
+  ) {
     return true;
   }
 
@@ -1008,8 +1090,8 @@ function isGenericReportOrDirectory(url, name, company, summary) {
   }
 
   // Generic noun without named facility or valid developer
-  if ((!c || c === "project developer" || c === "leading developer" || c === "unknown") &&
-      /^(?:data center|hyperscale data center|data centre|power plant|solar farm|wind farm|battery gigafactory|semiconductor fab|semiconductor chemicals plant|aircraft manufacturing plant|industrial category)$/i.test(n)) {
+  if ((!c || c === "project developer" || c === "leading developer" || c === "unknown" || !isValidCompanyEntity(c)) &&
+      /^(?:data\s*cent(?:er|re)|hyperscale\s+data\s*cent(?:er|re)|power\s+plant|solar\s+power\s+plant|solar\s+farm|wind\s+farm|battery\s+gigafactory|semiconductor\s+fab|semiconductor\s+chemicals\s+plant|aircraft\s+manufacturing\s+plant|industrial\s+category)$/i.test(n)) {
     return true;
   }
   // Lawsuits, disputes, or political fights without a physical facility
@@ -1065,6 +1147,11 @@ function cleanProjectName(rawName, developer) {
   // 6. Clean up trailing cut-off prepositions and ellipses
   name = name.replace(/\s+(?:in|at|on|for|with|of|to)\s*(?:[A-Z][a-zA-Z\s]*)?(?:\.{2,}|…)$/i, "");
   name = name.replace(/(?:\.{2,}|…)$/, "");
+
+  // 7. Reject bare generic sector nouns without any distinctive facility name
+  if (/^(?:solar\s+power\s+plant|power\s+plant|solar\s+farm|wind\s+farm|data\s*cent(?:er|re)|hyperscale\s+data\s*cent(?:er|re)|battery\s+storage|hydrogen\s+plant|semiconductor\s+fab)$/i.test(name.trim())) {
+    return "";
+  }
 
   return name.trim();
 }
@@ -1209,17 +1296,29 @@ function extractDateFromTextOrUrl(text, url, publishedDate) {
 
 function formatDisplayDate(rawDate) {
   if (!rawDate || typeof rawDate !== "string") return "";
-  const d = rawDate.trim();
+  let d = rawDate.trim();
   if (/^(?:latest\s+\d{4}|not specified|unknown|tbd|none|n\/a)$/i.test(d)) return "";
+
+  // Strip status or descriptor prefix e.g. "Groundbreaking: 2026" -> "2026", "Commissioned: Oct 2026" -> "Oct 2026"
+  d = d.replace(/^(?:groundbreaking|commissioned|announced|approved|under\s+construction|operational|completed|started|target\s+completion|inaugurated|online|expected)\s*:\s*/i, "").trim();
+
+  // If the remaining string is a status or non-date string, return empty string
+  if (/^(?:under\s+construction|announced|planning|approved|operational|commissioned|in\s+development)$/i.test(d)) {
+    return "";
+  }
+
+  // A valid date MUST contain at least one 4-digit calendar year (19xx or 20xx)
+  const allYears = Array.from(d.matchAll(/\b(19\d\d|20\d\d)\b/g)).map(m => parseInt(m[1], 10));
+  if (allYears.length === 0) {
+    return "";
+  }
 
   // The 12-month window rule:
   const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
   const cutoffYear = new Date(Date.now() - ONE_YEAR_MS).getFullYear();
 
-  // Extract all 4-digit years in the string
-  const allYears = Array.from(d.matchAll(/\b(19\d\d|20\d\d)\b/g)).map(m => parseInt(m[1], 10));
   // Only drop if every year mentioned is strictly older than the 12-month window (e.g. 2020 or 2022)
-  if (allYears.length > 0 && allYears.every(y => y < (cutoffYear - 1))) {
+  if (allYears.every(y => y < (cutoffYear - 1))) {
     return null;
   }
 
@@ -1828,18 +1927,27 @@ DO NOT REJECT active construction, site buildouts, or recently commissioned faci
 
 ONLY REJECT (set "is_project": false) IF:
 1. The candidate is a multi-project list, roundup, directory, database, compilation, or ranking. NEVER extract a multi-project listicle or directory as a single project!
-2. The developer/company is a website domain name, URL, media outlet, data directory (e.g. names containing web TLDs like .online, .com, .org, .net), data/statistics publisher, research agency, or government department rather than a commercial project developer or public utility.
-3. The facility was completed, commissioned, or operational before the last 12-month window (e.g. historical plants completed years ago). Recent news reviewing an old finished project is NOT a new project.
-4. The candidate is an aggregate industry pipeline report, generator inventory, or statistical dataset.
-5. The page is an educational article, academic study, technology explainer, or how-to guide.
-6. The page is a colocation directory, search engine for capacity, or vendor marketplace.
-7. The page discusses a political protest, zoning dispute, or lawsuit without an actively funded physical development project.
-8. The page is purely macroeconomic analysis, market forecast, or paid market research report.
-9. The candidate is a multi-state or multi-region aggregate portfolio bundling multiple distinct facilities across different states or territories into one record.
+2. The candidate is a journalistic news headline, macro industry boom article, capacity doubling report, or growth concerns article (e.g. 'expansion puts power, cooling in focus', 'Boom Raises Water and Power Concerns', 'Companies driving data centre boom', 'plans to double capacity'). These are macro industry articles, NOT physical capital projects!
+3. The candidate discusses a policy framework, evaluation framework, regulatory guideline, whitepaper, or masterplan document (e.g. 'Evaluation Framework', 'Policy Guidelines'). These are policy documents, NOT physical capital facilities!
+4. The developer/company is a commercial real estate advisory/brokerage firm (e.g. Cushman & Wakefield, CBRE, JLL, Colliers), a policy think tank (e.g. NITI Aayog), a website domain name, URL, media publisher, research agency, or generic government entity rather than an actual physical project developer, industrial corporation, or public utility.
+5. The developer is a comma-separated list of multiple corporate entities (e.g. 'Amazon, Google' or 'AWS, Microsoft, Google, Adani, Reliance').
+6. The candidate is a crowdsourced wiki article (e.g. gem.wiki, wikipedia.org) or an educational textbook explainer blog defining what a power plant or facility is.
+7. The facility was completed, commissioned, or operational before the last 12-month window (e.g. historical plants completed years ago). Recent news reviewing an old finished project is NOT a new project.
+8. The candidate is an aggregate industry pipeline report, generator inventory, or statistical dataset.
+9. The page is an educational article, academic study, technology explainer, or how-to guide.
+10. The page is a colocation directory, search engine for capacity, or vendor marketplace.
+11. The page discusses a political protest, zoning dispute, or lawsuit without an actively funded physical development project.
+12. The page is purely macroeconomic analysis, market forecast, or paid market research report.
+13. The candidate is a multi-state or multi-region aggregate portfolio bundling multiple distinct facilities across different states or territories into one record.
 
 CRITICAL REQUIREMENT - COMPANY ENTITY:
-- The "company" field MUST be the actual corporate developer, operator, or owner entity constructing or financing the facility (including public utilities and state-owned energy developers).
-- NEVER use website domain names (e.g. ending in a web domain TLD), media publishers, statistical agencies, regulatory commissions, author bylines, or generic placeholder terms.
+- The "company" field MUST be the single identifiable corporate developer, operator, or owner entity constructing or financing the facility (including public utilities and state-owned energy developers).
+- NEVER return comma-separated lists of multiple companies.
+- NEVER return commercial real estate brokerages (e.g. Cushman & Wakefield), policy think tanks (e.g. NITI Aayog), website domain names, media publishers, statistical agencies, regulatory commissions, or generic terms like 'government'.
+
+CRITICAL REQUIREMENT - DATE FIELD:
+- The "date" field MUST be an explicit date or year stated in the text prefixed by its meaning (e.g. 'Announced: Nov 2026', 'Target Completion: 2028', 'Groundbreaking: 2026', 'Commissioned: Oct 2026'), or empty string \"\" if not mentioned.
+- NEVER put the project status or stage (e.g. 'Under Construction', 'Announced', 'Operational') into the date field!
 
 CRITICAL REQUIREMENT - ACCURATE CATEGORY:
 - The "category" field MUST reflect the specific primary industrial sector of the facility, honoring the Category Hint provided in the prompt when applicable.
@@ -1857,12 +1965,12 @@ If ONE OR MORE VALID PROJECTS:
   "projects": [
     {
       "canonical_name": "Official canonical name of the individual capital facility or project in English. Extract ONLY the real project name directly stated in the webpage; NEVER invent placeholder names or output article headlines.",
-      "company": "Specific commercial enterprise, developer, utility, or owner entity constructing or operating the facility. Extract ONLY the real corporate entity directly stated in the webpage.",
+      "company": "Specific individual corporate developer, utility, or owner entity constructing or operating the facility. Extract ONLY the real corporate entity directly stated in the webpage.",
       "country": "Sovereign nation in English where the facility is physically located.",
       "location": "Specific city, state, province, or local administrative region in English.",
       "status": "Announced | Planning | Approved | Under Construction | Operational",
       "category": "Primary industrial sector of the facility in English.",
-      "date": "Only keep an explicit date stated in the text prefixed by its meaning (e.g. 'Announced: Nov 2026', 'Target Completion: 2028', 'Groundbreaking: 2026', 'Commissioned: Oct 2026'), or empty string \"\" if not mentioned.",
+      "date": "Only keep an explicit date stated in the text prefixed by its meaning (e.g. 'Announced: Nov 2026', 'Target Completion: 2028', 'Groundbreaking: 2026', 'Commissioned: Oct 2026'), or empty string \"\" if not mentioned. NEVER put status in date field!",
       "summary": "1-2 complete factual sentences in fluent English describing the project, developer, and its development scope."
     }
   ]
@@ -2081,6 +2189,11 @@ A VALID CAPITAL PROJECT MUST:
    Take the status strictly from what the candidate text states! Do NOT guess or default finished/commissioning plants to 'Under Construction'.
 
 REJECT (MUST NOT EXTRACT):
+- JOURNALISTIC HEADLINES & MACRO BOOM/CONCERN ARTICLES: Articles covering industry trends, expansion overviews, capacity doubling plans, or water/power concerns (e.g. 'expansion puts power, cooling in focus', 'Data Center Boom Raises Water and Power Concerns', 'Companies driving data centre boom', 'Germany plans to double data center capacity'). These are macro industry articles, NOT physical capital projects!
+- POLICY & REGULATORY FRAMEWORKS: Candidates discussing evaluation frameworks, regulatory frameworks, policy frameworks, guidelines, whitepapers, or strategic masterplans (e.g. 'Data Centre Evaluation Framework'). These are policy documents, NOT physical capital facilities!
+- ADVISORY BROKERAGES & THINK TANKS: Candidates where developer is a commercial real estate brokerage (e.g. Cushman & Wakefield, CBRE, JLL, Colliers) or a policy think tank (e.g. NITI Aayog). Developers MUST be physical facility developers, operators, or public utilities!
+- MULTI-COMPANY COMMA LISTS: Candidates where the company field contains multiple companies separated by commas (e.g. 'Amazon, Google' or 'AWS, Microsoft, Google, Adani, Reliance'). A project must have a single identifiable developer entity.
+- WIKIS & EDUCATIONAL EXPLAINER BLOGS: Crowdsourced wikis (e.g. gem.wiki, wikipedia.org) or educational textbook blogs defining what a power plant is (e.g. 'A solar power plant in India is a facility that converts sunlight...').
 - OLD HISTORICAL PROJECTS: Facilities completed, commissioned, or operating before the last 12-month window (e.g. historical profiles or reviews of facilities completed years ago). Recent news reviewing an old finished project is NOT a new project.
 - MULTI-STATE / MULTI-REGION PORTFOLIO AGGREGATIONS: News reporting broad multi-state buildout programs combining multiple states or regions into a collective portfolio. Only extract an individual, distinct facility project located in a single verifiable state/location, never an aggregate multi-site portfolio!
 - LISTS, ROUNDUPS, COMPILATIONS & DIRECTORIES: Articles listing multiple facilities, regional directories, multi-project databases, inventories, or project rankings. NEVER extract an entire listicle, ranking, directory, or roundup as a single project!
@@ -2097,6 +2210,10 @@ REJECT (MUST NOT EXTRACT):
 - Colocation marketplaces or vendor directories.
 - Concept design, equipment development, or technology licensing agreements without an actual physical facility buildout.
 - Any candidate where developer is an author byline, regulatory commission, or sentence fragment.
+
+CRITICAL REQUIREMENT - DATE FIELD:
+- The "date" field MUST be an explicit date or year stated in the candidate text, prefixed by what it means (e.g. 'Announced: Nov 2026', 'Target Completion: 2028', 'Groundbreaking: 2026', 'Commissioned: Oct 2026'). If no date is stated, return empty string \"\". NEVER invent or guess years!
+- NEVER put the project status or stage (e.g. 'Under Construction', 'Announced', 'Operational') into the date field!
 
 RESPONSE FORMAT:
 Return ONLY a valid JSON object in this exact schema:
@@ -3157,8 +3274,8 @@ export default {
           return jsonRes({ error: "Search query is required" }, 400);
         }
 
-        const requestedCat = body?.categories?.[0];
-        const requestedLoc = body?.location;
+        const requestedCat = body?.categories?.[0] || body?.category;
+        const requestedLoc = body?.location || body?.country;
         const requestedProv = Array.isArray(body?.providers) && body.providers.length > 0 ? body.providers : ["exa", "google"];
 
         const searchRunId = crypto.randomUUID();

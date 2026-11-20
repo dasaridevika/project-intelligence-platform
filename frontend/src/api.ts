@@ -37,8 +37,8 @@ apiClient.interceptors.response.use(
 // DURABLE PERSISTENCE LAYER (Saves data across code updates & redeploys)
 // ==============================================================================
 
-const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v9';
-const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v9';
+const STORAGE_PROJECTS_KEY = 'pi_persisted_projects_v10';
+const STORAGE_SEARCHES_KEY = 'pi_persisted_searches_v10';
 
 const WORLD_COUNTRIES_SET = new Set([
   'afghanistan', 'albania', 'algeria', 'angola', 'argentina', 'armenia', 'australia', 'austria', 'azerbaijan',
@@ -70,12 +70,49 @@ export function isUpcomingStatus(status?: string): boolean {
 export function isValidCompany(name?: string): boolean {
   if (!name || typeof name !== 'string') return false;
   const n = name.trim();
-  return n.length >= 2 && !/^(?:none|null|n\/a|various|multiple|unknown|tbd|undefined|capital project)\b/i.test(n);
+  if (n.length < 2 || n.length > 50) return false;
+  if (/[\r\n]/.test(n)) return false;
+  const lower = n.toLowerCase();
+  if (/^(?:none|null|n\/a|various|multiple|several|diverse|undisclosed|unspecified|anonymous|unknown|tbd|undefined|capital project)\b/i.test(lower)) {
+    return false;
+  }
+  // Reject paywall / full access text
+  if (/\b(?:full access|access to this|you have full|subscribe to read|sign in to|login to|cookie policy)\b/i.test(lower)) {
+    return false;
+  }
+  // Reject starting with month + year
+  if (/^(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}\b/i.test(lower)) {
+    return false;
+  }
+  // Reject standalone single sector nouns as company
+  if (/^(?:solar|wind|power|energy|battery|data\s*cent(?:er|re)|hydrogen|semiconductor|infrastructure|clean\s*energy)$/i.test(lower)) {
+    return false;
+  }
+  // Reject comma-separated multi-company lists
+  if (n.includes(',')) {
+    const isLegalSuffixOnly = /^[^,]+,\s*(?:inc|llc|ltd|corp|corporation|co|company|gmbh|ag|kg|bv|nv|plc|sl|srl|pty|lp|sa)\.?$/i.test(n);
+    if (!isLegalSuffixOnly) return false;
+  }
+  if (/\b(?:google|amazon|microsoft|meta|apple|equinix|digital realty|adani|reliance)\s+(?:and|&)\s+(?:google|amazon|microsoft|meta|apple|equinix|digital realty|adani|reliance)\b/i.test(lower)) {
+    return false;
+  }
+  if (/^(?:[a-z\s]+\s+)?government$/i.test(lower)) {
+    return false;
+  }
+  if (/\b(?:think\s*tank|policy\s+(?:commission|council|hub|institute)|frontier\s+tech\s+hub)\b/i.test(lower)) {
+    return false;
+  }
+  if (isNewsPublisher(lower)) {
+    return false;
+  }
+  return true;
 }
 
 export function isNewsPublisher(name?: string): boolean {
   if (!name || typeof name !== 'string') return false;
-  return /\b(?:reuters|bloomberg|constructconnect|datacenterdynamics|dcn|associated press|prnewswire|businesswire|globenewswire|forbes|statista|wood mackenzie|rystad energy|s&p global|eia)\b/i.test(name.trim());
+  const n = name.trim().toLowerCase();
+  return /\b(?:reuters|bloomberg|constructconnect|datacenterdynamics|dcn|associated press|prnewswire|businesswire|globenewswire|forbes|statista|wood mackenzie|rystad energy|s&p global|eia|cushman\s*(?:&|and)\s*wakefield|cbre|jll|jones lang lasalle|colliers|knight frank|newmark|savills|marcus\s*(?:&|and)\s*millichap|niti aayog|brookings|rand corporation|chatham house|csis|springer|nature|sciencedirect|ieee)\b/i.test(n) ||
+    /\b(?:press release|staff writer|news agency|market research|data platform|data tracker|statistics agency|statistical agency|think\s*tank|policy\s+institute|frontier\s+tech\s+hub|real\s+estate\s+services?|commercial\s+real\s+estate)\b/i.test(n);
 }
 
 export function isCompletedOrOperational(url?: string, name?: string, summary?: string): boolean {
@@ -95,7 +132,11 @@ export function isProductOrEquipment(name?: string, summary?: string): boolean {
 
 export function cleanProjectTitle(rawName?: string, developer?: string): string {
   if (!rawName || typeof rawName !== 'string') return '';
-  return rawName.trim().replace(/^\[[^\]]+\]\s*/i, '');
+  let clean = rawName.trim().replace(/^\[[^\]]+\]\s*/i, '');
+  if (/^(?:solar\s+power\s+plant|power\s+plant|solar\s+farm|wind\s+farm|data\s*cent(?:er|re)|hyperscale\s+data\s*cent(?:er|re)|battery\s+storage|hydrogen\s+plant|semiconductor\s+fab)$/i.test(clean)) {
+    return '';
+  }
+  return clean;
 }
 
 export function inferCategoryClient(projectName?: string, summary?: string, hintCategory?: string): string {
@@ -104,15 +145,26 @@ export function inferCategoryClient(projectName?: string, summary?: string, hint
 
 export function formatProjectDate(rawDate?: string): string {
   if (!rawDate || typeof rawDate !== 'string') return '';
-  const d = rawDate.trim();
+  let d = rawDate.trim();
   if (/^(?:latest\s+\d{4}|not specified|unknown|tbd|none|n\/a)$/i.test(d)) return '';
+
+  // Strip status or descriptor prefix e.g. "Groundbreaking: 2026" -> "2026", "Commissioned: Oct 2026" -> "Oct 2026"
+  d = d.replace(/^(?:groundbreaking|commissioned|announced|approved|under\s+construction|operational|completed|started|target\s+completion|inaugurated|online|expected)\s*:\s*/i, '').trim();
+
+  // If the remaining string is a status or non-date string, return empty string
+  if (/^(?:under\s+construction|announced|planning|approved|operational|commissioned|in\s+development)$/i.test(d)) {
+    return '';
+  }
+
+  // A valid date MUST contain at least one 4-digit calendar year (19xx or 20xx)
+  const allYears = Array.from(d.matchAll(/\b(19\d\d|20\d\d)\b/g)).map(m => parseInt(m[1], 10));
+  if (allYears.length === 0) {
+    return '';
+  }
 
   const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
   const cutoffYear = new Date(Date.now() - ONE_YEAR_MS).getFullYear();
-
-  // Extract all 4-digit years in the string
-  const allYears = Array.from(d.matchAll(/\b(19\d\d|20\d\d)\b/g)).map(m => parseInt(m[1], 10));
-  if (allYears.length > 0 && allYears.every(y => y < (cutoffYear - 1))) {
+  if (allYears.every(y => y < (cutoffYear - 1))) {
     return '';
   }
 
@@ -197,6 +249,9 @@ export function validateAndSanitizeProject(p: any): Project | null {
   const rawDate = p.date || '';
 
   // 1. Company entity validation: reject if website domain / TLD or generic, statistics agency, regulatory commission
+  if (!isValidCompany(rawCompany) || isNewsPublisher(rawCompany)) {
+    return null;
+  }
   if (/\.(?:online|com|org|net|io|co|info|gov|edu|ai|app|tech|dev|biz|tv|me|us|uk|de|in|cn|jp|fr|es|eu|nl)\b/i.test(rawCompany)) {
     return null;
   }
@@ -206,11 +261,51 @@ export function validateAndSanitizeProject(p: any): Project | null {
   if (
     /\b(?:statistics?\s+(?:bureau|agency|office|division)|statistical\s+(?:agency|office)|census\s+bureau|bureau\s+of\s+(?:[a-z\s]+\s+)?statistics|economic\s+analysis\b|regulatory\s+commission|public\s+utilit(?:y|ies)\s+commission|utility\s+regulatory\s+commission|communications\s+commission)\b/i.test(rawCompany) ||
     /^(?:government|us government|federal government|state government|taiwan government)$/i.test(rawCompany) ||
-    /^(?:government\s+of\s+[a-z\s]+|ministry\s+of\s+[a-z\s]+)$/i.test(rawCompany)
+    /^(?:government\s+of\s+[a-z\s]+|ministry\s+of\s+[a-z\s]+)$/i.test(rawCompany) ||
+    /^(?:[a-z\s]+\s+)?government$/i.test(rawCompany)
   ) {
     return null;
   }
   if (WORLD_COUNTRIES_SET.has(rawCompany.toLowerCase()) || /^(?:usa|u\.s\.a\.|u\.s\.|uk|u\.k\.|uae|u\.a\.e\.|korea|deutschland|espana)$/i.test(rawCompany)) {
+    return null;
+  }
+
+  // Reject wiki domains and academic research publishers
+  if (/\.wiki\b|\/wiki\/|gem\.wiki|wikipedia\.org|wikimedia\.org|wikia\.com|fandom\.com|springer\.com|sciencedirect\.com|nature\.com|ieeexplore\.ieee\.org|mdpi\.com|wiley\.com|arxiv\.org/i.test(rawUrl)) {
+    return null;
+  }
+  if (/\/article\/10\.\d{4}\//i.test(rawUrl) || /\/doi\/10\.\d{4}\//i.test(rawUrl) || /\/resources\/.*project-report/i.test(rawUrl)) {
+    return null;
+  }
+
+  // Reject policy frameworks & regulatory guidelines
+  if (/\b(?:evaluation\s+framework|regulatory\s+framework|policy\s+framework|assessment\s+framework|development\s+framework|planning\s+framework|guidelines?|whitepapers?)\b/i.test(rawName + ' ' + summary)) {
+    return null;
+  }
+
+  // Reject academic literature reviews and journal articles
+  if (/\b(?:a\s+review\s+on\s+the\s+potentials|potentials,\s*requirements,\s*characteristics|literature\s+review|systematic\s+review)\b/i.test(rawName + ' ' + summary)) {
+    return null;
+  }
+
+  // Reject template DPR checklists and fictional worked examples
+  if (/\b(?:dpr\s+(?:inputs|checklist|example|report)|fictional\s+\d+\s*mw\s+worked\s+example|a\s+fictional\s+.*example|sample\s+dpr)\b/i.test(summary)) {
+    return null;
+  }
+
+  // Reject macro boom headlines & growth concerns
+  if (
+    /\b(?:expansion\s+puts\s+.*in\s+focus|raises?\s+(?:water|power|grid|environmental|community|cost)\s+concerns|driving\s+[a-z\s]+['’]s\s+(?:data\s*cent(?:er|re)|solar|wind|ai)\s+boom|plans?\s+to\s+double\s+(?:data\s*cent(?:er|re)|solar|wind|capacity))\b/i.test(rawName) ||
+    /\b(?:data\s*cent(?:er|re)|solar|wind|ai)\s+boom\b/i.test(rawName) ||
+    /\b(?:are\s+driving|is\s+driving)\s+[a-z\s]+['’]s\s+(?:data\s*cent(?:er|re)|solar|wind|ai|clean\s+energy)\s+boom\b/i.test(rawName)
+  ) {
+    return null;
+  }
+
+  // Reject dictionary / textbook definition summaries
+  if (
+    /\b(?:is\s+a\s+facility\s+that\s+converts|is\s+a\s+facility\s+that\s+produces|is\s+a\s+facility\s+that\s+generates|a\s+(?:solar|wind|power|data\s*cent(?:er|re))\s+(?:power\s+)?plant\s+(?:in\s+[a-z\s]+)?is\s+a\s+facility)\b/i.test(summary)
+  ) {
     return null;
   }
 
@@ -248,6 +343,16 @@ export function validateAndSanitizeProject(p: any): Project | null {
       return null;
     }
   }
+
+  // 4. Validate and format date
+  const allYears: number[] = [];
+  for (const m of (rawDate || '').matchAll(/\b(19\d\d|20\d\d)\b/g)) {
+    allYears.push(parseInt(m[1], 10));
+  }
+  if (allYears.length > 0 && allYears.every(y => y < (cutoffYear - 1))) {
+    return null;
+  }
+  const formattedDate = formatProjectDate(rawDate);
 
   // 4. Reject multi-state, multi-region, or multi-site portfolio aggregations (e.g. "Arizona and Texas Data Center Campuses")
   if (
@@ -292,7 +397,7 @@ export function validateAndSanitizeProject(p: any): Project | null {
     category: p.category || 'Capital Infrastructure',
     country: ctry || (loc && loc.includes(',') ? loc.split(',').pop()?.trim() : loc) || 'Not specified',
     location: loc || ctry || 'Not specified',
-    date: rawDate,
+    date: formattedDate || '',
     http_status: p.http_status || 200,
     summary: cleanSummaryText(summary),
     created_at: p.created_at || new Date().toISOString(),
@@ -372,11 +477,13 @@ export function cleanSummaryText(raw?: string): string {
 function getStoredProjects(): Project[] {
   try {
     // Purge legacy contaminated storage keys so old bad data cannot resurface
+    localStorage.removeItem('pi_persisted_projects_v9');
     localStorage.removeItem('pi_persisted_projects_v8');
     localStorage.removeItem('pi_persisted_projects_v7');
     localStorage.removeItem('pi_persisted_projects_v6');
     localStorage.removeItem('pi_persisted_projects_v5');
     localStorage.removeItem('pi_persisted_projects');
+    localStorage.removeItem('pi_persisted_searches_v9');
     localStorage.removeItem('pi_persisted_searches_v8');
     localStorage.removeItem('pi_persisted_searches_v7');
     localStorage.removeItem('pi_persisted_searches_v6');

@@ -1135,6 +1135,136 @@ test("Fix 6: Model upgrade to @cf/meta/llama-3.1-8b-instruct", async () => {
   assert.strictEqual(data.workers_ai_model, "@cf/meta/llama-3.1-8b-instruct");
 });
 
+// ==============================================================================
+// 16. VERIFICATION OF LIVE QC DEFECTS & ENHANCED FILTERS
+// ==============================================================================
+console.log("\n[Group 16: Verification of Live QC Defects & Enhanced Filters]");
+
+test("QC 1: Commercial real estate brokerage firms (Cushman & Wakefield, CBRE, JLL) are rejected as developers", () => {
+  function isNewsPublisherTest(name) {
+    if (!name || typeof name !== "string") return false;
+    const n = name.toLowerCase().trim();
+    const publisherPattern = /\b(?:reuters|bloomberg|constructconnect|datacenterdynamics|dcn|associated press|prnewswire|businesswire|globenewswire|cnbc|forbes|financial times|marketwatch|canary media|pv magazine|solar power world|recharge news|mckinsey|gartner|idc|accenture|deloitte|kpmg|ey|pwc|bcg|bain|oxford economics|globaldata|statista|eia|wood mackenzie|rystad energy|s&p global|ferc|iea|electrek|industrial info|power systems|renewables now|energy storage news|techtimes|chosun|korea herald|asia business daily|semiwiki|cleantechnica|cushman\s*(?:&|and)\s*wakefield|cbre|jll|jones lang lasalle|colliers|knight frank|newmark|savills|marcus\s*(?:&|and)\s*millichap|niti aayog|brookings|rand corporation|chatham house|csis)\b/i;
+    return publisherPattern.test(n);
+  }
+
+  assert.strictEqual(isNewsPublisherTest("Cushman & Wakefield"), true);
+  assert.strictEqual(isNewsPublisherTest("CBRE"), true);
+  assert.strictEqual(isNewsPublisherTest("JLL"), true);
+  assert.strictEqual(isNewsPublisherTest("Colliers"), true);
+  assert.strictEqual(isNewsPublisherTest("Knight Frank"), true);
+});
+
+test("QC 2: Policy think tanks (NITI Aayog, Brookings) are rejected as developers", () => {
+  function isThinkTankTest(name) {
+    const lower = name.toLowerCase().trim();
+    return /\b(?:niti aayog|brookings|rand corporation|think\s*tank|policy\s+(?:commission|council|hub|institute)|frontier\s+tech\s+hub)\b/i.test(lower);
+  }
+
+  assert.strictEqual(isThinkTankTest("NITI Aayog"), true);
+  assert.strictEqual(isThinkTankTest("NITI Aayog’s Frontier Tech Hub"), true);
+  assert.strictEqual(isThinkTankTest("Brookings"), true);
+});
+
+test("QC 3: Comma-separated multi-company lists are rejected as developers", () => {
+  function isValidCompanyEntityTest(name) {
+    if (!name || typeof name !== "string") return false;
+    const n = name.trim();
+    if (n.length < 2 || n.length > 50) return false;
+    if (n.includes(",")) {
+      const isLegalSuffixOnly = /^[^,]+,\s*(?:inc|llc|ltd|corp|corporation|co|company|gmbh|ag|kg|bv|nv|plc|sl|srl|pty|lp|sa)\.?$/i.test(n);
+      if (!isLegalSuffixOnly) return false;
+    }
+    return true;
+  }
+
+  assert.strictEqual(isValidCompanyEntityTest("Amazon, Google"), false);
+  assert.strictEqual(isValidCompanyEntityTest("AWS, Microsoft, Google, Adani, Reliance"), false);
+  assert.strictEqual(isValidCompanyEntityTest("Google, EdgeConnex, Maincubes"), false);
+  assert.strictEqual(isValidCompanyEntityTest("Acme, Inc."), true);
+  assert.strictEqual(isValidCompanyEntityTest("SunPower, LLC"), true);
+});
+
+test("QC 4: Macro industry boom headlines and growth concerns are rejected as projects", () => {
+  function isMacroHeadlineTest(title) {
+    return /\b(?:expansion\s+puts\s+.*in\s+focus|raises?\s+(?:water|power|grid|environmental|community|cost)\s+concerns|driving\s+[a-z\s]+['’]s\s+(?:data\s*cent(?:er|re)|solar|wind|ai)\s+boom|plans?\s+to\s+double\s+(?:data\s*cent(?:er|re)|solar|wind|capacity))\b/i.test(title) ||
+      /\b(?:data\s*cent(?:er|re)|solar|wind|ai)\s+boom\b/i.test(title) ||
+      /\b(?:are\s+driving|is\s+driving)\s+[a-z\s]+['’]s\s+(?:data\s*cent(?:er|re)|solar|wind|ai|clean\s+energy)\s+boom\b/i.test(title) ||
+      /\b(?:ai\s+concern\s+as|concern\s+as\s+[a-z\s]+\s+plans\s+to\s+double)\b/i.test(title);
+  }
+
+  assert.strictEqual(isMacroHeadlineTest("India’s data centre expansion puts power, cooling infrastructure in focus"), true);
+  assert.strictEqual(isMacroHeadlineTest("India Data Center Boom Raises Water and Power Concerns"), true);
+  assert.strictEqual(isMacroHeadlineTest("AWS, Microsoft, Google, Adani and Reliance are driving India’s data centre boom"), true);
+  assert.strictEqual(isMacroHeadlineTest("AI: Germany plans to double data center capacity"), true);
+  assert.strictEqual(isMacroHeadlineTest("Starbase Data Center and Power Plant"), false);
+});
+
+test("QC 5: Policy evaluation frameworks and guidelines are rejected as projects", () => {
+  function isPolicyFrameworkTest(text) {
+    return /\b(?:evaluation\s+framework|regulatory\s+framework|policy\s+framework|assessment\s+framework|guidelines?|whitepapers?)\b/i.test(text);
+  }
+
+  assert.strictEqual(isPolicyFrameworkTest("NITI Aayog’s Frontier Tech Hub Unveils Data Centre Evaluation Framework"), true);
+  assert.strictEqual(isPolicyFrameworkTest("State Data Center Evaluation Framework"), true);
+  assert.strictEqual(isPolicyFrameworkTest("Paducah Data Center Campus"), false);
+});
+
+test("QC 6: Date field contaminated with status string 'Under Construction' returns empty string", () => {
+  function formatDisplayDateTest(rawDate) {
+    if (!rawDate || typeof rawDate !== "string") return "";
+    let d = rawDate.trim();
+    if (/^(?:latest\s+\d{4}|not specified|unknown|tbd|none|n\/a)$/i.test(d)) return "";
+    d = d.replace(/^(?:groundbreaking|commissioned|announced|approved|under\s+construction|operational|completed|started|target\s+completion|inaugurated|online|expected)\s*:\s*/i, "").trim();
+    if (/^(?:under\s+construction|announced|planning|approved|operational|commissioned|in\s+development)$/i.test(d)) {
+      return "";
+    }
+    const allYears = Array.from(d.matchAll(/\b(19\d\d|20\d\d)\b/g)).map(m => parseInt(m[1], 10));
+    if (allYears.length === 0) return "";
+    return d;
+  }
+
+  assert.strictEqual(formatDisplayDateTest("Under Construction"), "");
+  assert.strictEqual(formatDisplayDateTest("Announced"), "");
+  assert.strictEqual(formatDisplayDateTest("Operational"), "");
+  assert.strictEqual(formatDisplayDateTest("Groundbreaking: 2026"), "2026");
+  assert.strictEqual(formatDisplayDateTest("Commissioned: 2026"), "2026");
+  assert.strictEqual(formatDisplayDateTest("End of H1 2026"), "End of H1 2026");
+});
+
+test("QC 7: Educational dictionary/explainer definition blogs are rejected", () => {
+  function isEducationalBlogTest(summary) {
+    return /\b(?:is\s+a\s+facility\s+that\s+converts|is\s+a\s+facility\s+that\s+produces|is\s+a\s+facility\s+that\s+generates|a\s+(?:solar|wind|power|data\s*cent(?:er|re))\s+(?:power\s+)?plant\s+(?:in\s+[a-z\s]+)?is\s+a\s+facility)\b/i.test(summary);
+  }
+
+  const aceBlogSummary = "A solar power plant in India is a facility that converts sunlight into electricity using photovoltaic (PV) technology. The largest operational solar power plant in India is Bhadla Solar Park in Rajasthan, with about 2,245 MW of commissioned solar capacity.";
+  assert.strictEqual(isEducationalBlogTest(aceBlogSummary), true);
+  assert.strictEqual(isEducationalBlogTest("Aternium plans to produce hydrogen at a new $226 million factory in Dover, Delaware."), false);
+});
+
+test("QC 8: Crowdsourced wiki domains (gem.wiki, wikipedia.org) are rejected", () => {
+  function isWikiDomainTest(url) {
+    return /\.wiki\b|\/wiki\/|gem\.wiki|wikipedia\.org|wikimedia\.org|wikia\.com|fandom\.com/i.test(url);
+  }
+
+  assert.strictEqual(isWikiDomainTest("https://www.gem.wiki/Kolayat_solar_farm"), true);
+  assert.strictEqual(isWikiDomainTest("https://en.wikipedia.org/wiki/Bhadla_Solar_Park"), true);
+  assert.strictEqual(isWikiDomainTest("https://www.pv-magazine-india.com/2026/01/22/sael-commissions-1-gwp-solar-project"), false);
+});
+
+test("QC 9: Generic sovereign or state governments are rejected as developer company", () => {
+  function isGenericGovTest(company) {
+    const lower = company.toLowerCase().trim();
+    return /^(?:[a-z\s]+\s+)?government$/i.test(lower) || /^(?:government|us government|federal government|state government|provincial government|taiwan government)$/i.test(lower);
+  }
+
+  assert.strictEqual(isGenericGovTest("Rajasthan government"), true);
+  assert.strictEqual(isGenericGovTest("US Government"), true);
+  assert.strictEqual(isGenericGovTest("State government"), true);
+  assert.strictEqual(isGenericGovTest("Government"), true);
+  assert.strictEqual(isGenericGovTest("SAEL Industries Ltd"), false);
+});
+
 console.log("\n=================================================");
 console.log(`ALL ${passedTests} TESTS PASSED SUCCESSFULLY!`);
 console.log("=================================================\n");
